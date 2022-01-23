@@ -1044,21 +1044,29 @@ impl Fs {
     }
 
     /// Create a new Fs object (in memory, not on disk).
+    ///
+    /// # Arguments
+    ///
+    /// * `database` -  An already open `Database` object
+    /// * `name`    -   The dataset's name, excluding the pool
     // Should be private.  Is only public so it can be used by the functional
     // tests.
     #[doc(hidden)]
-    pub async fn new(database: Arc<Database>, tree: TreeID)
-        -> Self
+    pub async fn new<S>(database: Arc<Database>, name: S) -> Self
+        where S: AsRef<str> + 'static
     {
         let db2 = database.clone();
         let db3 = database.clone();
         let db4 = database.clone();
+        let tree_id = database.lookup_fs(name.as_ref()).await
+            .unwrap()
+            .expect("Filesystem does not yet exist");
         let (last_key, (atimep, _), (recsizep, _), _) =
-        db4.fsread(tree, move |dataset| {
+        db4.fsread(tree_id, move |dataset| {
             let last_key_fut = dataset.last_key();
-            let atime_fut = db2.get_prop(tree, PropertyName::Atime);
-            let recsize_fut = db2.get_prop(tree, PropertyName::RecordSize);
-            let di_fut = db3.fswrite(tree, 0, 1, 0, 0,
+            let atime_fut = db2.get_prop(tree_id, PropertyName::Atime);
+            let recsize_fut = db2.get_prop(tree_id, PropertyName::RecordSize);
+            let di_fut = db3.fswrite(tree_id, 0, 1, 0, 0,
             move |dataset| async move {
                 // Delete all dying inodes.  If there are any, it means that
                 // the previous mount was uncleanly dismounted.
@@ -1090,7 +1098,7 @@ impl Fs {
         Fs {
             db: database,
             next_object,
-            tree,
+            tree: tree_id,
             atime,
             record_size,
         }

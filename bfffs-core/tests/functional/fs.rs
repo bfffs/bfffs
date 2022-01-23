@@ -26,7 +26,7 @@ mod fs {
     };
     use tempfile::Builder;
 
-    type Harness = (Fs, Arc<Mutex<Cache>>, Arc<Database>, TreeID);
+    type Harness = (Fs, Arc<Mutex<Cache>>, Arc<Database>);
 
     async fn harness(props: Vec<Property>) -> Harness {
         let len = 1 << 30;  // 1GB
@@ -42,9 +42,9 @@ mod fs {
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        let tree_id = db.create_fs(props).await.unwrap();
-        let fs = Fs::new(db.clone(), tree_id).await;
-        (fs, cache, db, tree_id)
+        db.create_fs(None, "", props).await.unwrap();
+        let fs = Fs::new(db.clone(), "").await;
+        (fs, cache, db)
     }
 
     /// Use a small recordsize for most tests, because it's faster to test
@@ -121,7 +121,7 @@ mod fs {
 
     #[tokio::test]
     async fn create() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let uid = 12345;
         let gid = 54321;
         let name = OsStr::from_bytes(b"x");
@@ -170,7 +170,7 @@ mod fs {
     #[should_panic]
     #[tokio::test]
     async fn create_eexist() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let _fd = fs.create(&root, &filename, 0o644, 0, 0).await
@@ -181,7 +181,7 @@ mod fs {
     /// Create should update the parent dir's timestamps
     #[tokio::test]
     async fn create_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -195,7 +195,7 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_whole_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -228,7 +228,7 @@ mod fs {
     /// Deallocating a hole is a no-op
     #[tokio::test]
     async fn deallocate_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -251,7 +251,7 @@ mod fs {
     /// Deallocate multiple extents, some blob and some inline
     #[tokio::test]
     async fn deallocate_multiple_extents() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -288,7 +288,7 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_left_half_of_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -323,7 +323,7 @@ mod fs {
     /// Deallocate the left part of a record which is already a hole
     #[tokio::test]
     async fn deallocate_left_half_of_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -352,7 +352,7 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_middle_of_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -391,7 +391,7 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_right_half_of_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -424,7 +424,7 @@ mod fs {
     /// Deallocate the right part of a record which happens to be a hole
     #[tokio::test]
     async fn deallocate_right_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -449,7 +449,7 @@ mod fs {
 
     #[tokio::test]
     async fn deallocate_parts_of_two_records() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -491,7 +491,7 @@ mod fs {
     /// Deallocating past EoF is a no-op
     #[tokio::test]
     async fn deallocate_past_eof() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -504,7 +504,7 @@ mod fs {
 
     #[tokio::test]
     async fn deleteextattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -520,7 +520,7 @@ mod fs {
     /// deleteextattr with a hash collision.
     #[tokio::test]
     async fn deleteextattr_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -558,7 +558,7 @@ mod fs {
     /// existing one.
     #[tokio::test]
     async fn deleteextattr_collision_enoattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -579,7 +579,7 @@ mod fs {
 
     #[tokio::test]
     async fn deleteextattr_enoattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -592,7 +592,7 @@ mod fs {
     /// rmextattr(2) should not modify any timestamps
     #[tokio::test]
     async fn deleteextattr_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -610,7 +610,7 @@ mod fs {
     // Tree::dump, so the bulk of testing is in the tree tests.
     #[tokio::test]
     async fn dump() {
-        let (fs, _cache, _db, _tree_id) = harness(vec![]).await;
+        let (fs, _cache, _db) = harness(vec![]).await;
         let mut buf = Vec::with_capacity(1024);
         let root = fs.root();
         // Sync before clearing timestamps to improve determinism; the timed
@@ -675,7 +675,7 @@ root:
     /// getattr on the filesystem's root directory
     #[tokio::test]
     async fn getattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let attr = fs.getattr(&root).await.unwrap();
         assert_eq!(attr.nlink, 1);
@@ -694,7 +694,7 @@ root:
     /// Regular files' st_blksize should equal the record size
     #[tokio::test]
     async fn getattr_4k() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let name = OsStr::from_bytes(b"x");
         let root = fs.root();
         let fd = fs.create(&root, name, 0o644, 0, 0).await.unwrap();
@@ -705,7 +705,7 @@ root:
     /// Regular files' st_blksize should equal the record size
     #[tokio::test]
     async fn getattr_8k() {
-        let (fs, _cache, _db, _tree_id) = harness8k().await;
+        let (fs, _cache, _db) = harness8k().await;
         let name = OsStr::from_bytes(b"y");
         let root = fs.root();
         let fd = fs.create(&root, name, 0o644, 0, 0).await.unwrap();
@@ -720,7 +720,7 @@ root:
     #[case(true)]
     #[tokio::test]
     async fn getextattr(#[case] on_disk: bool) {
-        let (fs, cache, _db, _tree_id) = harness4k().await;
+        let (fs, cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -746,7 +746,7 @@ root:
     /// Read a large extattr as a blob
     #[tokio::test]
     async fn getextattr_blob() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -768,7 +768,7 @@ root:
     /// extattr.
     #[tokio::test]
     async fn getextattr_blob_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -792,7 +792,7 @@ root:
     /// setextattr and getextattr with a hash collision.
     #[tokio::test]
     async fn getextattr_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -818,7 +818,7 @@ root:
     // The same attribute name exists in two namespaces
     #[tokio::test]
     async fn getextattr_dual_namespaces() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -842,7 +842,7 @@ root:
     // The file exists, but its extended attribute does not
     #[tokio::test]
     async fn getextattr_enoattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -858,7 +858,7 @@ root:
     // us to distinguish this from the ENOATTR case.
     #[tokio::test]
     async fn getextattr_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let name = OsString::from("foo");
         let namespace = ExtAttrNamespace::User;
         let fd = FileData::new_for_tests(Some(1), 9999);
@@ -871,7 +871,7 @@ root:
     /// getextattr(2) should not modify any timestamps
     #[tokio::test]
     async fn getextattr_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -888,7 +888,7 @@ root:
     // Lookup a directory by its inode number without knowing its parent
     #[tokio::test]
     async fn ilookup_dir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd0 = fs.mkdir(&root, &filename, 0o755, 0, 0).await.unwrap();
@@ -904,7 +904,7 @@ root:
     // Try and fail to lookup a file by its inode nubmer
     #[tokio::test]
     async fn ilookup_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let ino = 123456789;
 
         let e = fs.ilookup(ino).await.unwrap_err();
@@ -914,7 +914,7 @@ root:
     // Lookup a regular file by its inode number without knowing its parent
     #[tokio::test]
     async fn ilookup_file() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd0 = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -929,7 +929,7 @@ root:
 
     #[tokio::test]
     async fn link() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -948,7 +948,7 @@ root:
     /// link(2) should update the inode's ctime
     #[tokio::test]
     async fn link_ctime() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -961,7 +961,7 @@ root:
     ///link(2) should update the parent's mtime and ctime
     #[tokio::test]
     async fn link_parent_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -1009,7 +1009,7 @@ root:
 
     #[tokio::test]
     async fn listextattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
@@ -1035,7 +1035,7 @@ root:
     /// setextattr and listextattr with a cross-namespace hash collision.
     #[tokio::test]
     async fn listextattr_collision_separate_namespaces() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -1068,7 +1068,7 @@ root:
 
     #[tokio::test]
     async fn listextattr_dual_namespaces() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
@@ -1097,7 +1097,7 @@ root:
 
     #[tokio::test]
     async fn listextattr_empty() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -1110,7 +1110,7 @@ root:
     /// Lookup of a directory entry that has a hash collision
     #[tokio::test]
     async fn lookup_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -1126,7 +1126,7 @@ root:
 
     #[tokio::test]
     async fn lookup_dot() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let name0 = OsStr::from_bytes(b"x");
         let dotname = OsStr::from_bytes(b".");
 
@@ -1140,7 +1140,7 @@ root:
 
     #[tokio::test]
     async fn lookup_dotdot() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let name0 = OsStr::from_bytes(b"x");
         let name1 = OsStr::from_bytes(b"y");
         let dotdotname = OsStr::from_bytes(b"..");
@@ -1156,7 +1156,7 @@ root:
 
     #[tokio::test]
     async fn lookup_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("nonexistent");
         assert_eq!(fs.lookup(None, &root, &filename).await.unwrap_err(),
@@ -1169,7 +1169,7 @@ root:
     #[tokio::test]
     async fn lseek(#[case] blobs: bool) {
         use SeekWhence::{Data, Hole};
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
 
         // Create a file like this:
@@ -1208,7 +1208,7 @@ root:
     // SeekData should return ENXIO if there is no data until EOF
     #[tokio::test]
     async fn lseek_data_before_eof() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
 
         let filename = OsString::from("x");
@@ -1229,7 +1229,7 @@ root:
     #[tokio::test]
     async fn lseek_last_hole(#[case] blobs: bool) {
         use SeekWhence::Hole;
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
 
         // Create a file like this:
@@ -1257,7 +1257,7 @@ root:
     #[tokio::test]
     async fn lseek_partial_hole_at_end() {
         use SeekWhence::Hole;
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
 
         // Create a file like this, all in one record:
@@ -1282,7 +1282,7 @@ root:
 
     #[tokio::test]
     async fn mkdir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let uid = 12345;
         let gid = 54321;
         let name = OsStr::from_bytes(b"x");
@@ -1348,7 +1348,7 @@ root:
     // name, like "." or "..", so those cases won't have test coverage
     #[tokio::test]
     async fn mkdir_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -1365,7 +1365,7 @@ root:
     /// mkdir(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn mkdir_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -1375,7 +1375,7 @@ root:
 
     #[tokio::test]
     async fn mkchar() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.mkchar(&root, &OsString::from("x"), 0o644, 0, 0, 42).await
         .unwrap();
@@ -1413,7 +1413,7 @@ root:
     /// mknod(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn mkchar_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -1423,7 +1423,7 @@ root:
 
     #[tokio::test]
     async fn mkblock() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.mkblock(&root, &OsString::from("x"), 0o644, 0, 0, 42).await
         .unwrap();
@@ -1461,7 +1461,7 @@ root:
     /// mknod(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn mkblock_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -1471,7 +1471,7 @@ root:
 
     #[tokio::test]
     async fn mkfifo() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let uid = 12345;
         let gid = 54321;
         let root = fs.root();
@@ -1510,7 +1510,7 @@ root:
     /// mkfifo(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn mkfifo_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -1520,7 +1520,7 @@ root:
 
     #[tokio::test]
     async fn mksock() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let uid = 12345;
         let gid = 54321;
         let root = fs.root();
@@ -1559,7 +1559,7 @@ root:
     /// mksock(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn mksock_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -1572,7 +1572,7 @@ root:
     #[cfg(debug_assertions)]
     #[tokio::test]
     async fn mount_with_open_but_deleted_files() {
-        let (fs, _cache, db, tree_id) = harness4k().await;
+        let (fs, _cache, db) = harness4k().await;
         let root = fs.root();
 
         // First create a file, open it, and unlink it, but don't close it
@@ -1587,7 +1587,7 @@ root:
         drop(fs);
 
         // Mount again
-        let fs = Fs::new(db, tree_id).await;
+        let fs = Fs::new(db, "").await;
 
         // Try to open the file again.
         // Wait up to 2 seconds for the inode to be deleted
@@ -1605,7 +1605,7 @@ root:
     // Read a hole that's bigger than the zero region
     #[tokio::test]
     async fn read_big_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let holesize = 2 * ZERO_REGION_LEN;
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -1628,7 +1628,7 @@ root:
     // Read a single BlobExtent record
     #[tokio::test]
     async fn read_blob() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1646,7 +1646,7 @@ root:
 
     #[tokio::test]
     async fn read_empty_file() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1656,7 +1656,7 @@ root:
 
     #[tokio::test]
     async fn read_empty_file_past_start() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1667,7 +1667,7 @@ root:
     // Read a hole within a sparse file
     #[tokio::test]
     async fn read_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1688,7 +1688,7 @@ root:
     // Read a hole in between two adjacent records.
     #[tokio::test]
     async fn read_partial_hole_between_recs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1718,7 +1718,7 @@ root:
     // data at the end.
     #[tokio::test]
     async fn read_partial_hole_trailing_edge() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1742,7 +1742,7 @@ root:
     // A read that's smaller than a record, at both ends
     #[tokio::test]
     async fn read_partial_record() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1762,7 +1762,7 @@ root:
 
     #[tokio::test]
     async fn read_past_eof() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1781,7 +1781,7 @@ root:
     /// A read that spans 3 records, where the middle record is a hole
     #[tokio::test]
     async fn read_spans_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1803,7 +1803,7 @@ root:
     /// read(2) should update the file's atime
     #[tokio::test]
     async fn read_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1818,8 +1818,7 @@ root:
     // When atime is disabled, reading a file should not update its atime.
     #[tokio::test]
     async fn read_timestamps_no_atime() {
-        let (fs, _cache, _db, _tree_id) =
-            harness(vec![Property::Atime(false)]).await;
+        let (fs, _cache, _db) = harness(vec![Property::Atime(false)]).await;
         let root = fs.root();
 
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -1835,7 +1834,7 @@ root:
     // A read that's split across two records
     #[tokio::test]
     async fn read_two_recs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1860,7 +1859,7 @@ root:
     // Read past EOF, in an entirely different record
     #[tokio::test]
     async fn read_well_past_eof() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -1878,7 +1877,7 @@ root:
 
     #[tokio::test]
     async fn readdir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let entries = readdir_all(&fs, &root, 0).await;
         let (dotdot, _) = entries[0];
@@ -1900,7 +1899,7 @@ root:
     /// do this sometimes.
     #[tokio::test]
     async fn readdir_eof() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let entries = readdir_all(&fs, &root, 0).await;
         // Should be two entries, "." and ".."
@@ -1914,7 +1913,7 @@ root:
     // Readdir of a directory with a hash collision
     #[tokio::test]
     async fn readdir_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -1946,7 +1945,7 @@ root:
     // nor missing entries
     #[tokio::test]
     async fn readdir_collision_at_offset() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -1984,7 +1983,7 @@ root:
     // generate any 3-way collisions to test with.
     #[tokio::test]
     async fn readdir_rm_during_stream_at_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -2025,7 +2024,7 @@ root:
     // Just check that nothing panics.
     #[tokio::test]
     async fn readdir_partial() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let mut stream = Box::pin(fs.readdir(&root, 0));
         let _ = stream.try_next().await.unwrap().unwrap();
@@ -2034,7 +2033,7 @@ root:
     /// readdir(2) should not update any timestamps
     #[tokio::test]
     async fn readdir_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         clear_timestamps(&fs, &root).await;
 
@@ -2044,7 +2043,7 @@ root:
 
     #[tokio::test]
     async fn readlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
@@ -2057,7 +2056,7 @@ root:
     // Calling readlink on a non-symlink should return EINVAL
     #[tokio::test]
     async fn readlink_einval() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let output = fs.readlink(&root).await;
         assert_eq!(libc::EINVAL, output.unwrap_err());
@@ -2065,7 +2064,7 @@ root:
 
     #[tokio::test]
     async fn readlink_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let fd = FileData::new_for_tests(Some(1), 1000);
         let output = fs.readlink(&fd).await;
         assert_eq!(libc::ENOENT, output.unwrap_err());
@@ -2074,7 +2073,7 @@ root:
     /// readlink(2) should not update any timestamps
     #[tokio::test]
     async fn readlink_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
@@ -2091,7 +2090,7 @@ root:
     // destination directories
     #[tokio::test]
     async fn rename_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("F0jS2Tptj7");
         let src_c = OsString::from("PLe01T116a");
@@ -2148,7 +2147,7 @@ root:
     // Rename a directory.  The target is also a directory
     #[tokio::test]
     async fn rename_dir_to_dir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2186,7 +2185,7 @@ root:
 
     #[tokio::test]
     async fn rename_dir_to_dir_same_parent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let parent = OsString::from("parent");
         let src = OsString::from("src");
@@ -2220,7 +2219,7 @@ root:
     // Nothing should change.
     #[tokio::test]
     async fn rename_dir_to_nonemptydir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2258,7 +2257,7 @@ root:
     // Rename a directory.  The target name does not exist
     #[tokio::test]
     async fn rename_dir_to_nothing() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2291,7 +2290,7 @@ root:
     // Attempting to rename "." should return EINVAL
     #[tokio::test]
     async fn rename_dot() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dot = OsStr::from_bytes(b".");
         let srcdir = OsStr::from_bytes(b"srcdir");
@@ -2307,7 +2306,7 @@ root:
     // Attempting to rename ".." should return EINVAL
     #[tokio::test]
     async fn rename_dotdot() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dotdot = OsStr::from_bytes(b"..");
         let srcdir = OsStr::from_bytes(b"srcdir");
@@ -2324,7 +2323,7 @@ root:
     // directory entry should be removed, but not the inode.
     #[tokio::test]
     async fn rename_nondir_to_hardlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -2357,7 +2356,7 @@ root:
     // Rename a non-directory.  The target is also a non-directory
     #[tokio::test]
     async fn rename_nondir_to_nondir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2393,7 +2392,7 @@ root:
     // Rename a non-directory.  The target name does not exist
     #[tokio::test]
     async fn rename_nondir_to_nothing() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2426,7 +2425,7 @@ root:
     // file afterwards
     #[tokio::test]
     async fn rename_reg_to_symlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2473,7 +2472,7 @@ root:
     // Rename a file with extended attributes.
     #[tokio::test]
     async fn rename_reg_with_extattrs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let dst = OsString::from("dst");
@@ -2498,7 +2497,7 @@ root:
     // rename updates a file's parent directories' ctime and mtime
     #[tokio::test]
     async fn rename_parent_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let src = OsString::from("src");
         let srcdir = OsString::from("srcdir");
@@ -2529,7 +2528,7 @@ root:
     #[allow(clippy::blocks_in_if_conditions)]
     #[tokio::test]
     async fn rmdir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dirname = OsString::from("x");
         let fd = fs.mkdir(&root, &dirname, 0o755, 0, 0).await.unwrap();
@@ -2554,7 +2553,7 @@ root:
     /// Remove a directory whose name has a hash collision
     #[tokio::test]
     async fn rmdir_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -2576,7 +2575,7 @@ root:
 
     #[tokio::test]
     async fn rmdir_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dirname = OsString::from("x");
         assert_eq!(fs.rmdir(&root, &dirname).await.unwrap_err(),
@@ -2586,7 +2585,7 @@ root:
     #[should_panic]
     #[tokio::test]
     async fn rmdir_enotdir() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         fs.create(&root, &filename, 0o644, 0, 0).await
@@ -2596,7 +2595,7 @@ root:
 
     #[tokio::test]
     async fn rmdir_enotempty() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dirname = OsString::from("x");
         let fd = fs.mkdir(&root, &dirname, 0o755, 0, 0).await
@@ -2611,7 +2610,7 @@ root:
     /// collision with another file or directory
     #[tokio::test]
     async fn rmdir_enotempty_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("basedir");
         let filename1 = OsString::from("HsxUh682JQ");
@@ -2627,7 +2626,7 @@ root:
     /// Remove a directory with an extended attribute
     #[tokio::test]
     async fn rmdir_extattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dirname = OsString::from("x");
         let xname = OsString::from("foo");
@@ -2647,7 +2646,7 @@ root:
     /// Removing a directory should update its parent's timestamps
     #[tokio::test]
     async fn rmdir_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dirname = OsString::from("x");
         fs.mkdir(&root, &dirname, 0o755, 0, 0).await.unwrap();
@@ -2661,7 +2660,7 @@ root:
 
     #[tokio::test]
     async fn setattr() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await
@@ -2726,7 +2725,7 @@ root:
     // setattr updates a file's ctime and mtime
     #[tokio::test]
     async fn setattr_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -2755,7 +2754,7 @@ root:
     #[case(true)]
     #[tokio::test]
     async fn setattr_truncate(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         // First write two records
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -2796,7 +2795,7 @@ root:
     #[case(true)]
     #[tokio::test]
     async fn setattr_truncate_partial_record(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         // First write one record
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -2830,7 +2829,7 @@ root:
     // Like setattr_truncate, but there is a hole at the end of the file
     #[tokio::test]
     async fn setattr_truncate_partial_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         // First create a sparse file
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -2859,7 +2858,7 @@ root:
     // truncating a file should update the mtime
     #[tokio::test]
     async fn setattr_truncate_updates_mtime() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         // Create a file
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
@@ -2880,7 +2879,7 @@ root:
     /// Set an blob extended attribute
     #[tokio::test]
     async fn setextattr_blob() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -2900,7 +2899,7 @@ root:
     /// flushed to blobs.
     #[tokio::test]
     async fn setextattr_inline() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -2918,7 +2917,7 @@ root:
     /// Overwrite an existing extended attribute
     #[tokio::test]
     async fn setextattr_overwrite() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -2936,7 +2935,7 @@ root:
     /// different xattr
     #[tokio::test]
     async fn setextattr_collision_overwrite() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let ns0 = ExtAttrNamespace::User;
@@ -2961,7 +2960,7 @@ root:
     /// setextattr(2) should not update any timestamps
     #[tokio::test]
     async fn setextattr_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name = OsString::from("foo");
@@ -2978,7 +2977,7 @@ root:
     /// both.
     #[tokio::test]
     async fn setextattr_overwrite_blob() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let name1 = OsString::from("foo");
@@ -2998,7 +2997,7 @@ root:
 
     #[tokio::test]
     async fn statvfs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let statvfs = fs.statvfs().await.unwrap();
         assert_eq!(statvfs.f_blocks, 262_144);
         assert_eq!(statvfs.f_bsize, 4096);
@@ -3007,7 +3006,7 @@ root:
 
     #[tokio::test]
     async fn statvfs_8k() {
-        let (fs, _cache, _db, _tree_id) = harness8k().await;
+        let (fs, _cache, _db) = harness8k().await;
         let statvfs = fs.statvfs().await.unwrap();
         assert_eq!(statvfs.f_blocks, 262_144);
         assert_eq!(statvfs.f_bsize, 8192);
@@ -3016,7 +3015,7 @@ root:
 
     #[tokio::test]
     async fn symlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let uid = 12345;
         let gid = 54321;
@@ -3061,7 +3060,7 @@ root:
     /// symlink should update the parent dir's timestamps
     #[tokio::test]
     async fn symlink_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let dstname = OsString::from("dst");
         let srcname = OsString::from("src");
@@ -3073,7 +3072,7 @@ root:
 
     #[tokio::test]
     async fn unlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3104,7 +3103,7 @@ root:
     // Access an opened but deleted file
     #[tokio::test]
     async fn unlink_but_opened() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3120,7 +3119,7 @@ root:
     // Access an open file that was deleted during a previous TXG
     #[tokio::test]
     async fn unlink_but_opened_across_txg() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3139,7 +3138,7 @@ root:
     // directory.
     #[tokio::test]
     async fn unlink_collision() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename0 = OsString::from("HsxUh682JQ");
         let filename1 = OsString::from("4FatHJ8I6H");
@@ -3164,7 +3163,7 @@ root:
     // When unlinking a multiply linked file, its ctime should be updated
     #[tokio::test]
     async fn unlink_ctime() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
@@ -3178,7 +3177,7 @@ root:
 
     #[tokio::test]
     async fn unlink_enoent() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3191,7 +3190,7 @@ root:
     // count reaches zero.
     #[tokio::test]
     async fn unlink_hardlink() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let name1 = OsString::from("name1");
         let name2 = OsString::from("name2");
@@ -3231,7 +3230,7 @@ root:
     // Unlink should work on inactive vnodes
     #[tokio::test]
     async fn unlink_inactive() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3262,7 +3261,7 @@ root:
     /// unlink(2) should update the parent dir's timestamps
     #[tokio::test]
     async fn unlink_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3276,7 +3275,7 @@ root:
     /// Unlink a file with blobs on disk
     #[tokio::test]
     async fn unlink_with_blobs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let filename = OsString::from("x");
         let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
@@ -3317,7 +3316,7 @@ root:
     #[case(true)]
     #[tokio::test]
     async fn write(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3341,7 +3340,7 @@ root:
     // A partial single record write appended to the file's end
     #[tokio::test]
     async fn write_append() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3361,7 +3360,7 @@ root:
     // A partial record write appended to a partial record at file's end
     #[tokio::test]
     async fn write_append_to_partial_record() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3394,7 +3393,7 @@ root:
     // file
     #[tokio::test]
     async fn write_partial_hole() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3423,7 +3422,7 @@ root:
     #[case(true)]
     #[tokio::test]
     async fn write_partial_record(#[case] blobs: bool) {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3453,7 +3452,7 @@ root:
     // write updates a file's ctime and mtime
     #[tokio::test]
     async fn write_timestamps() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3470,7 +3469,7 @@ root:
     // A write to an empty file that's split across two records
     #[tokio::test]
     async fn write_two_recs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3497,7 +3496,7 @@ root:
     // A write to an empty file that's split across three records
     #[tokio::test]
     async fn write_three_recs() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3527,7 +3526,7 @@ root:
     // Write one hold record and a partial one to an initially empty file.
     #[tokio::test]
     async fn write_one_and_a_half_records() {
-        let (fs, _cache, _db, _tree_id) = harness4k().await;
+        let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
         .unwrap();
@@ -3839,12 +3838,12 @@ mod torture {
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        let (db, tree_id) = rt.block_on(async move {
-            let tree_id = db.create_fs(Vec::new()).await.unwrap();
-            (db, tree_id)
+        let db = rt.block_on(async move {
+            db.create_fs(None, "", Vec::new()).await.unwrap();
+            db
         });
         let fs = rt.block_on(async {
-            Fs::new(db.clone(), tree_id).await
+            Fs::new(db.clone(), "").await
         });
         let seed = seed.unwrap_or_else(|| {
             let mut seed = [0u8; 16];

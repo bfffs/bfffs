@@ -16,7 +16,6 @@ use std::{
 };
 
 use bfffs_core::{
-    database::TreeID,
     device_manager::DevManager,
     fs::{FileData, Fs},
     IoVec,
@@ -322,9 +321,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                 let r = dev_manager.import_by_name(pool).await;
                 if let Ok(db) = r {
                     let adb = Arc::new(db);
-                    // For now, hardcode tree_id to 0
-                    let tree_id = TreeID(0);
-                    let root_fs = Fs::new(adb, tree_id).await;
+                    let root_fs = Fs::new(adb, "").await;
                     let root = root_fs.root();
                     *fs = Some(Arc::new(root_fs));
                     *ROOT.write().unwrap() = Some(root);

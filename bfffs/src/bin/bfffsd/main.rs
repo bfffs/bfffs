@@ -2,14 +2,13 @@
 
 use std::{
     fs::Permissions,
-    io,
     os::unix::{fs::PermissionsExt, io::RawFd},
     path::{Path, PathBuf},
     process::exit,
 };
 
 use bfffs_core::{
-    controller::{Controller, TreeID},
+    controller::Controller,
     device_manager::DevManager,
     rpc,
     Error,
@@ -174,24 +173,36 @@ impl Bfffsd {
     fn mount(
         &self,
         mountpoint: PathBuf,
-        tree_id: TreeID,
-    ) -> impl Future<Output = Result<(), io::Error>> + Send {
+        name: String,
+    ) -> impl Future<Output = Result<(), Error>> + Send {
         let mo2 = self.mount_opts.clone();
         cfg_if! {
             if #[cfg(test)] {
                 Session::new(mo2).mount(FuseFs::default(), mountpoint)
+                    .map_err(Error::from)
             } else {
-                self.controller.new_fs(tree_id)
-                    .then(|fs| {
+                self.controller.new_fs(name)
+                    .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);
                         Session::new(mo2).mount(fusefs, mountpoint)
+                            .map_err(Error::from)
                     })
+                .boxed()
             }
         }
     }
 
     async fn process(&self, req: rpc::Request, creds: UCred) -> rpc::Response {
         match req {
+            rpc::Request::FsCreate(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsMount(Err(Error::EPERM))
+                } else {
+                    let r =
+                        self.controller.create_fs(&req.name, req.props).await;
+                    rpc::Response::FsCreate(r)
+                }
+            }
             rpc::Request::FsMount(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsMount(Err(Error::EPERM))
@@ -199,8 +210,8 @@ impl Bfffsd {
                     // TODO: synchronously check that the mount succeeded.  This
                     // will require an extension to fuse3.
                     tokio::spawn(
-                        self.mount(req.mountpoint, req.tree_id)
-                            .map_err(|e| error!("mount: {}", e)),
+                        self.mount(req.mountpoint, req.name)
+                            .map_err(|e| error!("mount: {:?}", e)),
                     );
                     rpc::Response::FsMount(Ok(()))
                 }

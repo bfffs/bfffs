@@ -373,6 +373,10 @@ impl<'a> IDML {
             })
     }
 
+    pub fn pool_name(&self) -> &str {
+        self.ddml.pool_name()
+    }
+
     /// Return approximately the usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.ddml.size()
@@ -622,6 +626,7 @@ mock!{
             -> impl Iterator<Item=ClosedZone> + Send;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>, wbs: usize,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
+        pub fn pool_name(&self) -> &str;
         pub fn size(&self) -> LbaT;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write

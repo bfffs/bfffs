@@ -58,9 +58,9 @@ mod persistence {
         // max_int_fanout as 16 bits
                     0x2e, 0x01,
         // min_leaf_fanout as 16 bits
-                                0x62, 0x00,
+                                0x5b, 0x00,
         // max_leaf_fanout as 16 bits
-                                            0x85, 0x01,
+                                            0x6b, 0x01,
         // leaf node max size in bytes, as 64-bits
         0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
         // Root node's address as a RID
@@ -99,7 +99,9 @@ mod persistence {
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
-        // let tree_id = rt.block_on(db.create_fs(Vec::new())).unwrap();
+        // let tree_id = rt.block_on(db.create_fs(None, "",
+        //      Vec::new()))
+        //  .unwrap();
         (rt, db, tempdir, filename)
     }
 
@@ -179,7 +181,8 @@ mod t {
         let idml = Arc::new(IDML::create(ddml, cache));
         let (db, tree_id) = rt.block_on(async move {
             let db = Database::create(idml);
-            let tree_id = db.create_fs(Vec::new()).await.unwrap();
+            let tree_id = db.create_fs(None, "", Vec::new())
+                .await.unwrap();
             (db, tree_id)
         });
         (rt, db, tempdir, tree_id)
@@ -223,7 +226,7 @@ mod t {
             let (rt, db, _tempdir, first_tree_id) = objects;
             let props = vec![Property::RecordSize(5)];
             let tree_id = rt.block_on(async {
-                db.create_fs(props)
+                db.create_fs(None, "", props)
                 .await
             }).unwrap();
             let (val, source) = rt.block_on(async {
@@ -250,7 +253,7 @@ mod t {
             let db = open_db(&rt, filename);
 
             let tree_id = rt.block_on(async {
-                db.create_fs(vec![])
+                db.create_fs(None, "", vec![])
                 .await
             }).unwrap();
             assert_ne!(tree_id, first_tree_id);
@@ -260,13 +263,13 @@ mod t {
         fn twice(objects: (Runtime, Database, TempDir, TreeID)) {
             let (rt, db, _tempdir, first_tree_id) = objects;
             let tree_id1 = rt.block_on(async {
-                db.create_fs(vec![])
+                db.create_fs(None, "", vec![])
                 .await
             }).unwrap();
             assert_ne!(tree_id1, first_tree_id);
 
             let tree_id2 = rt.block_on(async {
-                db.create_fs(vec![])
+                db.create_fs(None, "", vec![])
                 .await
             }).unwrap();
             assert_ne!(tree_id2, first_tree_id);
