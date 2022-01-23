@@ -130,11 +130,11 @@ mod fs {
             require_delimiter(true),
             value_delimiter(',')
         )]
-        options:    Vec<String>,
+        pub(super) options:    Vec<String>,
         /// Pool name
-        pool_name:  String,
+        pub(super) pool_name:  String,
         /// Mountpoint
-        mountpoint: PathBuf,
+        pub(super) mountpoint: PathBuf,
     }
 
     impl Mount {
@@ -448,6 +448,27 @@ mod t {
                 assert!(debug.tree);
                 assert_eq!(debug.disks[0], Path::new("/dev/da0"));
                 assert_eq!(debug.disks[1], Path::new("/dev/da1"));
+            }
+        }
+    }
+
+    mod fs {
+        use super::*;
+        use crate::fs::*;
+
+        mod mount {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "mount", "testpool", "/mnt"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Mount(_))));
+                if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
+                    assert_eq!(mount.pool_name, "testpool");
+                    assert_eq!(mount.mountpoint, Path::new("/mnt"));
+                    assert!(mount.options.is_empty());
+                }
             }
         }
     }
