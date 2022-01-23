@@ -12,7 +12,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Serialize)]
-pub struct Mount {
+pub struct FsMount {
     pub mountpoint: PathBuf,
     /// Comma-separated mount options
     pub opts: String,
@@ -22,12 +22,12 @@ pub struct Mount {
 /// An RPC request from bfffs to bfffsd
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Request {
-    Mount(Mount)
+    FsMount(FsMount)
 }
 
 impl Request {
-    pub fn mount(mountpoint: PathBuf, tree_id: TreeID) -> Self {
-        Self::Mount(Mount {
+    pub fn fs_mount(mountpoint: PathBuf, tree_id: TreeID) -> Self {
+        Self::FsMount(FsMount {
             mountpoint,
             opts: String::new(),    // TODO
             tree_id
@@ -37,5 +37,5 @@ impl Request {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
-    Mount(Result<(), Error>)
+    FsMount(Result<(), Error>)
 }

@@ -143,7 +143,7 @@ mod fs {
             let tree_id = TreeID::Fs(0);
 
             let bfffs = Bfffs::new(sock).await.unwrap();
-            let req = rpc::Request::mount(self.mountpoint, tree_id);
+            let req = rpc::Request::fs_mount(self.mountpoint, tree_id);
             bfffs.call(req).await.unwrap();
         }
     }
@@ -328,6 +328,7 @@ mod pool {
                 let idml = Arc::new(IDML::create(ddml, cache));
                 Database::create(idml)
             };
+            // Create the root file system
             db.create_fs(props)
                 .and_then(|_tree_id| db.sync_transaction())
                 .await

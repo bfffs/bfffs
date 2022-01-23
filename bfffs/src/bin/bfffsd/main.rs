@@ -192,9 +192,9 @@ impl Bfffsd {
 
     async fn process(&self, req: rpc::Request, creds: UCred) -> rpc::Response {
         match req {
-            rpc::Request::Mount(req) => {
+            rpc::Request::FsMount(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
-                    rpc::Response::Mount(Err(Error::EPERM))
+                    rpc::Response::FsMount(Err(Error::EPERM))
                 } else {
                     // TODO: synchronously check that the mount succeeded.  This
                     // will require an extension to fuse3.
@@ -202,7 +202,7 @@ impl Bfffsd {
                         self.mount(req.mountpoint, req.tree_id)
                             .map_err(|e| error!("mount: {}", e)),
                     );
-                    rpc::Response::Mount(Ok(()))
+                    rpc::Response::FsMount(Ok(()))
                 }
             }
         }
