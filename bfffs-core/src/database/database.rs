@@ -162,6 +162,8 @@ struct Inner {
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
     fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
+    // Would access be faster if we keyed the forest by (<parent TreeID,
+    // TreeID>) or by (<parent name>, <name>) or by <parent TreeID, hash(name)>?
     forest: Arc<ITree<TreeID, TreeOnDisk<RID>>>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
@@ -440,23 +442,37 @@ impl Database {
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
+        let idml3 = self.inner.idml.clone();
         let inner3 = self.inner.clone();
         // The FS tree's compressibility varies greatly, especially based on
         // whether the write pattern is sequential or random.  5.98x is the
         // lower value for random access.  We'll use that rather than the
         // upper value, to keep cache usage lower.
-        let fs = Arc::new(ITree::create(idml2, false, 9.00, 1.61));
+        let fs = Arc::new(
+            ITree::<FSKey, FSValue<RID>>::create(idml2, false, 9.00, 1.61)
+        );
         let ninsert = props.len() + 3;
-        self.inner.fs_trees.with_write(move |mut guard| async move {
-            let k = (0..=u32::max_value()).find(|i| {
-                !guard.contains_key(&TreeID::Fs(*i))
-            }).expect("Maximum number of filesystems reached");
-            let tree_id: TreeID = TreeID::Fs(k);
-            guard.insert(tree_id, fs);
-            drop(guard);
+        self.inner.forest.last_key()
+        .and_then(move |okey| async move {
+            // First, assign a TreeID
+            let tree_id = match okey {
+                Some(last) => last.next()
+                    .expect("Maximum number of file systems reached"),
+                None => TreeID::Fs(0)
+            };
+            let txg_guard = idml3.txg().await;
+
+            // Write the new Tree to the Forest, the source-of-truth for trees
+            fs.clone().flush(*txg_guard).await?;
+            let tod = fs.serialize().unwrap();
+            let old_key = inner3.forest.clone()
+                .insert(tree_id, tod, *txg_guard, Credit::null())
+                .await?;
+            assert!(old_key.is_none(), "Races creating trees are TODO");
 
             // Create the filesystem's root directory
-            Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset| {
+            Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset|
+            {
                 let ino = 1;    // FUSE requires root dir to have inode 1
                 let inode_key = FSKey::new(ino, ObjKey::Inode);
                 let now = Timespec::now();
@@ -514,8 +530,8 @@ impl Database {
                     .boxed()
                 );
                 futs.try_collect::<Vec<_>>()
-            }).await
-            .map(|_| tree_id)
+            }).await?;
+            Ok(tree_id)
         })
     }
 
@@ -672,6 +688,7 @@ impl Database {
                     itree.clone().flush(txg)
                 }).collect::<FuturesUnordered<_>>()
                 .try_collect::<Vec<_>>().await?;
+            // TODO: only write out the dirty trees
             let forest_futs = guard.iter()
                 .map(|(tree_id, itree)| {
                     let tod = itree.serialize().unwrap();

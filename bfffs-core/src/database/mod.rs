@@ -28,6 +28,15 @@ pub enum TreeID {
     Fs(u32)
 }
 
+impl TreeID {
+    /// Get the sequentially next Tree ID
+    pub fn next(self) -> Option<Self> {
+        match self {
+            TreeID::Fs(x) => x.checked_add(1).map(TreeID::Fs)
+        }
+    }
+}
+
 impl Key for TreeID {
     const USES_CREDIT: bool = false;
 }

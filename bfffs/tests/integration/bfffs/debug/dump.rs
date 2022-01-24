@@ -89,7 +89,7 @@ async fn tree(harness: Harness) {
       start: 0
       end: 1
     ptr:
-      Addr: 0
+      Addr: 1
 ",
         ));
 }

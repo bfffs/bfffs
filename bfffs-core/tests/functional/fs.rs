@@ -637,10 +637,10 @@ root:
       start: 1
       end: 2
     ptr:
-      Addr: 2
+      Addr: 3
 ...
 ---
-2:
+3:
   Leaf:
     credit: 0
     items:
@@ -669,7 +669,7 @@ root:
           perm: 493
           file_type: Dir
 "#;
-        assert_eq!(expected, fs_tree);
+        pretty_assertions::assert_eq!(expected, fs_tree);
     }
 
     /// getattr on the filesystem's root directory
