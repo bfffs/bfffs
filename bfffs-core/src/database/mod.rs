@@ -20,20 +20,16 @@ pub use self::database::Database;
 pub use self::database::ReadOnlyFilesystem;
 pub use self::database::ReadWriteFilesystem;
 
-/// Keys into the Forest
+/// Unique identifier for a tree, like a ZFS guid
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
-pub enum TreeID {
-    /// A filesystem, snapshot, or clone
-    Fs(u32)
-}
+// NB: might need to make this cryptographic, to support send/recv
+pub struct TreeID(pub u64);
 
 impl TreeID {
     /// Get the sequentially next Tree ID
     pub fn next(self) -> Option<Self> {
-        match self {
-            TreeID::Fs(x) => x.checked_add(1).map(TreeID::Fs)
-        }
+        self.0.checked_add(1).map(TreeID)
     }
 }
 
@@ -47,7 +43,7 @@ impl TypicalSize for TreeID {
 
 impl MinValue for TreeID {
     fn min_value() -> Self {
-        TreeID::Fs(u32::min_value())
+        TreeID(u64::min_value())
     }
 }
 
@@ -61,7 +57,7 @@ mod treeid {
     #[test]
     fn typical_size() {
         assert_eq!(TreeID::TYPICAL_SIZE,
-                   bincode::serialized_size(&TreeID::Fs(0)).unwrap() as usize);
+                   bincode::serialized_size(&TreeID(0)).unwrap() as usize);
     }
 }
 }

@@ -94,7 +94,7 @@ impl Dump {
             });
         let db = Arc::new(db);
         // For now, hardcode tree_id to 0
-        let tree_id = TreeID::Fs(0);
+        let tree_id = TreeID(0);
         db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
@@ -140,7 +140,7 @@ mod fs {
     impl Mount {
         pub(super) async fn main(self, sock: &Path) {
             // For now, hardcode tree_id to 0
-            let tree_id = TreeID::Fs(0);
+            let tree_id = TreeID(0);
 
             let bfffs = Bfffs::new(sock).await.unwrap();
             let req = rpc::Request::fs_mount(self.mountpoint, tree_id);

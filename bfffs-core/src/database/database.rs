@@ -61,8 +61,8 @@ impl PropCacheKey {
 
     /// Construct a range that encompasses the named property for every dataset
     fn range(name: PropertyName) -> Range<Self> {
-        let start = PropCacheKey::new(name, TreeID::Fs(0));
-        let end = PropCacheKey::new(name.next(), TreeID::Fs(0));
+        let start = PropCacheKey::new(name, TreeID(0));
+        let end = PropCacheKey::new(name.next(), TreeID(0));
         start..end
     }
 }
@@ -458,7 +458,7 @@ impl Database {
             let tree_id = match okey {
                 Some(last) => last.next()
                     .expect("Maximum number of file systems reached"),
-                None => TreeID::Fs(0)
+                None => TreeID(0)
             };
             let txg_guard = idml3.txg().await;
 
@@ -843,7 +843,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let tree_id = TreeID(42);
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -885,7 +885,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let tree_id = TreeID(42);
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -927,7 +927,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let tree_id = TreeID(42);
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();

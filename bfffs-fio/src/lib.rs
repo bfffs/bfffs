@@ -323,7 +323,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                 if let Ok(db) = r {
                     let adb = Arc::new(db);
                     // For now, hardcode tree_id to 0
-                    let tree_id = TreeID::Fs(0);
+                    let tree_id = TreeID(0);
                     let root_fs = Fs::new(adb, tree_id).await;
                     let root = root_fs.root();
                     *fs = Some(Arc::new(root_fs));

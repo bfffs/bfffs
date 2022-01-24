@@ -35,7 +35,7 @@ async fn setup() -> (Database, TreeID) {
     let mut db = Database::default();
     db.expect_create_fs()
         .once()
-        .returning(|_| future::ok(TreeID::Fs(0)).boxed());
+        .returning(|_| future::ok(TreeID(0)).boxed());
     db.expect_fsread_inner()
         .once()
         .return_once(move |_| rods);
