@@ -39,7 +39,7 @@ use std::{
         Arc,
     },
 };
-use super::TreeID;
+use super::{ForestKey, TreeID};
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
@@ -164,13 +164,13 @@ struct Inner {
     fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     // Would access be faster if we keyed the forest by (<parent TreeID,
     // TreeID>) or by (<parent name>, <name>) or by <parent TreeID, hash(name)>?
-    forest: Arc<ITree<TreeID, TreeOnDisk<RID>>>,
+    forest: Arc<ITree<ForestKey, TreeOnDisk<RID>>>,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
+    fn new(idml: Arc<IDML>, forest: ITree<ForestKey, TreeOnDisk<RID>>) -> Self
     {
         let dirty = AtomicBool::new(true);
         let fs_trees = RwLock::new(BTreeMap::new());
@@ -204,7 +204,7 @@ impl Inner {
                 Some(fs) => Ok(fs.clone()),
                 None => {
                     drop(rguard);
-                    match inner2.forest.get(tree_id).await? {
+                    match inner2.forest.get(ForestKey::tree(tree_id)).await? {
                         Some(tod) => {
                             Inner::new_filesystem(&inner2, tree_id, tod).await
                         },
@@ -314,8 +314,8 @@ impl Database {
     fn check_forest(&self) -> impl Future<Output=Result<bool, Error>> {
         let inner2 = self.inner.clone();
         self.inner.forest.range(..)
-        .try_fold(true, move |passed, (tree_id, tod)| {
-            Inner::new_filesystem(&inner2, tree_id, tod)
+        .try_fold(true, move |passed, (key, tod)| {
+            Inner::new_filesystem(&inner2, key.tree_id, tod)
             .and_then(move |tree| tree.check())
             .map_ok(move |r| r && passed)
         })
@@ -456,7 +456,7 @@ impl Database {
         .and_then(move |okey| async move {
             // First, assign a TreeID
             let tree_id = match okey {
-                Some(last) => last.next()
+                Some(last) => last.tree_id.next()
                     .expect("Maximum number of file systems reached"),
                 None => TreeID(0)
             };
@@ -465,8 +465,9 @@ impl Database {
             // Write the new Tree to the Forest, the source-of-truth for trees
             fs.clone().flush(*txg_guard).await?;
             let tod = fs.serialize().unwrap();
+            let new_key = ForestKey::tree(tree_id);
             let old_key = inner3.forest.clone()
-                .insert(tree_id, tod, *txg_guard, Credit::null())
+                .insert(new_key, tod, *txg_guard, Credit::null())
                 .await?;
             assert!(old_key.is_none(), "Races creating trees are TODO");
 
@@ -579,7 +580,7 @@ impl Database {
     }
     // LCOV_EXCL_STOP
 
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
+    fn new(idml: Arc<IDML>, forest: ITree<ForestKey, TreeOnDisk<RID>>) -> Self
     {
         let cleaner = Cleaner::new(idml.clone(), None);
         let inner = Arc::new(Inner::new(idml, forest));
@@ -597,7 +598,7 @@ impl Database {
     pub fn open(idml: Arc<IDML>, mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::<RID, IDML, TreeID, TreeOnDisk<RID>>::open(
+        let forest = Tree::<RID, IDML, ForestKey, TreeOnDisk<RID>>::open(
             idml.clone(), true, l.forest);
         Database::new(idml, forest)
     }
@@ -692,8 +693,9 @@ impl Database {
             let forest_futs = guard.iter()
                 .map(|(tree_id, itree)| {
                     let tod = itree.serialize().unwrap();
+                    let key = ForestKey::tree(*tree_id);
                     inner2.forest.clone()
-                    .insert(*tree_id, tod, txg, Credit::null())
+                    .insert(key, tod, txg, Credit::null())
                 }).collect::<FuturesUnordered<_>>();
             drop(guard);
             forest_futs.try_collect::<Vec<_>>().await?;
@@ -843,7 +845,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -863,7 +865,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -885,7 +887,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -905,7 +907,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -927,7 +929,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -947,7 +949,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)

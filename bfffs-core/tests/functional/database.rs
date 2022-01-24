@@ -54,13 +54,13 @@ mod persistence {
         // Height as 64 bits
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
-        0x62, 0x00,
+        0x4c, 0x00,
         // max_int_fanout as 16 bits
-                    0x85, 0x01,
+                    0x2e, 0x01,
         // min_leaf_fanout as 16 bits
-                                0x72, 0x00,
+                                0x62, 0x00,
         // max_leaf_fanout as 16 bits
-                                            0xc6, 0x01,
+                                            0x85, 0x01,
         // leaf node max size in bytes, as 64-bits
         0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
         // Root node's address as a RID

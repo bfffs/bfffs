@@ -33,31 +33,52 @@ impl TreeID {
     }
 }
 
-impl Key for TreeID {
+/// Keys into the Forest
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
+         Serialize)]
+pub struct ForestKey {
+    /// The TreeID of this tree's parent, or 0 if this is the root file system
+    tree_id: TreeID,
+    /// A hash of the child's name
+    offset: u64
+}
+
+impl ForestKey {
+    /// Construct a key to lookup a tree with a known id
+    pub fn tree(tree_id: TreeID) -> Self  {
+        ForestKey{ tree_id, offset: 0}
+    }
+}
+
+impl Key for ForestKey {
     const USES_CREDIT: bool = false;
 }
 
-impl TypicalSize for TreeID {
-    const TYPICAL_SIZE: usize = 8;
+impl TypicalSize for ForestKey {
+    const TYPICAL_SIZE: usize = 16;
 }
 
-impl MinValue for TreeID {
+impl MinValue for ForestKey {
     fn min_value() -> Self {
-        TreeID(u64::min_value())
+        Self {
+            tree_id: TreeID(u64::min_value()),
+            offset: 0
+        }
     }
 }
 
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
-mod treeid {
+mod forest_key {
     use pretty_assertions::assert_eq;
     use super::super::*;
 
     #[test]
     fn typical_size() {
-        assert_eq!(TreeID::TYPICAL_SIZE,
-                   bincode::serialized_size(&TreeID(0)).unwrap() as usize);
+        let key = ForestKey::min_value();
+        let size = bincode::serialized_size(&key).unwrap() as usize;
+        assert_eq!(ForestKey::TYPICAL_SIZE, size);
     }
 }
 }
