@@ -75,12 +75,13 @@ mock! {
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Debug + Ord + Clone + Send + 'static;
-        pub async fn range_delete<R, T>(self: Arc<Self>, range: R, txg: TxgT)
+        pub async fn range_delete<R, T>(self: Arc<Self>, range: R, txg: TxgT,
+            credit: Credit)
             -> Result<(), Error>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,
                   T: Ord + Clone + Send + 'static;
-        pub async fn remove(self: Arc<Self>, k: K, txg: TxgT)
+        pub async fn remove(self: Arc<Self>, k: K, txg: TxgT, credit: Credit)
             -> Result<Option<V>, Error>;
         pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error>;
     }
