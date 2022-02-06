@@ -2,13 +2,9 @@
 // LCOV_EXCL_START
 //! Mock objects for bfffsd::fs
 
-use std::{
-    ffi::{OsStr, OsString},
-    sync::Arc,
-};
+use std::ffi::{OsStr, OsString};
 
 use bfffs_core::{
-    database::{Database, TreeID},
     fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SeekWhence, SetAttr},
     property::Property,
     SGList,
@@ -61,7 +57,6 @@ mock! {
             uid: u32, gid: u32) -> Result<FileData, i32>;
         pub async fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16,
             uid: u32, gid: u32) -> Result<FileData, i32>;
-        pub async fn new(database: Arc<Database>, tree: TreeID) -> Self;
         pub async fn read(&self, fd: &FileData, offset: u64, size: usize)
             -> Result<SGList, i32>;
         pub fn readdir(&self, fd: &FileData, soffs: i64)

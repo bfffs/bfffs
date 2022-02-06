@@ -29,6 +29,7 @@ extern crate test;
 pub mod cache;
 pub mod cleaner;
 pub mod cluster;
+pub mod controller;
 pub mod database;
 pub mod dataset;
 pub mod ddml;

@@ -6,13 +6,20 @@ use std::{
     os::unix::{fs::PermissionsExt, io::RawFd},
     path::{Path, PathBuf},
     process::exit,
-    sync::Arc,
 };
 
-use bfffs_core::{database::*, device_manager::DevManager, rpc, Error};
+use bfffs_core::{
+    controller::{Controller, TreeID},
+    device_manager::DevManager,
+    rpc,
+    Error,
+};
+use cfg_if::cfg_if;
 use clap::{crate_version, Clap};
 use fuse3::{raw::Session, MountOptions};
-use futures::{Future, FutureExt, TryFutureExt};
+#[cfg(not(test))]
+use futures::FutureExt;
+use futures::{Future, TryFutureExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -84,7 +91,7 @@ impl Socket {
 }
 
 struct Bfffsd {
-    db:           Arc<Database>,
+    controller:   Controller,
     _dev_manager: DevManager,
     mount_opts:   MountOptions,
     sock:         Socket,
@@ -152,24 +159,35 @@ impl Bfffsd {
                 std::process::exit(1);
             })
             .1;
-        let db = Arc::new(dev_manager.import_by_uuid(uuid).await.unwrap());
+        let db = dev_manager.import_by_uuid(uuid).await.unwrap();
+        let controller = Controller::new(db);
 
         Bfffsd {
-            db,
+            controller,
             _dev_manager: dev_manager,
             mount_opts,
             sock,
         }
     }
 
+    #[cfg_attr(test, allow(unused_variables))]
     fn mount(
         &self,
         mountpoint: PathBuf,
         tree_id: TreeID,
     ) -> impl Future<Output = Result<(), io::Error>> + Send {
         let mo2 = self.mount_opts.clone();
-        FuseFs::new(self.db.clone(), tree_id)
-            .then(move |fs| Session::new(mo2).mount(fs, mountpoint))
+        cfg_if! {
+            if #[cfg(test)] {
+                Session::new(mo2).mount(FuseFs::default(), mountpoint)
+            } else {
+                self.controller.new_fs(tree_id)
+                    .then(|fs| {
+                        let fusefs = FuseFs::new(fs);
+                        Session::new(mo2).mount(fusefs, mountpoint)
+                    })
+            }
+        }
     }
 
     async fn process(&self, req: rpc::Request, creds: UCred) -> rpc::Response {
@@ -191,7 +209,7 @@ impl Bfffsd {
     }
 
     async fn run(mut self) {
-        let db2 = self.db.clone();
+        let c2 = self.controller.clone();
 
         // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
         // this is very handy for debugging the cleaner.
@@ -199,7 +217,7 @@ impl Bfffsd {
             let mut stream = signal(SignalKind::user_defined1()).unwrap();
             loop {
                 stream.recv().await;
-                db2.clean().await.unwrap()
+                c2.clean().await.unwrap()
             }
         });
 

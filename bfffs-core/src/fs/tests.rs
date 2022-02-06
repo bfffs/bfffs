@@ -33,7 +33,7 @@ async fn setup() -> (Database, TreeID) {
             mock_range_query(Vec::new())
         });
     let mut db = Database::default();
-    db.expect_new_fs()
+    db.expect_create_fs()
         .once()
         .returning(|_| future::ok(TreeID::Fs(0)).boxed());
     db.expect_fsread_inner()
@@ -52,7 +52,7 @@ async fn setup() -> (Database, TreeID) {
     // Use a small recordsize for most tests, because it's faster to test
     // conditions that require multiple records.
     let props = vec![Property::RecordSize(12)];
-    let tree_id = db.new_fs(props).await.unwrap();
+    let tree_id = db.create_fs(props).await.unwrap();
     (db, tree_id)
 }
 

@@ -1044,6 +1044,9 @@ impl Fs {
     }
 
     /// Create a new Fs object (in memory, not on disk).
+    // Should be private.  Is only public so it can be used by the functional
+    // tests.
+    #[doc(hidden)]
     pub async fn new(database: Arc<Database>, tree: TreeID)
         -> Self
     {

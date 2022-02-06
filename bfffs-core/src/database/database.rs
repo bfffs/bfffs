@@ -435,7 +435,7 @@ impl Database {
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
-    pub fn new_fs(&self, props: Vec<Property>)
+    pub fn create_fs(&self, props: Vec<Property>)
         -> impl Future<Output=Result<TreeID, Error>> + Send
     {
         self.inner.dirty.store(true, Ordering::Relaxed);

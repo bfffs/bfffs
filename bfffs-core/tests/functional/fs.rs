@@ -42,7 +42,7 @@ mod fs {
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        let tree_id = db.new_fs(props).await.unwrap();
+        let tree_id = db.create_fs(props).await.unwrap();
         let fs = Fs::new(db.clone(), tree_id).await;
         (fs, cache, db, tree_id)
     }
@@ -3840,7 +3840,7 @@ mod torture {
         let idml = IDML::create(ddml, cache);
         let db = Arc::new(Database::create(Arc::new(idml)));
         let (db, tree_id) = rt.block_on(async move {
-            let tree_id = db.new_fs(Vec::new()).await.unwrap();
+            let tree_id = db.create_fs(Vec::new()).await.unwrap();
             (db, tree_id)
         });
         let fs = rt.block_on(async {

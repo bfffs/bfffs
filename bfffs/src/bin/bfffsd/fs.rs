@@ -7,14 +7,18 @@ use std::{
     os::unix::ffi::OsStrExt,
     pin::Pin,
     slice,
-    sync::{Arc, Mutex},
+    sync::Mutex,
     time::Duration,
 };
 
 use async_trait::async_trait;
-use bfffs_core::{
-    database::{TreeID, *},
-    fs::{self, ExtAttr, ExtAttrNamespace, FileData, SeekWhence, Timespec},
+use bfffs_core::fs::{
+    self,
+    ExtAttr,
+    ExtAttrNamespace,
+    FileData,
+    SeekWhence,
+    Timespec,
 };
 use bytes::Bytes;
 use cfg_if::cfg_if;
@@ -168,8 +172,7 @@ impl FuseFs {
         }
     }
 
-    pub async fn new(database: Arc<Database>, tree: TreeID) -> Self {
-        let fs = Fs::new(database, tree).await;
+    pub fn new(fs: Fs) -> Self {
         FuseFs::from(fs)
     }
 
@@ -234,6 +237,13 @@ impl FuseFs {
         } else {
             /* Removing uncached entries is OK */
         };
+    }
+}
+
+#[cfg(test)]
+impl Default for FuseFs {
+    fn default() -> Self {
+        FuseFs::new(Fs::default())
     }
 }
 
