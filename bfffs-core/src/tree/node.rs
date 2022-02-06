@@ -2,7 +2,7 @@
 
 //! Nodes for Trees (private module)
 use crate::{
-    dml::*,
+    dml::{Cacheable, CacheRef, DML},
     types::*,
     util::*,
     writeback::Credit
@@ -1469,7 +1469,10 @@ fn yes() {
 #[cfg(test)]
 mod serialization {
 
-use crate::ddml::DRP;
+use crate::{
+    dml::Compression,
+    ddml::DRP
+};
 use pretty_assertions::assert_eq;
 use std::ops::Deref;
 use super::*;

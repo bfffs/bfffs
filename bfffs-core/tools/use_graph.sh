@@ -34,15 +34,24 @@ sed -I "" -E '
 /node::serialization\>/d
 /_mock\>/d
 #
-# Exclude boring utility modules
-/"bfffs_core::types"/d
-/"bfffs_core::util"/d
-/"bfffs_core::vdev"/d
+# Exclude edges for utility modules and trait definitions that are used at many
+# levels of the stack
+/-> "bfffs_core::types"/d
+/-> "bfffs_core::util"/d
+/-> "bfffs_core::vdev"/d
+/-> "bfffs_core::dml"/d
+# Exclude serde serializer modules, which are tiny and only used by proc macros,
+# which cargo-modules does not understand.
 /_serializer"/d
 #
 # Exclude ownership edges.  They are confusing when combined with use edges.
 /label=.owns/d
 s/label="uses", //
+#
+# Fixup certain edges that cargo-modules creates incorrectly due to
+# https://github.com/regexident/cargo-modules/issues/79
+s/cluster" -> "bfffs_core::raid::vdev_raid_api"/cluster" -> "bfffs_core::raid"/
+s/tree::node" -> "bfffs_core::cache"/tree::node" -> "bfffs_core::dml"/
 ' $TEMPFILE
 
 if [ "$VERBOSE" -lt 2 ]; then
@@ -66,7 +75,7 @@ if [ "$VERBOSE" -lt 2 ]; then
 	# The only reason it doesn't appear that way is because of
 	# https://github.com/regexident/cargo-modules/issues/79
 	sed -I "" -E "
-	/mod\|tree::node/d
+	/mod\|tree::node\"/d
 	s/tree::node/tree/
 	/\"bfffs_core::tree\" -> \"bfffs_core::tree\"/d
 	" $TEMPFILE
@@ -75,11 +84,11 @@ fi
 if [ "$VERBOSE" -lt 1 ]; then
 	# Exclude some control-path modules that are used all over the place
 	sed -I "" -E '
-		/"bfffs_core::cache"/d
+		/-> "bfffs_core::cache/d
 		/"bfffs_core::cache::cache"/d
-		/"bfffs_core::device_manager"/d
-		/"bfffs_core::label"/d
-		/"bfffs_core::writeback"/d
+		/"bfffs_core::device_manager" ->/d
+		/-> "bfffs_core::label"/d
+		/-> "bfffs_core::writeback"/d
 		/"bfffs_core::writeback::writeback"/d
 	' $TEMPFILE
 fi
