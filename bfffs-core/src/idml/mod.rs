@@ -22,7 +22,7 @@ mod idml;
 #[double]
 pub use self::idml::IDML;
 
-pub use crate::ddml::ClosedZone;
+pub type ClosedZone = crate::ddml::ClosedZone;
 
 pub type DTree<K, V> = Tree<DRP, DDML, K, V>;
 

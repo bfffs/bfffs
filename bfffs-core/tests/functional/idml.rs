@@ -201,6 +201,7 @@ mod t {
     use bfffs_core::*;
     use bfffs_core::cache::*;
     use bfffs_core::pool::*;
+    use bfffs_core::dml::*;
     use bfffs_core::ddml::*;
     use bfffs_core::idml::*;
     use divbuf::DivBufShared;

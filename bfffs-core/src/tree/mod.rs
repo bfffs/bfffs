@@ -11,11 +11,16 @@ use serde::de::DeserializeOwned;
 use std::ops::Range;
 
 mod node;
-// Node is _supposed_ to be private, but must technically be public for the sake
-// of the integration tests.
-pub use self::node::*;
-
+use self::node::NodeId;
 pub use self::node::{Addr, Key, MinValue, Value};
+
+// Node is _supposed_ to be private, but these types must technically be public
+// for the sake of the integration tests.
+pub use self::node::{
+    IntData, IntElem, LeafData, Limits, Node, NodeData,
+    TreePtr, TreeReadGuard, TreeWriteGuard
+};
+
 
 pub(super) mod tree;
 
