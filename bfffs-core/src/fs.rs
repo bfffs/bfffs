@@ -57,6 +57,10 @@ mod htable {
     };
     use super::{ReadOnlyFilesystem, ReadWriteFilesystem};
 
+    // Just makes use_graph.sh look better.
+    #[allow(dead_code)]
+    pub(super) type Dummy = ();
+
     /// Argument type for `htable::get`.
     // A more obvious approach would be to create a ReadDataset trait that is
     // implemented by both filesystem types.  However, that would require extra
@@ -255,6 +259,11 @@ mod htable {
         })
     }
 }
+
+// Just to make use_graph.sh's output look better.  Logically fs uses
+// fs::htable.  But it doesn't have any use statements except for this one.
+#[allow(unused_imports)]
+use htable::Dummy;
 
 /// BFFF's version of `struct uio`.  For userland implementations, this is just
 /// a wrapper around a slice.  For kernelland implementations, it will probably
