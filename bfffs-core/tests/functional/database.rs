@@ -99,7 +99,7 @@ mod persistence {
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
-        // let tree_id = rt.block_on(db.new_fs(Vec::new())).unwrap();
+        // let tree_id = rt.block_on(db.create_fs(Vec::new())).unwrap();
         (rt, db, tempdir, filename)
     }
 
@@ -179,7 +179,7 @@ mod t {
         let idml = Arc::new(IDML::create(ddml, cache));
         let (db, tree_id) = rt.block_on(async move {
             let db = Database::create(idml);
-            let tree_id = db.new_fs(Vec::new()).await.unwrap();
+            let tree_id = db.create_fs(Vec::new()).await.unwrap();
             (db, tree_id)
         });
         (rt, db, tempdir, tree_id)
@@ -215,11 +215,11 @@ mod t {
     }
 
     #[rstest]
-    fn new_fs_with_props(objects: (Runtime, Database, TempDir, TreeID)) {
+    fn create_fs_with_props(objects: (Runtime, Database, TempDir, TreeID)) {
         let (rt, db, _tempdir, _first_tree_id) = objects;
         let props = vec![Property::RecordSize(5)];
         let tree_id = rt.block_on(async {
-            db.new_fs(props)
+            db.create_fs(props)
             .await
         }).unwrap();
         let (val, source) = rt.block_on(async {

@@ -328,7 +328,7 @@ mod pool {
                 let idml = Arc::new(IDML::create(ddml, cache));
                 Database::create(idml)
             };
-            db.new_fs(props)
+            db.create_fs(props)
                 .and_then(|_tree_id| db.sync_transaction())
                 .await
                 .unwrap()
