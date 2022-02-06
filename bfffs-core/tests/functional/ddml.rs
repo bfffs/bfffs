@@ -2,6 +2,7 @@
 mod ddml {
     use bfffs_core::{
         cache::*,
+        dml::*,
         ddml::*,
         pool::*,
         TxgT

@@ -20,7 +20,6 @@ use std::{
     ops::RangeBounds,
     pin::Pin
 };
-pub use crate::tree::CreditRequirements;
 
 cfg_if! {
     if #[cfg(test)]{

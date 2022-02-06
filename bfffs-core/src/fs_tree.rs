@@ -4,9 +4,9 @@
 
 use bitfield::bitfield;
 use crate::{
-    dml::*,
+    dml::{Compression, DML},
     property::*,
-    tree::*,
+    tree::{Addr, Key, MinValue, Value},
     types::*,
     util::*
 };

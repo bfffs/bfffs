@@ -12,7 +12,6 @@ use bfffs_core::{
     fs::{ExtAttr, ExtAttrNamespace, FileData, GetAttr, SeekWhence, SetAttr},
     property::Property,
     SGList,
-    RID,
 };
 use divbuf::DivBuf;
 use futures::Stream;
@@ -47,9 +46,9 @@ mock! {
             parent: &'a FileData, name: &OsStr) -> Result<FileData, i32>;
         pub async fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
             -> Result<Vec<u8>, i32>
-            where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static;
+            where F: Fn(&mut Vec<u8>, &ExtAttr) + Send + 'static;
         pub async fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
-            where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static;
+            where F: Fn(&ExtAttr) -> u32 + Send + 'static;
         pub async fn lseek(&self, fd: &FileData, mut offset: u64,
             whence: SeekWhence) -> Result<u64, i32>;
         pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16,

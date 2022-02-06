@@ -38,9 +38,9 @@ use std::{
 
 #[cfg(test)] mod tests;
 
-pub use crate::fs_tree::ExtAttr;
-pub use crate::fs_tree::ExtAttrNamespace;
-pub use crate::fs_tree::Timespec;
+pub type ExtAttr = crate::fs_tree::ExtAttr<RID>;
+pub type ExtAttrNamespace = crate::fs_tree::ExtAttrNamespace;
+pub type Timespec = crate::fs_tree::Timespec;
 
 /// Operations used for data that is stored in in-BTree hash tables
 mod htable {
@@ -56,6 +56,10 @@ mod htable {
         pin::Pin
     };
     use super::{ReadOnlyFilesystem, ReadWriteFilesystem};
+
+    // Just makes use_graph.sh look better.
+    #[allow(dead_code)]
+    pub(super) type Dummy = ();
 
     /// Argument type for `htable::get`.
     // A more obvious approach would be to create a ReadDataset trait that is
@@ -255,6 +259,11 @@ mod htable {
         })
     }
 }
+
+// Just to make use_graph.sh's output look better.  Logically fs uses
+// fs::htable.  But it doesn't have any use statements except for this one.
+#[allow(unused_imports)]
+use htable::Dummy;
 
 /// BFFF's version of `struct uio`.  For userland implementations, this is just
 /// a wrapper around a slice.  For kernelland implementations, it will probably
@@ -561,7 +570,7 @@ impl Fs {
         let name = name.to_owned();
         let key = FSKey::new(fd.ino, objkey);
         self.db.fswrite(self.tree, 1, 0, 1, 0, move |dataset| async move {
-            htable::remove::<ReadWriteFilesystem, ExtAttr<RID>>(dataset,
+            htable::remove::<ReadWriteFilesystem, ExtAttr>(dataset,
                 key, ns, name).await
         }).map_ok(drop)
         .map_err(Error::into)
@@ -1471,7 +1480,7 @@ impl Fs {
     /// A buffer containing all extended attributes' names packed by `f`.
     pub async fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
         -> Result<Vec<u8>, i32>
-        where F: Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
+        where F: Fn(&mut Vec<u8>, &ExtAttr) + Send + 'static
     {
         let ino = fd.ino;
         self.db.fsread(self.tree, move |dataset| {
@@ -1506,7 +1515,7 @@ impl Fs {
     ///
     /// The length of buffer that would be required for `listextattr`.
     pub async fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
-        where F: Fn(&ExtAttr<RID>) -> u32 + Send + 'static
+        where F: Fn(&ExtAttr) -> u32 + Send + 'static
     {
         let ino = fd.ino;
         self.db.fsread(self.tree, move |dataset| {

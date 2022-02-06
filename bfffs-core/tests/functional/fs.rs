@@ -3,7 +3,7 @@
 // mounting
 mod fs {
     use bfffs_core::{
-        {RID, ZERO_REGION_LEN},
+        ZERO_REGION_LEN,
         cache::*,
         database::*,
         ddml::*,
@@ -978,9 +978,9 @@ root:
     /// In due course this should move into the FreeBSD implementation of
     /// `vop_listextattr`, and the test should move into that file, too.
     fn listextattr_lenf(ns: ExtAttrNamespace)
-        -> impl Fn(&ExtAttr<RID>) -> u32 + Send + 'static
+        -> impl Fn(&ExtAttr) -> u32 + Send + 'static
     {
-        move |extattr: &ExtAttr<RID>| {
+        move |extattr: &ExtAttr| {
             if ns == extattr.namespace() {
                 let name = extattr.name();
                 assert!(name.len() as u32 <= u32::from(u8::max_value()));
@@ -996,9 +996,9 @@ root:
     /// In due course this should move into the FreeBSD implementation of
     /// `vop_listextattr`, and the test should move into that file, too.
     fn listextattr_lsf(ns: ExtAttrNamespace)
-        -> impl Fn(&mut Vec<u8>, &ExtAttr<RID>) + Send + 'static
+        -> impl Fn(&mut Vec<u8>, &ExtAttr) + Send + 'static
     {
-        move |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
+        move |buf: &mut Vec<u8>, extattr: &ExtAttr| {
             if ns == extattr.namespace() {
                 assert!(extattr.name().len() <= u8::max_value() as usize);
                 buf.push(extattr.name().len() as u8);

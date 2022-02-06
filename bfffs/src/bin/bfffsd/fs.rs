@@ -15,7 +15,6 @@ use async_trait::async_trait;
 use bfffs_core::{
     database::{TreeID, *},
     fs::{self, ExtAttr, ExtAttrNamespace, FileData, SeekWhence, Timespec},
-    RID,
 };
 use bytes::Bytes;
 use cfg_if::cfg_if;
@@ -570,7 +569,7 @@ impl Filesystem for FuseFs {
             .get(&ino)
             .expect("listxattr before lookup or after forget");
         if size == 0 {
-            let f = |extattr: &ExtAttr<RID>| {
+            let f = |extattr: &ExtAttr| {
                 let name = extattr.name();
                 let prefix_len = match extattr.namespace() {
                     ExtAttrNamespace::User => b"user.".len(),
@@ -583,7 +582,7 @@ impl Filesystem for FuseFs {
                 Err(e) => Err(e.into()),
             }
         } else {
-            let f = |buf: &mut Vec<u8>, extattr: &ExtAttr<RID>| {
+            let f = |buf: &mut Vec<u8>, extattr: &ExtAttr| {
                 let s = match extattr.namespace() {
                     ExtAttrNamespace::User => &b"user."[..],
                     ExtAttrNamespace::System => &b"system."[..],

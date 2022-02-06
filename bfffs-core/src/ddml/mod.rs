@@ -8,11 +8,11 @@
 use crate::{
     types::*,
     util::*,
+    dml::Compression
 };
 #[cfg(test)] use rand::{self, Rng};
 
-pub use crate::dml::{Compression, DML};
-pub use crate::pool::ClosedZone;
+pub type ClosedZone = crate::pool::ClosedZone;
 
 use mockall_double::*;
 use serde_derive::{Deserialize, Serialize};

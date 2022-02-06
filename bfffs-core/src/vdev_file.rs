@@ -106,6 +106,8 @@ mod ffi {
     }
 }
 
+use ffi::{diocgdelete, diocgattr, diocgattr_arg};
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
@@ -188,12 +190,12 @@ impl VdevFile {
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
     fn candelete(fd: RawFd) -> Result<bool, Error> {
-        let mut arg = MaybeUninit::<ffi::diocgattr_arg>::uninit();
+        let mut arg = MaybeUninit::<diocgattr_arg>::uninit();
         let r = unsafe {
             let p = arg.as_mut_ptr();
             (*p).name[0..16].copy_from_slice(b"GEOM::candelete\0");
             (*p).len = mem::size_of::<c_int>() as c_int;
-            ffi::diocgattr(fd, p)
+            diocgattr(fd, p)
         }.map(|_| unsafe { arg.assume_init().value.i } != 0)
         .map_err(Error::from);
         if r == Err(Error::ENOTTY) {
@@ -261,7 +263,7 @@ impl VdevFile {
                 let t = task::spawn_blocking(move || {
                     let args = [off, len];
                     unsafe {
-                        ffi::diocgdelete(fd, &args)
+                        diocgdelete(fd, &args)
                     }.map(drop)
                 }).map(Result::unwrap)
                 .map_err(Error::from);
