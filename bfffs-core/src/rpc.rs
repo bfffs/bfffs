@@ -6,7 +6,7 @@
 
 use crate::{
     Error,
-    database::TreeID
+    controller::TreeID
 };
 use serde_derive::{Deserialize, Serialize};
 use std::path::PathBuf;
