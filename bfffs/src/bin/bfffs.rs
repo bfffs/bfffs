@@ -1,6 +1,6 @@
-use std::{path::PathBuf, process::exit, sync::Arc};
+use std::{convert::TryFrom, path::PathBuf, process::exit, sync::Arc};
 
-use bfffs::Bfffs;
+use bfffs::{Bfffs, Error};
 use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
@@ -26,7 +26,7 @@ impl Check {
     // * RIDT and AllocT are exact inverses
     // * RIDT contains no orphan entries not found in the FSTrees
     // * Spacemaps match actual usage
-    pub async fn main(self) {
+    pub async fn main(self) -> Result<(), Error> {
         let dev_manager = DevManager::default();
         for dev in self.disks.iter() {
             dev_manager.taste(dev).await.unwrap();
@@ -43,6 +43,7 @@ impl Check {
         );
         db.check().await.unwrap();
         // TODO: the other checks
+        Ok(())
     }
 }
 
@@ -94,16 +95,17 @@ impl Dump {
             });
         let db = Arc::new(db);
         // For now, hardcode tree_id to 0
-        let tree_id = TreeID::Fs(0);
+        let tree_id = TreeID(0);
         db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
-    async fn main(self) {
+    async fn main(self) -> Result<(), Error> {
         if self.fsm {
             self.dump_fsm().await;
         } else if self.tree {
             self.dump_tree().await
         }
+        Ok(())
     }
 }
 
@@ -120,6 +122,39 @@ mod fs {
 
     use super::*;
 
+    /// Create a new file system
+    #[derive(Clap, Clone, Debug)]
+    pub(super) struct Create {
+        /// File system name
+        pub(super) name:       String,
+        /// File system properties, comma delimited
+        #[clap(
+            short = 'o',
+            long,
+            require_delimiter(true),
+            value_delimiter(',')
+        )]
+        pub(super) properties: Vec<String>,
+    }
+
+    impl Create {
+        pub(super) async fn main(self, sock: &Path) -> Result<(), Error> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            let props = self
+                .properties
+                .iter()
+                .map(|ps| {
+                    Property::try_from(ps.as_str()).unwrap_or_else(|_e| {
+                        eprintln!("Invalid property specification {}", ps);
+                        std::process::exit(2);
+                    })
+                })
+                .collect::<Vec<_>>();
+            let req = rpc::fs::create(self.name, props);
+            bfffs.call(req).await.unwrap().into_fs_create().map(drop)
+        }
+    }
+
     /// Mount a file system
     #[derive(Clap, Clone, Debug)]
     pub(super) struct Mount {
@@ -130,33 +165,32 @@ mod fs {
             require_delimiter(true),
             value_delimiter(',')
         )]
-        options:    Vec<String>,
-        /// Pool name
-        pool_name:  String,
+        pub(super) options:    Vec<String>,
+        /// File system name, including the pool.
+        pub(super) name:       String,
         /// Mountpoint
-        mountpoint: PathBuf,
+        pub(super) mountpoint: PathBuf,
     }
 
     impl Mount {
-        pub(super) async fn main(self, sock: &Path) {
-            // For now, hardcode tree_id to 0
-            let tree_id = TreeID::Fs(0);
-
+        pub(super) async fn main(self, sock: &Path) -> Result<(), Error> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            let req = rpc::Request::mount(self.mountpoint, tree_id);
+            let req = rpc::fs::mount(self.mountpoint, self.name);
             bfffs.call(req).await.unwrap();
+            Ok(())
         }
     }
 
     #[derive(Clap, Clone, Debug)]
     /// Create, destroy, and modify file systems
     pub(super) enum FsCmd {
+        Create(Create),
         Mount(Mount),
     }
 }
 
 mod pool {
-    use std::{convert::TryFrom, num::NonZeroU64, sync::Mutex};
+    use std::{num::NonZeroU64, sync::Mutex};
 
     use bfffs_core::{
         cache::Cache,
@@ -187,7 +221,7 @@ mod pool {
     }
 
     impl Create {
-        pub(super) async fn main(self) {
+        pub(super) async fn main(self) -> Result<(), Error> {
             let zone_size = self.zone_size.map(|mbs| {
                 let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
                 NonZeroU64::new(lbas).expect("zone_size may not be zero")
@@ -243,7 +277,8 @@ mod pool {
                     }
                 }
             }
-            builder.format().await
+            builder.format().await;
+            Ok(())
         }
     }
 
@@ -328,7 +363,8 @@ mod pool {
                 let idml = Arc::new(IDML::create(ddml, cache));
                 Database::create(idml)
             };
-            db.create_fs(props)
+            // Create the root file system
+            db.create_fs(None, "", props)
                 .and_then(|_tree_id| db.sync_transaction())
                 .await
                 .unwrap()
@@ -364,10 +400,13 @@ struct Cli {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() {
+async fn main() -> Result<(), Error> {
     let cli: Cli = Cli::parse();
     match cli.cmd {
         SubCommand::Check(check) => check.main().await,
+        SubCommand::Fs(fs::FsCmd::Create(create)) => {
+            create.main(&cli.sock).await
+        }
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
@@ -391,6 +430,8 @@ mod t {
     #[case(vec!["bfffs", "debug"])]
     #[case(vec!["bfffs", "debug", "dump"])]
     #[case(vec!["bfffs", "debug", "dump", "testpool"])]
+    #[case(vec!["bfffs", "fs", "create"])]
+    #[case(vec!["bfffs", "fs", "mount", "testpool"])]
     #[case(vec!["bfffs", "pool"])]
     #[case(vec!["bfffs", "pool", "create"])]
     #[case(vec!["bfffs", "pool", "create", "testpool"])]
@@ -448,6 +489,74 @@ mod t {
                 assert!(debug.tree);
                 assert_eq!(debug.disks[0], Path::new("/dev/da0"));
                 assert_eq!(debug.disks[1], Path::new("/dev/da1"));
+            }
+        }
+    }
+
+    mod fs {
+        use super::*;
+        use crate::fs::*;
+
+        mod create {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "create", "testpool/foo"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Create(_))));
+                if let SubCommand::Fs(FsCmd::Create(create)) = cli.cmd {
+                    assert_eq!(create.name, "testpool/foo");
+                    assert!(create.properties.is_empty());
+                }
+            }
+
+            #[test]
+            fn props() {
+                let args = vec![
+                    "bfffs",
+                    "fs",
+                    "create",
+                    "-o",
+                    "atime=off,recsize=65536",
+                    "testpool/foo",
+                ];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Create(_))));
+                if let SubCommand::Fs(FsCmd::Create(create)) = cli.cmd {
+                    assert_eq!(
+                        create.properties,
+                        vec!["atime=off", "recsize=65536"]
+                    );
+                }
+            }
+        }
+
+        mod mount {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "mount", "testpool", "/mnt"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Mount(_))));
+                if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
+                    assert_eq!(mount.name, "testpool");
+                    assert_eq!(mount.mountpoint, Path::new("/mnt"));
+                    assert!(mount.options.is_empty());
+                }
+            }
+
+            #[test]
+            fn subfs() {
+                let args = vec!["bfffs", "fs", "mount", "testpool/foo", "/mnt"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Mount(_))));
+                if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
+                    assert_eq!(mount.name, "testpool/foo");
+                    assert_eq!(mount.mountpoint, Path::new("/mnt"));
+                    assert!(mount.options.is_empty());
+                }
             }
         }
     }

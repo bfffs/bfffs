@@ -125,3 +125,40 @@ async fn options(harness: Harness) {
 
     unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
+
+/// Mount a dataset other than the pool root
+#[rstest]
+#[tokio::test]
+async fn subfs(harness: Harness) {
+    require_fusefs!("bfffs::fs::mount::ok");
+
+    let mountpoint = harness.tempdir.path().join("mnt");
+    fs::create_dir(&mountpoint).unwrap();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("create")
+        .arg("mypool/foo")
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool/foo")
+        .arg(&mountpoint)
+        .assert()
+        .success();
+
+    // Mounting a file system is not synchronous.
+    // https://github.com/Sherlock-Holo/fuse3/issues/27
+    waitfor(Duration::from_secs(5), || {
+        statfs(&mountpoint).unwrap().filesystem_type_name() == "fusefs.bfffs"
+    })
+    .expect("Timeout waiting for bfffs to mount");
+    unmount(&mountpoint, MntFlags::empty()).unwrap();
+}

@@ -16,7 +16,7 @@ use mockall::mock;
 /*
  * Mock BFFFS structs
  * ==================
- * We need to use mock! here instead of automock because bfffs is technically in
+ * We need to use mock! here instead of automock because Fs is technically in
  * the bfffs-core crate, so it doesn't get built in test mode when bfffs does.
  */
 mock! {

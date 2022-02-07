@@ -67,7 +67,7 @@ async fn atime(harness: Harness) {
     // Check that we can actually open it.
     // Hard-code tree id until BFFFS supports multiple datasets
     let db = open(pool_name, &filenames[0..1]).await;
-    let tree_id = TreeID::Fs(0);
+    let tree_id = TreeID(0);
     let (val, src) = db.get_prop(tree_id, PropertyName::Atime).await.unwrap();
     assert_eq!(val, Property::Atime(false));
     assert_eq!(src, PropertySource::Local);
@@ -173,7 +173,7 @@ async fn recsize(harness: Harness) {
     // Check that we can actually open it.
     let db = open("mypool", &filenames[0..1]).await;
     // Hard-code tree id until BFFFS supports multiple datasets
-    let tree_id = TreeID::Fs(0);
+    let tree_id = TreeID(0);
     let (val, src) = db
         .get_prop(tree_id, PropertyName::RecordSize)
         .await

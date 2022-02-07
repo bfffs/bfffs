@@ -164,6 +164,10 @@ impl DDML {
             )
     }
 
+    pub fn pool_name(&self) -> &str {
+        self.pool.name()
+    }
+
     /// Does most of the work of DDML::put
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
@@ -315,6 +319,7 @@ mock! {
         pub fn list_closed_zones(&self)
             -> Box<dyn Iterator<Item=ClosedZone> + Send>;
         pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        pub fn pool_name(&self) -> &str;
         pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
         pub fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,

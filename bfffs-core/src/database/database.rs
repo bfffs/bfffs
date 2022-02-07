@@ -8,9 +8,8 @@ use crate::{
     idml::*,
     label::*,
     property::*,
-    tree::{Tree, TreeOnDisk},
+    tree::TreeOnDisk,
     types::*,
-    writeback::Credit
 };
 use futures::{
     Future,
@@ -39,7 +38,7 @@ use std::{
         Arc,
     },
 };
-use super::TreeID;
+use super::{Forest, TreeID};
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
@@ -61,8 +60,8 @@ impl PropCacheKey {
 
     /// Construct a range that encompasses the named property for every dataset
     fn range(name: PropertyName) -> Range<Self> {
-        let start = PropCacheKey::new(name, TreeID::Fs(0));
-        let end = PropCacheKey::new(name.next(), TreeID::Fs(0));
+        let start = PropCacheKey::new(name, TreeID(0));
+        let end = PropCacheKey::new(name.next(), TreeID(0));
         start..end
     }
 }
@@ -162,18 +161,25 @@ struct Inner {
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
     fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
-    forest: Arc<ITree<TreeID, TreeOnDisk<RID>>>,
+    /// Stores the Tree of Trees on disk.
+    /// * keys are of type ForestKey
+    /// * Values are of two types:
+    ///   - with offset 0, stores a ForestValue::TreeOnDisk
+    ///   - with offset > 0, stores a ForestValue::TreeEnt
+    // Would access be faster if we keyed the forest by (<parent TreeID,
+    // TreeID>) or by (<parent name>, <name>) or by <parent TreeID, hash(name)>?
+    forest: Forest,
     idml: Arc<IDML>,
     propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
+    fn new(idml: Arc<IDML>, forest: Forest) -> Self
     {
         let dirty = AtomicBool::new(true);
         let fs_trees = RwLock::new(BTreeMap::new());
         let propcache = Mutex::new(BTreeMap::new());
-        Inner{dirty, fs_trees, idml, forest: Arc::new(forest), propcache}
+        Inner{dirty, fs_trees, idml, forest, propcache}
     }
 
     fn new_filesystem(
@@ -202,12 +208,8 @@ impl Inner {
                 Some(fs) => Ok(fs.clone()),
                 None => {
                     drop(rguard);
-                    match inner2.forest.get(tree_id).await? {
-                        Some(tod) => {
-                            Inner::new_filesystem(&inner2, tree_id, tod).await
-                        },
-                        None => Err(Error::ENOENT)
-                    }
+                    let tod = inner2.forest.get_tree(tree_id).await?;
+                    Inner::new_filesystem(&inner2, tree_id, tod).await
                 }
             }
         }
@@ -311,11 +313,12 @@ impl Database {
 
     fn check_forest(&self) -> impl Future<Output=Result<bool, Error>> {
         let inner2 = self.inner.clone();
-        self.inner.forest.range(..)
+        self.inner.forest.trees()
         .try_fold(true, move |passed, (tree_id, tod)| {
             Inner::new_filesystem(&inner2, tree_id, tod)
             .and_then(move |tree| tree.check())
             .map_ok(move |r| r && passed)
+            // TODO: check for dangling TreeEnts
         })
     }
 
@@ -334,8 +337,7 @@ impl Database {
     /// Must be constructed from the context of a Tokio runtime.
     pub fn create(idml: Arc<IDML>) -> Self
     {
-        // Compression ratio is a total guess; it hasn't been measured yet.
-        let forest = ITree::create(idml.clone(), true, 4.0, 2.0);
+        let forest = Forest::create(idml.clone());
         Database::new(idml, forest)
     }
 
@@ -432,91 +434,101 @@ impl Database {
         .map_ok(drop)
     }
 
+    pub async fn lookup_fs(&self, name: &str) -> Result<Option<TreeID>, Error>
+    {
+        self.inner.forest.lookup(name).await
+    }
+
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
-    pub fn create_fs(&self, props: Vec<Property>)
-        -> impl Future<Output=Result<TreeID, Error>> + Send
+    pub async fn create_fs<S>(&self, parent: Option<TreeID>, name: S,
+                  props: Vec<Property>)
+        -> Result<TreeID, Error>
+        where S: Into<String> + 'static
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
+        let idml3 = self.inner.idml.clone();
         let inner3 = self.inner.clone();
+        let ninsert = props.len() + 3;
         // The FS tree's compressibility varies greatly, especially based on
         // whether the write pattern is sequential or random.  5.98x is the
         // lower value for random access.  We'll use that rather than the
         // upper value, to keep cache usage lower.
-        let fs = Arc::new(ITree::create(idml2, false, 9.00, 1.61));
-        let ninsert = props.len() + 3;
-        self.inner.fs_trees.with_write(move |mut guard| async move {
-            let k = (0..=u32::max_value()).find(|i| {
-                !guard.contains_key(&TreeID::Fs(*i))
-            }).expect("Maximum number of filesystems reached");
-            let tree_id: TreeID = TreeID::Fs(k);
-            guard.insert(tree_id, fs);
-            drop(guard);
+        let fs = Arc::new(
+            ITree::<FSKey, FSValue<RID>>::create(idml2, false, 9.00, 1.61)
+        );
+        let txg_guard = idml3.txg().await;
+        fs.clone().flush(*txg_guard).await?;
 
-            // Create the filesystem's root directory
-            Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset| {
-                let ino = 1;    // FUSE requires root dir to have inode 1
-                let inode_key = FSKey::new(ino, ObjKey::Inode);
-                let now = Timespec::now();
+        // Write the new Tree to the Forest, the source-of-truth for trees
+        let tod = fs.serialize().unwrap();
+        let tree_id = inner3.forest.insert_tree(parent, name.into(), tod,
+            *txg_guard).await?;
 
-                let inode = Inode {
-                    size: 0,
-                    bytes: 0,
-                    nlink: 1,   // for "."
-                    flags: 0,
-                    atime: now,
-                    mtime: now,
-                    ctime: now,
-                    birthtime: now,
-                    uid: 0,
-                    gid: 0,
-                    file_type: FileType::Dir,
-                    perm: 0o755
-                };
-                let inode_value = FSValue::Inode(inode);
+        // Create the filesystem's root directory
+        Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset|
+        {
+            let ino = 1;    // FUSE requires root dir to have inode 1
+            let inode_key = FSKey::new(ino, ObjKey::Inode);
+            let now = Timespec::now();
 
-                // Create the /. and /.. directory entries
-                let dot_dirent = Dirent {
-                    ino,
-                    dtype: libc::DT_DIR,
-                    name:  OsString::from(".")
-                };
-                let dot_objkey = ObjKey::dir_entry(OsStr::new("."));
-                let dot_key = FSKey::new(ino, dot_objkey);
-                let dot_value = FSValue::DirEntry(dot_dirent);
+            let inode = Inode {
+                size: 0,
+                bytes: 0,
+                nlink: 1,   // for "."
+                flags: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                birthtime: now,
+                uid: 0,
+                gid: 0,
+                file_type: FileType::Dir,
+                perm: 0o755
+            };
+            let inode_value = FSValue::Inode(inode);
 
-                let dotdot_dirent = Dirent {
-                    ino: 1,     // The VFS replaces this
-                    dtype: libc::DT_DIR,
-                    name:  OsString::from("..")
-                };
-                let dotdot_objkey = ObjKey::dir_entry(OsStr::new(".."));
-                let dotdot_key = FSKey::new(ino, dotdot_objkey);
-                let dotdot_value = FSValue::DirEntry(dotdot_dirent);
+            // Create the /. and /.. directory entries
+            let dot_dirent = Dirent {
+                ino,
+                dtype: libc::DT_DIR,
+                name:  OsString::from(".")
+            };
+            let dot_objkey = ObjKey::dir_entry(OsStr::new("."));
+            let dot_key = FSKey::new(ino, dot_objkey);
+            let dot_value = FSValue::DirEntry(dot_dirent);
 
-                // Set initial properties
-                let futs = props.iter()
-                .map(|prop|
-                     Database::insert_prop(&dataset, prop.clone()).boxed()
-                ).collect::<FuturesUnordered<_>>();
-                futs.push(
-                    dataset.insert(inode_key, inode_value).map_ok(drop)
-                    .boxed()
-                );
-                futs.push(
-                    dataset.insert(dot_key, dot_value).map_ok(drop)
-                    .boxed()
-                );
-                futs.push(
-                    dataset.insert(dotdot_key, dotdot_value).map_ok(drop)
-                    .boxed()
-                );
-                futs.try_collect::<Vec<_>>()
-            }).await
-            .map(|_| tree_id)
-        })
+            let dotdot_dirent = Dirent {
+                ino: 1,     // The VFS replaces this
+                dtype: libc::DT_DIR,
+                name:  OsString::from("..")
+            };
+            let dotdot_objkey = ObjKey::dir_entry(OsStr::new(".."));
+            let dotdot_key = FSKey::new(ino, dotdot_objkey);
+            let dotdot_value = FSValue::DirEntry(dotdot_dirent);
+
+            // Set initial properties
+            let futs = props.iter()
+            .map(|prop|
+                 Database::insert_prop(&dataset, prop.clone()).boxed()
+            ).collect::<FuturesUnordered<_>>();
+            futs.push(
+                dataset.insert(inode_key, inode_value).map_ok(drop)
+                .boxed()
+            );
+            futs.push(
+                dataset.insert(dot_key, dot_value).map_ok(drop)
+                .boxed()
+            );
+            futs.push(
+                dataset.insert(dotdot_key, dotdot_value).map_ok(drop)
+                .boxed()
+            );
+            futs.try_collect::<Vec<_>>()
+        }).await?;
+        Ok(tree_id)
     }
 
     fn fsread_real<F, B, R>(&self, tree_id: TreeID, f: F)
@@ -563,7 +575,7 @@ impl Database {
     }
     // LCOV_EXCL_STOP
 
-    fn new(idml: Arc<IDML>, forest: ITree<TreeID, TreeOnDisk<RID>>) -> Self
+    fn new(idml: Arc<IDML>, forest: Forest) -> Self
     {
         let cleaner = Cleaner::new(idml.clone(), None);
         let inner = Arc::new(Inner::new(idml, forest));
@@ -581,9 +593,12 @@ impl Database {
     pub fn open(idml: Arc<IDML>, mut label_reader: LabelReader) -> Self
     {
         let l: Label = label_reader.deserialize().unwrap();
-        let forest = Tree::<RID, IDML, TreeID, TreeOnDisk<RID>>::open(
-            idml.clone(), true, l.forest);
+        let forest = Forest::open(idml.clone(), l.forest);
         Database::new(idml, forest)
+    }
+
+    pub fn pool_name(&self) -> &str {
+        self.inner.idml.pool_name()
     }
 
     fn ro_filesystem(&self, tree_id: TreeID)
@@ -672,18 +687,18 @@ impl Database {
                     itree.clone().flush(txg)
                 }).collect::<FuturesUnordered<_>>()
                 .try_collect::<Vec<_>>().await?;
+            // TODO: only write out the dirty trees
             let forest_futs = guard.iter()
                 .map(|(tree_id, itree)| {
-                    let tod = itree.serialize().unwrap();
-                    inner2.forest.clone()
-                    .insert(*tree_id, tod, txg, Credit::null())
+                    inner2.forest
+                        .update_tree(*tree_id, itree.serialize().unwrap(), txg)
                 }).collect::<FuturesUnordered<_>>();
             drop(guard);
             forest_futs.try_collect::<Vec<_>>().await?;
-            inner2.forest.clone().flush(txg).await?;
+            inner2.forest.flush(txg).await?;
             inner2.idml.clone().flush(Some(0), txg).await?;
             inner2.idml.sync_all(txg).await?;
-            let forest = inner2.forest.serialize().unwrap();
+            let forest = inner2.forest.serialize();
             let label = Label {forest};
             inner2.write_label(&label, 0, txg).await?;
             inner2.idml.clone().flush(Some(1), txg).await?;
@@ -803,8 +818,9 @@ mod prop_cache_key {
 
 mod database {
     use super::super::*;
+    use super::super::super::{ForestKey, ForestValue};
     use crate::{
-        tree::{OPEN_MTX, RangeQuery},
+        tree::{OPEN_MTX, RangeQuery, Tree},
         util::basic_runtime
     };
     use futures::{
@@ -826,7 +842,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -841,12 +857,12 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(true)));
 
-        let tod = TreeOnDisk::default();
+        let tod = ForestValue::Tree(TreeOnDisk::default());
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -857,7 +873,7 @@ mod database {
             .return_once(|_: RangeFull| rq);
 
         let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.check().await
         }).unwrap();
         assert!(r);
@@ -868,7 +884,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -883,12 +899,12 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(false)));
 
-        let tod = TreeOnDisk::default();
+        let tod = ForestValue::Tree(TreeOnDisk::default());
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -899,7 +915,7 @@ mod database {
             .return_once(|_: RangeFull| rq);
 
         let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.check().await
         }).unwrap();
         assert!(!r);
@@ -910,7 +926,7 @@ mod database {
         let _guard = OPEN_MTX.lock().unwrap();
 
         let rt = basic_runtime();
-        let tree_id = TreeID::Fs(42);
+        let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
         let mut fs_tree = Tree::default();
@@ -925,12 +941,12 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(true)));
 
-        let tod = TreeOnDisk::default();
+        let tod = ForestValue::Tree(TreeOnDisk::default());
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((tree_id, tod))));
+            .return_const(Some(Ok((forest_key, tod))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -941,7 +957,7 @@ mod database {
             .return_once(|_: RangeFull| rq);
 
         let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.check().await
         }).unwrap();
         assert!(!r);
@@ -965,7 +981,7 @@ mod database {
         let forest = Tree::default();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             Database::flush(&db.inner).await
         }).unwrap();
     }
@@ -979,7 +995,7 @@ mod database {
         let rt = basic_runtime();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.inner.dirty.store(false, Ordering::Relaxed);
             Database::flush(&db.inner).await
         }).unwrap();
@@ -993,7 +1009,7 @@ mod database {
         let rt = basic_runtime();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.shutdown().await
         });
     }
@@ -1058,7 +1074,7 @@ mod database {
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.sync_transaction()
             .and_then(move |_| {
                 // Syncing a 2nd time should be a no-op, since the database
@@ -1077,7 +1093,7 @@ mod database {
         let rt = basic_runtime();
 
         rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest);
+            let db = Database::new(Arc::new(idml), forest.into());
             db.inner.dirty.store(false, Ordering::Relaxed);
             db.sync_transaction().await
         }).unwrap();

@@ -54,13 +54,13 @@ mod persistence {
         // Height as 64 bits
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
-        0x62, 0x00,
+        0x4c, 0x00,
         // max_int_fanout as 16 bits
-                    0x85, 0x01,
+                    0x2e, 0x01,
         // min_leaf_fanout as 16 bits
-                                0x72, 0x00,
+                                0x5b, 0x00,
         // max_leaf_fanout as 16 bits
-                                            0xc6, 0x01,
+                                            0x6b, 0x01,
         // leaf node max size in bytes, as 64-bits
         0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
         // Root node's address as a RID
@@ -99,7 +99,9 @@ mod persistence {
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
-        // let tree_id = rt.block_on(db.create_fs(Vec::new())).unwrap();
+        // let tree_id = rt.block_on(db.create_fs(None, "",
+        //      Vec::new()))
+        //  .unwrap();
         (rt, db, tempdir, filename)
     }
 
@@ -179,7 +181,8 @@ mod t {
         let idml = Arc::new(IDML::create(ddml, cache));
         let (db, tree_id) = rt.block_on(async move {
             let db = Database::create(idml);
-            let tree_id = db.create_fs(Vec::new()).await.unwrap();
+            let tree_id = db.create_fs(None, "", Vec::new())
+                .await.unwrap();
             (db, tree_id)
         });
         (rt, db, tempdir, tree_id)
@@ -214,20 +217,64 @@ mod t {
         }).unwrap();
     }
 
-    #[rstest]
-    fn create_fs_with_props(objects: (Runtime, Database, TempDir, TreeID)) {
-        let (rt, db, _tempdir, _first_tree_id) = objects;
-        let props = vec![Property::RecordSize(5)];
-        let tree_id = rt.block_on(async {
-            db.create_fs(props)
-            .await
-        }).unwrap();
-        let (val, source) = rt.block_on(async {
-            db.get_prop(tree_id, PropertyName::RecordSize)
-            .await
-        }).unwrap();
-        assert_eq!(val, Property::RecordSize(5));
-        assert_eq!(source, PropertySource::Local);
+    mod create_fs {
+        use pretty_assertions::assert_eq;
+        use super::*;
+
+        #[rstest]
+        fn with_props(objects: (Runtime, Database, TempDir, TreeID)) {
+            let (rt, db, _tempdir, first_tree_id) = objects;
+            let props = vec![Property::RecordSize(5)];
+            let tree_id = rt.block_on(async {
+                db.create_fs(None, "", props)
+                .await
+            }).unwrap();
+            let (val, source) = rt.block_on(async {
+                db.get_prop(tree_id, PropertyName::RecordSize)
+                .await
+            }).unwrap();
+            assert_ne!(tree_id, first_tree_id);
+            assert_eq!(val, Property::RecordSize(5));
+            assert_eq!(source, PropertySource::Local);
+        }
+
+        /// Creating a new filesystem, when the database's in-memory cache is
+        /// cold, should not reuse a TreeID.
+        #[rstest]
+        fn cold_cache(objects: (Runtime, Database, TempDir, TreeID)) {
+            let (rt, db, tempdir, first_tree_id) = objects;
+            // Sync the database, then drop and reopen it.  That's the only way
+            // to clear Inner::fs_trees
+            rt.block_on(
+                db.sync_transaction()
+            ).unwrap();
+            drop(db);
+            let filename = tempdir.path().join("vdev");
+            let db = open_db(&rt, filename);
+
+            let tree_id = rt.block_on(async {
+                db.create_fs(None, "", vec![])
+                .await
+            }).unwrap();
+            assert_ne!(tree_id, first_tree_id);
+        }
+
+        #[rstest]
+        fn twice(objects: (Runtime, Database, TempDir, TreeID)) {
+            let (rt, db, _tempdir, first_tree_id) = objects;
+            let tree_id1 = rt.block_on(async {
+                db.create_fs(None, "", vec![])
+                .await
+            }).unwrap();
+            assert_ne!(tree_id1, first_tree_id);
+
+            let tree_id2 = rt.block_on(async {
+                db.create_fs(None, "", vec![])
+                .await
+            }).unwrap();
+            assert_ne!(tree_id2, first_tree_id);
+            assert_ne!(tree_id2, tree_id1);
+        }
     }
 
     #[rstest]
