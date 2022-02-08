@@ -6,7 +6,7 @@ use crate::{
     Error,
     database::Database,
     fs::Fs,
-    property::Property
+    property::{Property, PropertyName, PropertySource}
 };
 use futures::{
     Future,
@@ -71,6 +71,18 @@ impl Controller {
         -> Result<(), Error>
     {
         self.db.dump(f, tree).await
+    }
+
+    /// Get the value of the `propname` property the given dataset
+    pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
+        -> Result<(Property, PropertySource), Error>
+    {
+        let dsname = self.strip_pool_name(dataset)?;
+        let tree_id = match self.db.lookup_fs(dsname).await? {
+            Some(tree_id) => tree_id,
+            None => return Err(Error::ENOENT)
+        };
+        self.db.get_prop(tree_id, propname).await
     }
 
     pub fn new(db: Database) -> Self {

@@ -7,6 +7,7 @@ use bfffs_core::{
     ddml::*,
     idml::*,
     pool::*,
+    property::{Property, PropertyName, PropertySource}
 };
 use rstest::{fixture, rstest};
 use std::{
@@ -108,5 +109,17 @@ mod create_fs {
             harness.0.create_fs("foo", vec![]).await.unwrap_err(),
             Error::ENOENT
         )
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn with_props(harness: Harness) {
+        let propname = PropertyName::Atime;
+        let props = vec![Property::Atime(false)];
+        harness.0.create_fs(POOLNAME, props).await.unwrap();
+        let (value, source) = harness.0.get_prop(POOLNAME, propname).await
+            .unwrap();
+        assert_eq!(Property::Atime(false), value);
+        assert_eq!(PropertySource::Local, source);
     }
 }
