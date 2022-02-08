@@ -84,10 +84,10 @@ impl Controller {
     /// - `name`    -   Name of the file system to create, including pool name
     // Clippy false positive.
     #[allow(clippy::unnecessary_to_owned)]
-    pub fn new_fs(&self, name: String)
+    pub fn new_fs(&self, name: &str)
         -> impl Future<Output = Result<Fs, Error>> + Send
     {
-        match self.strip_pool_name(&name) {
+        match self.strip_pool_name(name) {
             Ok(fsname) => {
                 Fs::new(self.db.clone(), fsname.to_owned())
                     .map(Ok)

@@ -181,7 +181,7 @@ impl Bfffsd {
                 Session::new(mo2).mount(FuseFs::default(), mountpoint)
                     .map_err(Error::from)
             } else {
-                self.controller.new_fs(name)
+                self.controller.new_fs(&name)
                     .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);
                         Session::new(mo2).mount(fusefs, mountpoint)
