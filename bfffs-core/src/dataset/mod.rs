@@ -39,11 +39,11 @@ pub type ITree<K, V> = Tree<RID, IDML, K, V>;
 /// A Dataset that can be read from
 pub trait ReadDataset<K: Key, V: Value> {
     fn get(&self, k: K)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>;
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>;
 
     /// Read directly from the IDML, bypassing the Tree
     fn get_blob(&self, rid: RID)
-        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>;
+        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>>> + Send>>;
 
     fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
         where K: Borrow<T>,

@@ -126,13 +126,13 @@ impl Forest {
     }
 
     /// Flush all in-memory Nodes to disk.
-    pub async fn flush(&self, txg: TxgT) -> Result<(), Error> {
+    pub async fn flush(&self, txg: TxgT) -> Result<()> {
         self.0.clone().flush(txg).await
     }
 
     /// Lookup a tree whose ID is known
     pub async fn get_tree(&self, tree_id: TreeID)
-        -> Result<TreeOnDisk<RID>, Error>
+        -> Result<TreeOnDisk<RID>>
     {
         match self.0.get(ForestKey::tree(tree_id)).await? {
             Some(ForestValue::Tree(tod)) => Ok(tod),
@@ -149,7 +149,7 @@ impl Forest {
                        name: String,
                        tod: TreeOnDisk<RID>,
                        txg: TxgT)
-        -> Result<TreeID, Error>
+        -> Result<TreeID>
     {
         let tree_id = match self.0.last_key().await? {
             Some(last) => last.tree_id.next()
@@ -185,7 +185,7 @@ impl Forest {
     }
 
     /// Lookup a TreeID by its name
-    pub async fn lookup(&self, name: &str) -> Result<Option<TreeID>, Error>
+    pub async fn lookup(&self, name: &str) -> Result<Option<TreeID>>
     {
         let mut tree_id = TreeID(0);
         if name.is_empty() {
@@ -241,7 +241,7 @@ impl Forest {
                              tree_id: TreeID,
                              tod: TreeOnDisk<RID>,
                              txg: TxgT)
-        -> Result<Option<TreeOnDisk<RID>>, Error>
+        -> Result<Option<TreeOnDisk<RID>>>
     {
         let key = ForestKey::tree(tree_id);
         let v = ForestValue::Tree(tod);

@@ -2,7 +2,9 @@
 
 #[cfg(not(test))]
 use crate::vdev::Vdev;
-use crate::{Error, Uuid, cache, database, ddml, idml, label, pool, raid};
+use crate::{
+    Error, Result, Uuid, cache, database, ddml, idml, label, pool, raid
+};
 use futures::{
     Future,
     FutureExt,
@@ -57,7 +59,7 @@ impl DevManager {
 
     /// Import a pool by its pool name
     pub async fn import_by_name<S>(&self, name: S)
-        -> Result<database::Database, Error>
+        -> Result<database::Database>
         where S: AsRef<str>
     {
         let r = self.inner.lock().unwrap().pools.iter()
@@ -76,13 +78,13 @@ impl DevManager {
 
     /// Import a pool by its UUID
     pub async fn import_by_uuid(&self, uuid: Uuid)
-        -> Result<database::Database, Error>
+        -> Result<database::Database>
     {
         self.import(uuid).await
     }
 
     /// Import a pool that is already known to exist
-    async fn import(&self, uuid: Uuid) -> Result<database::Database, Error>
+    async fn import(&self, uuid: Uuid) -> Result<database::Database>
     {
         let (_pool, raids, mut leaves) = self.open_labels(uuid)?;
         let combined_clusters = raids.into_iter()
@@ -105,7 +107,7 @@ impl DevManager {
     /// Import all of the clusters from a Pool.  For debugging purposes only.
     #[doc(hidden)]
     pub fn import_clusters(&self, uuid: Uuid)
-        -> impl Future<Output=Result<Vec<Cluster>, Error>>
+        -> impl Future<Output=Result<Vec<Cluster>>>
     {
         let (_pool, raids, mut leaves) = match self.open_labels(uuid) {
             Ok((p, r, l)) => (p, r, l),
@@ -131,7 +133,7 @@ impl DevManager {
     }
 
     fn open_cluster(leaf_paths: Vec<PathBuf>, uuid: Uuid)
-        -> impl Future<Output=Result<(Cluster, label::LabelReader), Error>>
+        -> impl Future<Output=Result<(Cluster, label::LabelReader)>>
     {
         DevManager::open_vdev_blocks(leaf_paths)
         .and_then(move |vdev_blocks| {
@@ -143,8 +145,7 @@ impl DevManager {
 
     fn open_labels(&self, uuid: Uuid)
         -> Result<
-            (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>),
-            Error
+            (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
         >
     {
         let mut inner = self.inner.lock().unwrap();
@@ -165,8 +166,7 @@ impl DevManager {
     }
 
     fn open_vdev_blocks(leaf_paths: Vec<PathBuf>)
-        -> impl Future<Output=Result<Vec<(VdevBlock, label::LabelReader)>,
-                       Error>>
+        -> impl Future<Output=Result<Vec<(VdevBlock, label::LabelReader)>>>
     {
         stream::iter(leaf_paths.into_iter())
         .map(Ok)
@@ -183,7 +183,7 @@ impl DevManager {
     // Disable in test mode because MockVdevFile::Open requires P: 'static
     // TODO: add a method for tasting disks in parallel.
     #[cfg(not(test))]
-    pub async fn taste<P: AsRef<Path>>(&self, p: P) -> Result<(), Error> {
+    pub async fn taste<P: AsRef<Path>>(&self, p: P) -> Result<()> {
         let pathbuf = p.as_ref().to_owned();
         let (vdev_file, mut reader) = VdevFile::open(p).await?;
         let mut inner = self.inner.lock().unwrap();

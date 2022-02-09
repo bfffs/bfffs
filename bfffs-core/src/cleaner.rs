@@ -28,7 +28,7 @@ struct SyncCleaner {
 
 impl SyncCleaner {
     /// Clean zones in the foreground, blocking the task
-    pub fn clean_now(&self) -> impl Future<Output=Result<(), Error>> + Send {
+    pub fn clean_now(&self) -> impl Future<Output=Result<()>> + Send {
         // Outline:
         // 1) Get a list of mostly-free zones
         // 2) For each zone:
@@ -62,7 +62,7 @@ impl SyncCleaner {
     /// Select which zones to clean and return them sorted by cleanliness:
     /// dirtiest zones first.
     fn select_zones(&self)
-        -> impl Future<Output=Result<Vec<ClosedZone>, Error>> + Send
+        -> impl Future<Output=Result<Vec<ClosedZone>>> + Send
     {
         let threshold = self.threshold;
         let mut zones = self.idml.list_closed_zones()

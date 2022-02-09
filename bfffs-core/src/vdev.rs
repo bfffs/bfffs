@@ -4,10 +4,10 @@ use crate::types::*;
 use std::pin::Pin;
 
 /// Future representing an operation on a vdev.
-pub type VdevFut = dyn futures::Future<Output = Result<(), Error>> + Send + Sync;
+pub type VdevFut = dyn futures::Future<Output = Result<()>> + Send + Sync;
 
 /// Boxed `VdevFut`
-pub type BoxVdevFut = Pin<Box<dyn futures::Future<Output = Result<(), Error>> + Send + Sync>>;
+pub type BoxVdevFut = Pin<Box<dyn futures::Future<Output = Result<()>> + Send + Sync>>;
 
 /// Vdev: Virtual Device
 ///

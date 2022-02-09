@@ -1,6 +1,6 @@
 //vim: tw=80
 //! Dataset Properties
-use crate::Error;
+use crate::{Error, Result};
 use serde_derive::*;
 use std::convert::TryFrom;
 
@@ -65,7 +65,7 @@ impl Property {
 impl TryFrom<&str> for Property {
     type Error = Error;
 
-    fn try_from(s: &str) -> Result<Self, Error> {
+    fn try_from(s: &str) -> Result<Self> {
         let mut words = s.splitn(2, '=');
         let propname = words.next().ok_or(Error::EINVAL)?;
         let propval = words.next();

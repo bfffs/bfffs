@@ -72,7 +72,7 @@ mod htable {
 
     impl ReadFilesystem<'_> {
         fn get(&self, k: FSKey)
-            -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>, Error>> + Send>>
+            -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>>> + Send>>
         {
             match self {
                 ReadFilesystem::ReadOnly(ds) => Box::pin(ds.get(k)),
@@ -84,7 +84,7 @@ mod htable {
     /// Get an item from an in-BTree hash table
     pub(super) fn get<T>(dataset: &ReadFilesystem, key: FSKey,
                          aux: T::Aux, name: OsString)
-        -> impl Future<Output=Result<T, Error>> + Send
+        -> impl Future<Output=Result<T>> + Send
         where T: HTItem
     {
         dataset.get(key)
@@ -132,7 +132,7 @@ mod htable {
         key: FSKey,
         value: T,
         name: OsString,
-    ) -> impl Future<Output=Result<Option<T>, Error>> + Send
+    ) -> impl Future<Output=Result<Option<T>>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
@@ -201,7 +201,7 @@ mod htable {
         key: FSKey,
         aux: T::Aux,
         name: OsString,
-    ) -> impl Future<Output=Result<T, Error>> + Send
+    ) -> impl Future<Output=Result<T>> + Send
         where D: AsRef<ReadWriteFilesystem> + Send + 'static,
               T: HTItem
     {
@@ -455,7 +455,7 @@ pub struct SetAttr {
 /// Private trait bound for functions that can be used as callbacks for
 /// Fs::create
 type CreateCallback = fn(&Arc<ReadWriteFilesystem>, u64, u64)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>;
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send + 'static>>;
 
 /// Arguments for Fs::do_create
 struct CreateArgs<'a>
@@ -532,7 +532,7 @@ impl Fs {
     /// Deallocate space.  The deallocated region may no longer take up space
     /// on disk, and will return zeros if read.
     pub async fn deallocate(&self, fd: &FileData, mut offset: u64, mut len: u64)
-            -> Result<(), i32>
+            -> std::result::Result<(), i32>
     {
         let ino = fd.ino;
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -564,7 +564,7 @@ impl Fs {
     /// Delete an extended attribute
     pub async fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                          name: &OsStr)
-        -> Result<(), i32>
+        -> std::result::Result<(), i32>
     {
         let objkey = ObjKey::extattr(ns, name);
         let name = name.to_owned();
@@ -578,7 +578,7 @@ impl Fs {
     }
 
     fn do_create<'a>(&'a self, args: CreateArgs<'a>) ->
-        impl Future<Output = Result<FileData, i32>>
+        impl Future<Output = std::result::Result<FileData, i32>>
     {
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -641,7 +641,7 @@ impl Fs {
 
     // Actually delete an inode, which must already be unlinked
     fn do_delete_inode(ds: Arc<ReadWriteFilesystem>, ino: u64)
-        -> impl Future<Output=Result<(), Error>>
+        -> impl Future<Output=Result<()>>
     {
         let ds2 = ds.clone();
         // delete its blob extents and blob extended attributes
@@ -666,7 +666,7 @@ impl Fs {
 
     /// Remove the inode if this was its last reference
     async fn do_inactive(ds: Arc<ReadWriteFilesystem>, ino: u64)
-        -> Result<(), Error>
+        -> Result<()>
     {
         let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
         let di = ds.remove(dikey).await?;
@@ -682,7 +682,7 @@ impl Fs {
     /// Asynchronously read from a file.
     fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, rs: u64, offset: u64,
                    size: usize)
-        -> impl Future<Output=Result<SGList, Error>>
+        -> impl Future<Output=Result<SGList>>
         where DS: ReadDataset<FSKey, FSValue<RID>>
     {
         // Populate a hole region in an sglist.
@@ -754,7 +754,7 @@ impl Fs {
     /// Actually remove a directory, after all checks have passed
     fn do_rmdir(dataset: Arc<ReadWriteFilesystem>, parent: u64, ino: u64,
                 dec_nlink: bool)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         // Outline:
         // 1) range_delete its key range
@@ -798,7 +798,7 @@ impl Fs {
         dataset: Arc<ReadWriteFilesystem>,
         ino: u64,
         attr: SetAttr
-    ) -> Result<(), Error>
+    ) -> Result<()>
     {
         let inode_key = FSKey::new(ino, ObjKey::Inode);
         let r = dataset.get(inode_key).await?;
@@ -844,7 +844,7 @@ impl Fs {
         offset: u64,
         len: Option<u64>,
         rs: u64)
-        -> Result<u64, Error>
+        -> Result<u64>
     {
         let full_range = match len {
             Some(l) => FSKey::extent_range(
@@ -995,7 +995,7 @@ impl Fs {
     fn do_unlink(dataset: Arc<ReadWriteFilesystem>,
                  lookup_count: u64,
                  ino: u64)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         // 1) Lookup the inode
         let key = FSKey::new(ino, ObjKey::Inode);
@@ -1109,7 +1109,7 @@ impl Fs {
     }
 
     pub async fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Reg(self.record_size));
@@ -1119,7 +1119,7 @@ impl Fs {
     /// Update the parent's ctime and mtime to the current time.
     fn create_ts_callback(dataset: &Arc<ReadWriteFilesystem>, parent: u64,
                           _ino: u64)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         let now = Timespec::now();
         let attr = SetAttr {
@@ -1132,7 +1132,7 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
-    pub async fn dump(&self, f: &mut dyn io::Write) -> Result<(), i32> {
+    pub async fn dump(&self, f: &mut dyn io::Write) -> std::result::Result<(), i32> {
         self.db.dump(f, self.tree)
         .map_err(|e| e.into())
         .await
@@ -1153,25 +1153,25 @@ impl Fs {
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
     /// crash.
-    pub async fn fsync(&self, _fd: &FileData) -> Result<(), i32> {
+    pub async fn fsync(&self, _fd: &FileData) -> std::result::Result<(), i32> {
         // Until we come up with a better mechanism, we must sync the entire
         // file system.
         self.sync().await;
         Ok(())
     }
 
-    pub async fn getattr(&self, fd: &FileData) -> Result<GetAttr, i32> {
+    pub async fn getattr(&self, fd: &FileData) -> std::result::Result<GetAttr, i32> {
         self.getattr_priv(fd.ino).map_err(Error::into).await
     }
 
-    async fn getattr_priv(&self, ino: u64) -> Result<GetAttr, Error> {
+    async fn getattr_priv(&self, ino: u64) -> Result<GetAttr> {
         self.db.fsread(self.tree, move |dataset| {
             Fs::do_getattr(&dataset, ino)
         }).await
     }
 
     pub fn do_getattr(dataset: &ReadOnlyFilesystem, ino: u64)
-        -> impl Future<Output=Result<GetAttr, Error>>
+        -> impl Future<Output=Result<GetAttr>>
     {
         let key = FSKey::new(ino, ObjKey::Inode);
         dataset.get(key)
@@ -1219,7 +1219,7 @@ impl Fs {
 
     /// Retrieve the value of an extended attribute
     pub async fn getextattr(&self, fd: &FileData, ns: ExtAttrNamespace, name: &OsStr)
-        -> Result<DivBuf, i32>
+        -> std::result::Result<DivBuf, i32>
     {
         let owned_name = name.to_owned();
         let objkey = ObjKey::extattr(ns, name);
@@ -1250,7 +1250,7 @@ impl Fs {
     /// Retrieve the length of the value of an extended attribute
     pub async fn getextattrlen(&self, fd: &FileData, ns: ExtAttrNamespace,
                          name: &OsStr)
-        -> Result<u32, i32>
+        -> std::result::Result<u32, i32>
     {
         let owned_name = name.to_owned();
         let objkey = ObjKey::extattr(ns, name);
@@ -1311,7 +1311,7 @@ impl Fs {
     /// For testing purposes only!  Production code must use [`Fs::getattr`]
     /// instead.
     #[cfg(debug_assertions)]
-    pub async fn igetattr(&self, ino: u64) -> Result<GetAttr, i32> {
+    pub async fn igetattr(&self, ino: u64) -> std::result::Result<GetAttr, i32> {
         self.getattr_priv(ino).map_err(Error::into).await
     }
 
@@ -1326,7 +1326,7 @@ impl Fs {
     /// In general such an interface is racy, because the file system might
     /// delete the file in question, then recreate a different file with the
     /// same inode number.  But BFFFS never reuses inode numbers.
-    pub async fn ilookup(&self, ino: u64) -> Result<FileData, i32>
+    pub async fn ilookup(&self, ino: u64) -> std::result::Result<FileData, i32>
     {
         let name = OsString::from(r"..");
         let objkey = ObjKey::dir_entry(&name);
@@ -1358,7 +1358,7 @@ impl Fs {
 
     /// Create a hardlink from `fd` to `parent/name`.
     pub async fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
-        -> Result<(), i32>
+        -> std::result::Result<(), i32>
     {
         // Outline:
         // * Increase the target's link count
@@ -1410,7 +1410,7 @@ impl Fs {
 
     /// List the RID of every blob extattr for a file
     fn list_extattr_rids(dataset: &ReadWriteFilesystem, ino: u64)
-        -> impl Stream<Item=Result<RID, Error>>
+        -> impl Stream<Item=Result<RID>>
     {
         dataset.range(FSKey::extattr_range(ino))
         .try_filter_map(move |(k, v)| {
@@ -1442,7 +1442,7 @@ impl Fs {
     /// `FileData` object.  In particular, the client must ensure that there are
     /// never two `FileData`s for the same directory entry at the same time.
     pub async fn lookup(&self, grandparent: Option<&FileData>, parent: &FileData,
-        name: &OsStr) -> Result<FileData, i32>
+        name: &OsStr) -> std::result::Result<FileData, i32>
     {
         let dot = name == OsStr::from_bytes(b".");
         let dotdot = name == OsStr::from_bytes(b"..");
@@ -1490,7 +1490,7 @@ impl Fs {
     ///
     /// A buffer containing all extended attributes' names packed by `f`.
     pub async fn listextattr<F>(&self, fd: &FileData, size: u32, f: F)
-        -> Result<Vec<u8>, i32>
+        -> std::result::Result<Vec<u8>, i32>
         where F: Fn(&mut Vec<u8>, &ExtAttr) + Send + 'static
     {
         let ino = fd.ino;
@@ -1525,7 +1525,7 @@ impl Fs {
     /// # Returns
     ///
     /// The length of buffer that would be required for `listextattr`.
-    pub async fn listextattrlen<F>(&self, fd: &FileData, f: F) -> Result<u32, i32>
+    pub async fn listextattrlen<F>(&self, fd: &FileData, f: F) -> std::result::Result<u32, i32>
         where F: Fn(&ExtAttr) -> u32 + Send + 'static
     {
         let ino = fd.ino;
@@ -1558,7 +1558,7 @@ impl Fs {
     pub async fn lseek(&self,
         fd: &FileData,
         mut offset: u64,
-        whence: SeekWhence) -> Result<u64, i32>
+        whence: SeekWhence) -> std::result::Result<u64, i32>
     {
         let ino = fd.ino;
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -1619,7 +1619,7 @@ impl Fs {
     }
 
     pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                 gid: u32) -> Result<FileData, i32>
+                 gid: u32) -> std::result::Result<FileData, i32>
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
@@ -1627,7 +1627,7 @@ impl Fs {
             dataset: &Arc<ReadWriteFilesystem>,
             parent_ino: u64,
             ino: u64,
-        ) -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send + 'static>>
+        ) -> Pin<Box<dyn Future<Output=Result<()>> + Send + 'static>>
         {
             let dot_dirent = Dirent {
                 ino,
@@ -1683,7 +1683,7 @@ impl Fs {
 
     /// Make a block device
     pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> Result<FileData, i32>
+                   gid: u32, rdev: u32) -> std::result::Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Block(rdev));
@@ -1692,7 +1692,7 @@ impl Fs {
 
     /// Make a character device
     pub async fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> Result<FileData, i32>
+                  gid: u32, rdev: u32) -> std::result::Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Char(rdev));
@@ -1700,7 +1700,7 @@ impl Fs {
     }
 
     pub async fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Fifo);
@@ -1708,7 +1708,7 @@ impl Fs {
     }
 
     pub async fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileData, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Socket);
@@ -1718,7 +1718,7 @@ impl Fs {
     /// Check that a directory is safe to delete
     fn ok_to_rmdir(ds: &ReadWriteFilesystem, ino: u64, parent: u64,
                    name: OsString)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         ds.range(FSKey::obj_range(ino))
         .try_fold(false, |found_inode, (_, v)| {
@@ -1778,7 +1778,7 @@ impl Fs {
     }
 
     pub async fn read(&self, fd: &FileData, offset: u64, size: usize)
-        -> Result<SGList, i32>
+        -> std::result::Result<SGList, i32>
     {
         let ino = fd.ino;
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -1821,7 +1821,7 @@ impl Fs {
     // 12+ ABI, since that has a builtin offset field.  Depends on
     // https://github.com/rust-lang/libc/pull/2406
     pub fn readdir(&self, fd: &FileData, soffs: i64)
-        -> impl Stream<Item=Result<(libc::dirent, i64), i32>> + Send
+        -> impl Stream<Item=std::result::Result<(libc::dirent, i64), i32>> + Send
     {
 
         bitfield! {
@@ -1888,7 +1888,7 @@ impl Fs {
             }
         }
         impl Stream for ReaddirStream {
-            type Item = Result<(libc::dirent, i64), Error>;
+            type Item = Result<(libc::dirent, i64)>;
 
             fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
                 -> Poll<Option<Self::Item>>
@@ -1962,7 +1962,7 @@ impl Fs {
         }).map_err(Error::into)
     }
 
-    pub async fn readlink(&self, fd: &FileData) -> Result<OsString, i32> {
+    pub async fn readlink(&self, fd: &FileData) -> std::result::Result<OsString, i32> {
         let ino = fd.ino;
         self.db.fsread(self.tree, move |dataset| {
             let key = FSKey::new(ino, ObjKey::Inode);
@@ -2009,7 +2009,7 @@ impl Fs {
     // but I can't figure out how to make such a type work with Mockall.
     pub async fn rename(&self, parent: &FileData, fd: &FileData, name: &OsStr,
         newparent: &FileData, newino: Option<u64>, newname: &OsStr)
-        -> Result<u64, i32>
+        -> std::result::Result<u64, i32>
     {
         // Outline:
         // 0)  Check conditions
@@ -2045,7 +2045,7 @@ impl Fs {
             // 0) Check conditions
             htable::get(&htable::ReadFilesystem::ReadWrite(ds.as_ref()),
                         dst_de_key, 0, owned_newname)
-            .then(move |r: Result<Dirent, Error>| {
+            .then(move |r: Result<Dirent>| {
                 match r {
                     Ok(dirent) => {
                         assert_eq!(dst_ino.expect(
@@ -2159,7 +2159,7 @@ impl Fs {
     /// - `name`:       Name of the directory entry to remove.
     // Note, unlike unlink, rmdir takes no Option<&FileData> argument, because
     // there is no need to support open-but-deleted directories.
-    pub async fn rmdir(&self, parent: &FileData, name: &OsStr) -> Result<(), i32> {
+    pub async fn rmdir(&self, parent: &FileData, name: &OsStr) -> std::result::Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
         // 2) Check that the directory is empty
@@ -2209,7 +2209,7 @@ impl Fs {
         FileData{ ino: 1 , lookup_count: 1, parent: None}
     }
 
-    pub async fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> Result<(), i32> {
+    pub async fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> std::result::Result<(), i32> {
         let ino = fd.ino;
         let mut ninsert = 1;
         let mut nrange_delete = 0;
@@ -2233,7 +2233,7 @@ impl Fs {
     }
 
     pub async fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
-                      name: &OsStr, data: &[u8]) -> Result<(), i32>
+                      name: &OsStr, data: &[u8]) -> std::result::Result<(), i32>
     {
         let ino = fd.ino;
         let objkey = ObjKey::extattr(ns, name);
@@ -2277,7 +2277,7 @@ impl Fs {
         .expect("Fs::set_props failed");
     }
 
-    pub async fn statvfs(&self) -> Result<libc::statvfs, i32> {
+    pub async fn statvfs(&self) -> std::result::Result<libc::statvfs, i32> {
         let rs = 1 << self.record_size;
         self.db.fsread(self.tree, move |dataset| {
             let blocks = dataset.size();
@@ -2303,7 +2303,7 @@ impl Fs {
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
     pub async fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, link: &OsStr) -> Result<FileData, i32>
+                   gid: u32, link: &OsStr) -> std::result::Result<FileData, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -2325,7 +2325,7 @@ impl Fs {
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to remove.
     pub async fn unlink(&self, parent_fd: &FileData, fd: Option<&FileData>,
-        name: &OsStr) -> Result<(), i32>
+        name: &OsStr) -> std::result::Result<(), i32>
     {
         // Outline:
         // 1) Lookup and remove the directory entry
@@ -2363,7 +2363,7 @@ impl Fs {
     }
 
     pub async fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
-        -> Result<u32, i32>
+        -> std::result::Result<u32, i32>
         where IU: Into<Uio>
     {
         // Outline:
@@ -2443,7 +2443,7 @@ impl Fs {
     async fn write_record(ino: u64, rs: u64, offset: u64, i: usize,
                     data: Arc<DivBufShared>,
                     dataset: Arc<ReadWriteFilesystem>)
-        -> Result<i64, Error>
+        -> Result<i64>
     {
         let baseoffset = offset - (offset % rs);
         let offs = baseoffset + i as u64 * rs;

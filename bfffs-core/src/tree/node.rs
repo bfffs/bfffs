@@ -111,7 +111,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     /// Prepare this `Value` to be written to disk
     // LCOV_EXCL_START   unreachable code
     fn flush<D>(self, _dml: &D, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
         // should never be called since needs_flush is false.  Ideally, this
@@ -278,7 +278,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
     ///
     /// For most item types, this is a nop.
     pub fn flush<A, D>(mut self, d: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(Self, Credit), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<(Self, Credit)>> + Send>>
         where D: DML<Addr=A> + 'static, A: 'static
     {
         let credit = self.credit.take();
@@ -459,7 +459,7 @@ impl<K: Key, V: Value> PartialEq for LeafData<K, V> {
 }
 
 impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
         where D: Deserializer<'de>
     {
         #[derive(Deserialize)]
@@ -478,7 +478,7 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
             }
 
             fn visit_seq<SV>(self, mut seq: SV)
-                -> Result<Self::Value, SV::Error>
+                -> std::result::Result<Self::Value, SV::Error>
                 where SV: SeqAccess<'de>
             {
                 // The only support serializer that uses a Seq is Bincode, where
@@ -491,7 +491,7 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
 
             #[cfg(test)]
             fn visit_map<SV>(self, mut map: SV)
-                -> Result<Self::Value, SV::Error>
+                -> std::result::Result<Self::Value, SV::Error>
                 where SV: de::MapAccess<'de>
             {
                 // The only support serializer that uses a Map is YAML, for unit
@@ -535,7 +535,7 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
 }
 
 impl<K: Key, V: Value> Serialize for LeafData<K, V> {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
         if serializer.is_human_readable() {
@@ -643,8 +643,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         mut credit: Credit
     ) -> Pin<Box<dyn Future<
             Output=Result<
-                (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>, Credit),
-                Error>
+                (TreeWriteGuard<A, K, V>, TreeWriteGuard<A, K, V>, Credit)>
             > + Send
         >>
         where D: DML<Addr=A> + 'static
@@ -705,9 +704,7 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
         mut credit: Credit
     ) -> Pin<Box<dyn Future<
             Output=Result<
-                (Option<IntElem<A, K, V>>, TreeWriteGuard<A, K, V>, Credit),
-                Error
-            >
+                (Option<IntElem<A, K, V>>, TreeWriteGuard<A, K, V>, Credit)>
         > + Send >>
         where D: DML<Addr=A> + 'static
     {
@@ -763,12 +760,11 @@ impl<A: Addr, K: Key, V: Value> TreeWriteGuard<A, K, V> {
     // TODO: consider not returning the Vec<R>, if callers don't need it.
     pub fn drain_xlock<B, D, F, R>(mut self, dml: Arc<D>, range: Range<usize>,
                                    txg: TxgT, f: F)
-        -> impl Future<Output=Result<(TreeWriteGuard<A, K, V>, Vec<R>),
-                                     Error>>
+        -> impl Future<Output=Result<(TreeWriteGuard<A, K, V>, Vec<R>)>>
         where D: DML<Addr=A> + 'static,
               F: Fn(TreeWriteGuard<A, K, V>, &Arc<D>) -> B + Clone + Send
                   + 'static,
-              B: Future<Output = Result<R, Error>> + Send + 'static,
+              B: Future<Output = Result<R>> + Send + 'static,
               R: Send + 'static
     {
         self.as_int_mut().children.drain(range)
@@ -858,7 +854,7 @@ impl<A: Addr, K: Key, V: Value> IntElem<A, K, V> {
     #[instrument(skip(dml))]
     pub fn rlock<D: DML<Addr=A>>(self: &IntElem<A, K, V>, dml: &Arc<D>)
         -> Pin<Box<dyn Future<
-            Output=Result<TreeReadGuard<A, K, V>, Error>> + Send
+            Output=Result<TreeReadGuard<A, K, V>>> + Send
         >>
     {
         match self.ptr {
@@ -1347,7 +1343,7 @@ impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     /// Attempt to unwrap Self into a [`NodeData`].
     ///
     /// Probably should only be used from test code.
-    pub fn try_unwrap(self) -> Result<NodeData<A, K, V>, Self> {
+    pub fn try_unwrap(self) -> std::result::Result<NodeData<A, K, V>, Self> {
         self.0.try_unwrap()
         .map_err(Node)
     }

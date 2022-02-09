@@ -7,12 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use bfffs_core::rpc;
-pub use bfffs_core::{controller::TreeID, property::Property, Error};
+pub use bfffs_core::{controller::TreeID, property::Property, Error, Result};
 use tokio_seqpacket::UnixSeqpacket;
-
-// TODO: move definition into bfffs_core after
-// https://gitlab.com/cardoe/enum-primitive-derive/-/issues/8 is fixed.
-pub type Result<T> = ::std::result::Result<T, Error>;
 
 /// A connection to the bfffsd server
 #[derive(Debug)]

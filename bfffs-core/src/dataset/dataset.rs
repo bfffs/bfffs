@@ -30,30 +30,30 @@ impl<K: Key, V: Value> Dataset<K, V> {
     }
 
     fn delete_blob(&self, rid: RID, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>>
+        -> impl Future<Output=Result<()>>
     {
         self.idml.delete(&rid, txg)
     }
 
-    fn get(&self, k: K) -> impl Future<Output=Result<Option<V>, Error>>
+    fn get(&self, k: K) -> impl Future<Output=Result<Option<V>>>
     {
         self.tree.get(k)
     }
 
     /// Read directly from the IDML, bypassing the Tree
     fn get_blob(&self, rid: RID)
-        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>>> + Send>>
     {
         self.idml.get::<DivBufShared, DivBuf>(&rid)
     }
 
     fn insert(&self, txg: TxgT, k: K, v: V, credit: Credit)
-        -> impl Future<Output=Result<Option<V>, Error>>
+        -> impl Future<Output=Result<Option<V>>>
     {
         self.tree.clone().insert(k, v, txg, credit)
     }
 
-    fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>>
+    fn last_key(&self) -> impl Future<Output=Result<Option<K>>>
     {
         self.tree.last_key()
     }
@@ -82,7 +82,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
     }
 
     fn range_delete<R, T>(&self, range: R, txg: TxgT, credit: Credit)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
@@ -91,13 +91,13 @@ impl<K: Key, V: Value> Dataset<K, V> {
     }
 
     fn remove(&self, k: K, txg: TxgT, credit: Credit)
-        -> impl Future<Output=Result<Option<V>, Error>> + Send
+        -> impl Future<Output=Result<Option<V>>> + Send
     {
         self.tree.clone().remove(k, txg, credit)
     }
 
     fn remove_blob(&self, rid: RID, txg: TxgT)
-        -> impl Future<Output=Result<Box<DivBufShared>, Error>> + Send
+        -> impl Future<Output=Result<Box<DivBufShared>>> + Send
     {
         self.idml.pop::<DivBufShared, DivBuf>(&rid, txg)
     }
@@ -117,7 +117,7 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
         self.dataset.allocated()
     }
 
-    pub fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>> + Send
+    pub fn last_key(&self) -> impl Future<Output=Result<Option<K>>> + Send
     {
         self.dataset.last_key()
     }
@@ -133,14 +133,14 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
     fn get(&self, k: K)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>
     {
         self.dataset.get(k).boxed()
     }
 
     /// Read directly from the IDML, bypassing the Tree
     fn get_blob(&self, rid: RID)
-        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>>> + Send>>
     {
         self.dataset.get_blob(rid)
     }
@@ -164,13 +164,13 @@ pub struct ReadWriteDataset<K: Key, V: Value>  {
 
 impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     pub fn delete_blob(&self, rid: RID)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         self.dataset.delete_blob(rid, self.txg)
     }
 
     pub fn insert(&self, k: K, v: V)
-        -> impl Future<Output=Result<Option<V>, Error>> + Send
+        -> impl Future<Output=Result<Option<V>>> + Send
     {
         let want = self.cr.insert + v.allocated_space();
         let credit = self.credit.atomic_split(want);
@@ -193,7 +193,7 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     }
 
     pub fn range_delete<R, T>(&self, range: R)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
@@ -203,14 +203,14 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     }
 
     pub fn remove(&self, k: K)
-        -> impl Future<Output=Result<Option<V>, Error>> + Send
+        -> impl Future<Output=Result<Option<V>>> + Send
     {
         let credit = self.credit.atomic_split(self.cr.remove);
         self.dataset.remove(k, self.txg, credit)
     }
 
     pub fn remove_blob(&self, rid: RID)
-        -> impl Future<Output=Result<Box<DivBufShared>, Error>> + Send
+        -> impl Future<Output=Result<Box<DivBufShared>>> + Send
     {
         self.dataset.remove_blob(rid, self.txg)
     }
@@ -218,14 +218,14 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
 
 impl<K: Key, V: Value> ReadDataset<K, V> for ReadWriteDataset<K, V> {
     fn get(&self, k: K)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>
     {
         self.dataset.get(k).boxed()
     }
 
     /// Read directly from the IDML, bypassing the Tree
     fn get_blob(&self, rid: RID)
-        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>>> + Send>>
     {
         self.dataset.get_blob(rid)
     }

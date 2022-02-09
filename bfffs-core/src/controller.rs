@@ -6,7 +6,8 @@ use crate::{
     Error,
     database::Database,
     fs::Fs,
-    property::{Property, PropertyName, PropertySource}
+    property::{Property, PropertyName, PropertySource},
+    Result
 };
 use futures::{
     Future,
@@ -32,7 +33,7 @@ impl Controller {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
+    pub fn check(&self) -> impl Future<Output=Result<bool>> {
         self.db.check()
     }
 
@@ -52,7 +53,7 @@ impl Controller {
     /// - `name`    -   Name of the file system to create, including pool name
     /// - `props`   -   Properties to set on the newly created file system.
     pub async fn create_fs(&self, name: &str, props: Vec<Property>)
-        -> Result<TreeID, Error>
+        -> Result<TreeID>
     {
         let fsname = self.strip_pool_name(name)?;
         let (parent, dsname) = match fsname.rsplit_once('/') {
@@ -68,14 +69,14 @@ impl Controller {
 
     /// Dump a YAMLized representation of the given Tree in text format.
     pub async fn dump(&self, f: &mut dyn io::Write, tree: TreeID)
-        -> Result<(), Error>
+        -> Result<()>
     {
         self.db.dump(f, tree).await
     }
 
     /// Get the value of the `propname` property the given dataset
     pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
-        -> Result<(Property, PropertySource), Error>
+        -> Result<(Property, PropertySource)>
     {
         let dsname = self.strip_pool_name(dataset)?;
         let tree_id = match self.db.lookup_fs(dsname).await? {
@@ -97,7 +98,7 @@ impl Controller {
     // Clippy false positive.
     #[allow(clippy::unnecessary_to_owned)]
     pub fn new_fs(&self, name: &str)
-        -> impl Future<Output = Result<Fs, Error>> + Send
+        -> impl Future<Output = Result<Fs>> + Send
     {
         match self.strip_pool_name(name) {
             Ok(fsname) => {
@@ -110,7 +111,7 @@ impl Controller {
     }
 
     // Strip the pool name.  For now, only one pool is supported.
-    fn strip_pool_name<'a>(&self, name: &'a str) -> Result<&'a str, Error> {
+    fn strip_pool_name<'a>(&self, name: &'a str) -> Result<&'a str> {
         match name.strip_prefix(&self.db.pool_name()) {
             Some(s) => Ok(s.strip_prefix('/').unwrap_or(s)),
             None => Err(Error::ENOENT),

@@ -112,7 +112,7 @@ impl FakeDDML {
     /// Just like `put`, but separate for record-keeping purposes
     fn put_data(&self, cacheref: Box<dyn CacheRef>, compression: Compression,
                              _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>
     {
         let db = cacheref.serialize();
         let lsize = db.len() as u32;
@@ -127,7 +127,7 @@ impl DML for FakeDDML {
     type Addr = DRP;
 
     fn delete(&self, _addr: &Self::Addr, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         unimplemented!()
     }
@@ -139,14 +139,14 @@ impl DML for FakeDDML {
 
     /// Read a record and return a shared reference
     fn get<T: Cacheable, R: CacheRef>(&self, _addr: &Self::Addr)
-        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
     {
         unimplemented!()
     }
 
     /// Read a record and return ownership of it.
     fn pop<T: Cacheable, R: CacheRef>(&self, _rid: &Self::Addr, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {
         unimplemented!()
     }
@@ -154,7 +154,7 @@ impl DML for FakeDDML {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr>> + Send>>
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
@@ -181,7 +181,7 @@ impl DML for FakeDDML {
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         unimplemented!()
     }
@@ -232,7 +232,7 @@ impl FakeIDML {
     /// Just like `put`, but separate for record-keeping purposes
     fn put_data<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<RID>> + Send>>
     {
         self.data_size.fetch_add(cacheable.cache_space() as u64,
             Ordering::Relaxed);
@@ -256,7 +256,7 @@ impl DML for FakeIDML {
     type Addr = RID;
 
     fn delete(&self, _addr: &Self::Addr, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         unimplemented!()
     }
@@ -268,14 +268,14 @@ impl DML for FakeIDML {
 
     /// Read a record and return a shared reference
     fn get<T: Cacheable, R: CacheRef>(&self, _addr: &Self::Addr)
-        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
     {
         unimplemented!()
     }
 
     /// Read a record and return ownership of it.
     fn pop<T: Cacheable, R: CacheRef>(&self, _rid: &Self::Addr, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {
         unimplemented!()
     }
@@ -283,7 +283,7 @@ impl DML for FakeIDML {
     /// Write a record to disk and cache.  Return its Direct Record Pointer.
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr>> + Send>>
     {
         let db = cacheable.make_ref().serialize();
         if self.save {
@@ -318,7 +318,7 @@ impl DML for FakeIDML {
 
     /// Sync all records written so far to stable storage.
     fn sync_all(&self, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         unimplemented!()
     }

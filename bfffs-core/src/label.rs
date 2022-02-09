@@ -64,7 +64,7 @@ impl LabelReader {
     }
 
     /// Construct a `LabelReader` using the raw buffer read from disk
-    pub fn new(buffer: Vec<u8>) -> Result<Self, Error> {
+    pub fn new(buffer: Vec<u8>) -> Result<Self> {
         if buffer.len() < MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN {
             return Err(Error::EINVAL);
         }

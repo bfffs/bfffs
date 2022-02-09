@@ -5,8 +5,8 @@
 // or without no_std.
 
 use crate::{
-    Error,
     controller::TreeID,
+    Result
 };
 use serde_derive::{Deserialize, Serialize};
 
@@ -53,19 +53,19 @@ pub enum Request {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
-    FsCreate(Result<TreeID, Error>),
-    FsMount(Result<(), Error>)
+    FsCreate(Result<TreeID>),
+    FsMount(Result<()>)
 }
 
 impl Response {
-    pub fn into_fs_create(self) -> Result<TreeID, Error> {
+    pub fn into_fs_create(self) -> Result<TreeID> {
         match self {
             Response::FsCreate(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }
 
-    pub fn into_fs_mount(self) -> Result<(), Error> {
+    pub fn into_fs_mount(self) -> Result<()> {
         match self {
             Response::FsMount(r) => r,
             x => panic!("Unexpected response type {:?}", x)

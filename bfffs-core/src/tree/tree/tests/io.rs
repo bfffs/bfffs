@@ -29,9 +29,9 @@ use super::*;
 mock! {
     Future {}
     impl Future for Future {
-        type Output = Result<Box<NodeT>, Error>;
+        type Output = Result<Box<NodeT>>;
         fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
-            -> Poll<Result<Box<NodeT>, Error>>;
+            -> Poll<Result<Box<NodeT>>>;
     }
 }
 

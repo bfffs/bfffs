@@ -254,7 +254,7 @@ impl FSKey {
 }
 
 impl Debug for FSKey {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let objtype = ObjKeyDiscriminant::from(self.objtype() as u8);
         write!(f, "FSKey {{ object: {:#x}, objtype: {:?}, offset: {:#x} }}",
                self.object(), objtype, self.offset())
@@ -274,7 +274,7 @@ impl MinValue for FSKey {
 }
 
 impl Serialize for FSKey {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
         if serializer.is_human_readable() {
@@ -326,7 +326,8 @@ pub enum HTValue<T: HTItem> {
     None
 }
 
-fn serialize_dirent_name<S>(name: &OsString, s: S) -> Result<S::Ok, S::Error>
+fn serialize_dirent_name<S>(name: &OsString, s: S)
+    -> std::result::Result<S::Ok, S::Error>
     where S: Serializer
 {
     if s.is_human_readable() {
@@ -389,7 +390,7 @@ impl HTItem for Dirent {
 impl TryFrom<FSValue<RID>> for Dirent {
     type Error = ();
 
-    fn try_from(fsvalue: FSValue<RID>) -> Result<Self, ()> {
+    fn try_from(fsvalue: FSValue<RID>) -> std::result::Result<Self, ()> {
         if let FSValue::DirEntry(dirent) = fsvalue {
             Ok(dirent)
         } else {
@@ -423,7 +424,7 @@ pub struct InlineExtAttr {
 
 impl InlineExtAttr {
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>>> + Send>>
         where D: DML, D::Addr: 'static
     {
         let lsize = self.len();
@@ -499,7 +500,7 @@ impl<'a, A: Addr> ExtAttr<A> {
     }
 
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>, Error>>
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>>>
             + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static
     {
@@ -557,7 +558,7 @@ impl HTItem for ExtAttr<RID> {
 impl TryFrom<FSValue<RID>> for ExtAttr<RID> {
     type Error = ();
 
-    fn try_from(fsvalue: FSValue<RID>) -> Result<Self, ()> {
+    fn try_from(fsvalue: FSValue<RID>) -> std::result::Result<Self, ()> {
         if let FSValue::ExtAttr(extent) = fsvalue {
             Ok(extent)
         } else {
@@ -649,7 +650,8 @@ impl From<nix::sys::time::TimeSpec> for Timespec {
 }
 
 impl Serialize for Timespec {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S)
+        -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
         use ::time::OffsetDateTime;
@@ -740,7 +742,7 @@ mod dbs_serializer {
     use std::sync::Arc;
 
     pub(super) fn deserialize<'de, DE>(deserializer: DE)
-        -> Result<Arc<DivBufShared>, DE::Error>
+        -> std::result::Result<Arc<DivBufShared>, DE::Error>
         where DE: Deserializer<'de>
     {
         Vec::<u8>::deserialize(deserializer)
@@ -748,7 +750,7 @@ mod dbs_serializer {
     }
 
     pub(super) fn serialize<S>(dbs: &Arc<DivBufShared>, serializer: S)
-        -> Result<S::Ok, S::Error>
+        -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
         (&dbs.try_const().unwrap()[..]).serialize(serializer)
@@ -771,7 +773,7 @@ impl InlineExtent {
     }
 
     fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<FSValue<A>, Error>>
+        -> Pin<Box<dyn Future<Output=Result<FSValue<A>>>
             + Send + 'static>>
         where D: DML, D::Addr: 'static
     {
@@ -994,7 +996,7 @@ impl<A: Addr> Value for FSValue<A> {
     }
 
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self, Error>> + Send + 'static>>
+        -> Pin<Box<dyn Future<Output=Result<Self>> + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static
     {
         match self {

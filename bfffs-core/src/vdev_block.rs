@@ -442,7 +442,7 @@ pub struct VdevBlockFut {
 }
 
 impl Future for VdevBlockFut {
-    type Output = Result<(), Error>;
+    type Output = Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         if self.block_op.is_some() {
@@ -849,9 +849,9 @@ mod t {
     mock!{
         VdevFut {}
         impl Future for VdevFut {
-            type Output = Result<(), Error>;
+            type Output = Result<()>;
             fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>)
-                -> Poll<Result<(), Error>>;
+                -> Poll<Result<()>>;
         }
     }
 
