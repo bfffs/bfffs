@@ -64,4 +64,11 @@ impl Response {
             x => panic!("Unexpected response type {:?}", x)
         }
     }
+
+    pub fn into_fs_mount(self) -> Result<(), Error> {
+        match self {
+            Response::FsMount(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
 }

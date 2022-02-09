@@ -118,8 +118,6 @@ enum DebugCmd {
 mod fs {
     use std::path::Path;
 
-    use bfffs_core::rpc;
-
     use super::*;
 
     /// Create a new file system
@@ -150,8 +148,7 @@ mod fs {
                     })
                 })
                 .collect::<Vec<_>>();
-            let req = rpc::fs::create(self.name, props);
-            bfffs.call(req).await.unwrap().into_fs_create().map(drop)
+            bfffs.fs_create(self.name, props).await.map(drop)
         }
     }
 
@@ -175,9 +172,7 @@ mod fs {
     impl Mount {
         pub(super) async fn main(self, sock: &Path) -> Result<(), Error> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            let req = rpc::fs::mount(self.mountpoint, self.name);
-            bfffs.call(req).await.unwrap();
-            Ok(())
+            bfffs.fs_mount(self.name, self.mountpoint).await
         }
     }
 
