@@ -84,7 +84,7 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    fn check_ridt(&self) -> impl Future<Output=Result<bool, Error>> {
+    fn check_ridt(&self) -> impl Future<Output=Result<bool>> {
         let alloct2 = self.alloct.clone();
         let alloct3 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
@@ -148,7 +148,7 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
+    pub fn check(&self) -> impl Future<Output=Result<bool>> {
         future::try_join3(self.alloct.clone().check(),
                           self.ridt.clone().check(),
                           self.check_ridt())
@@ -157,7 +157,7 @@ impl<'a> IDML {
 
     /// Clean `zone` by moving all of its records to other zones.
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         // Outline:
         // 1) Lookup the Zone's PBA range in the Allocation Table.  Rewrite each
@@ -228,7 +228,7 @@ impl<'a> IDML {
     /// `idx`, if provided, is the index of the label to sync to disk.  If not
     /// provided, no label will be synced.
     pub fn flush(&self, idx: Option<u32>, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         let tfut = future::try_join(self.alloct.clone().flush(txg),
                                     self.ridt.clone().flush(txg))
@@ -252,7 +252,7 @@ impl<'a> IDML {
     ///
     /// This list should be persistent across reboots.
     fn list_indirect_records(&self, zone: &ClosedZone)
-        -> impl Stream<Item=Result<RID, Error>> + Send
+        -> impl Stream<Item=Result<RID>> + Send
     {
         // Iterate through the AllocT to get indirect records from the target
         // zone.
@@ -299,7 +299,7 @@ impl<'a> IDML {
     fn move_record(cache: &Arc<Mutex<Cache>>, ridt: Arc<DTree<RID, RidtEntry>>,
                    alloct: Arc<DTree<PBA, RID>>,
                    ddml: &Arc<DDML>, rid: RID, txg: TxgT)
-        -> impl Future<Output=Result<DRP, Error>> + Send
+        -> impl Future<Output=Result<DRP>> + Send
     {
         // Even if the cache contains the target record, we must also do an RIDT
         // lookup because we're going to rewrite the RIDT
@@ -392,9 +392,9 @@ impl<'a> IDML {
 
     /// Finish the current transaction group and start a new one.
     pub fn advance_transaction<B, F>(&self, f: F)
-        -> impl Future<Output=Result<(), Error>> + Send + 'a
+        -> impl Future<Output=Result<()>> + Send + 'a
         where F: FnOnce(TxgT) -> B + Send + 'a,
-              B: Future<Output=Result<(), Error>> + Send + 'a,
+              B: Future<Output=Result<()>> + Send + 'a,
     {
         self.transaction.write()
         .then(move |mut txg_guard| {
@@ -406,7 +406,7 @@ impl<'a> IDML {
 
     /// Asynchronously write this `IDML`'s label to its `Pool`
     pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         // The txg lock must be held when calling write_label.  Otherwise,
         // next_rid may be out-of-date by the time we serialize the label.
@@ -433,7 +433,7 @@ impl<'a> IDML {
 
 /// Private helper function for several IDML methods
 fn unwrap_or_enoent(r: Option<RidtEntry>)
-    -> impl Future<Output=Result<RidtEntry, Error>>
+    -> impl Future<Output=Result<RidtEntry>>
 {
     match r {
         None => future::err(Error::ENOENT),
@@ -445,7 +445,7 @@ impl DML for IDML {
     type Addr = RID;
 
     fn delete(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         let cache2 = self.cache.clone();
         let ddml2 = self.ddml.clone();
@@ -483,7 +483,7 @@ impl DML for IDML {
 
     #[instrument(skip(self))]
     fn get<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr)
-        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
     {
         let rid = *ridp;
         self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
@@ -506,7 +506,7 @@ impl DML for IDML {
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {
         let rid = *ridp;
         let cache2 = self.cache.clone();
@@ -554,7 +554,7 @@ impl DML for IDML {
 
     #[instrument(skip(self))]
     fn put<T>(&self, cacheable: T, compression: Compression, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self::Addr, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Self::Addr>> + Send>>
         where T: Cacheable
     {
         // TODO: spawn a separate task, for better parallelism.
@@ -593,7 +593,7 @@ impl DML for IDML {
     }
 
     fn sync_all(&self, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         self.ddml.sync_all(txg)
     }
@@ -616,12 +616,12 @@ mock!{
         pub fn cache_size(&self) -> usize;
         pub fn borrow_credit(&self, size: usize)
             -> Pin<Box<dyn Future<Output=Credit> + Send>>;
-        pub fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool, Error>>>>;
+        pub fn check(&self) -> Pin<Box<dyn Future<Output=Result<bool>>>>;
         pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn list_closed_zones(&self)
             -> impl Iterator<Item=ClosedZone> + Send;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>, wbs: usize,
@@ -638,32 +638,32 @@ mock!{
         // the txg used.
         pub fn advance_transaction_inner(&self) -> TxgT;
         pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn writeback_size(&self) -> usize;
     }
     impl DML for IDML {
         type Addr = RID;
         fn delete(&self, addr: &RID, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         fn evict(&self, addr: &RID);
         fn get<T: Cacheable, R: CacheRef>(&self, addr: &RID)
-            -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>;
         fn pop<T: Cacheable, R: CacheRef>(&self, rid: &RID, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                                  txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<RID, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<RID>> + Send>>;
         fn repay(&self, credit: Credit);
         fn sync_all(&self, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }
 }
 #[cfg(test)]
 impl<'a> MockIDML {
     pub fn advance_transaction<B, F>(&self, f: F)
-        -> impl Future<Output=Result<(), Error>> + Send + 'a
+        -> impl Future<Output=Result<()>> + Send + 'a
         where F: FnOnce(TxgT) -> B + Send + 'a,
-              B: Future<Output=Result<(), Error>> + Send + 'a,
+              B: Future<Output=Result<()>> + Send + 'a,
     {
         let txg = self.advance_transaction_inner();
         f(txg)

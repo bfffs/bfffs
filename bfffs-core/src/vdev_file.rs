@@ -48,7 +48,7 @@ enum EraseMethod {
 
 impl EraseMethod {
     /// Get the initial erase method.
-    fn get(fd: RawFd) -> Result<Self, Error> {
+    fn get(fd: RawFd) -> Result<Self> {
         if VdevFile::candelete(fd)? {
             // The file supports DIOCGDELETE.
             Ok(EraseMethod::Diocgdelete)
@@ -189,7 +189,7 @@ impl VdevFile {
     /// Size of a simulated zone
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
-    fn candelete(fd: RawFd) -> Result<bool, Error> {
+    fn candelete(fd: RawFd) -> Result<bool> {
         let mut arg = MaybeUninit::<diocgattr_arg>::uninit();
         let r = unsafe {
             let p = arg.as_mut_ptr();
@@ -265,7 +265,7 @@ impl VdevFile {
                     unsafe {
                         diocgdelete(fd, &args)
                     }.map(drop)
-                }).map(Result::unwrap)
+                }).map(std::result::Result::unwrap)
                 .map_err(Error::from);
                 Box::pin(t)
             },
@@ -300,7 +300,7 @@ impl VdevFile {
 
                 let t = task::spawn_blocking(move || {
                     fspacectl_all(fd, off, len)
-                }).map(Result::unwrap)
+                }).map(std::result::Result::unwrap)
                 .map_err(Error::from);
                 Box::pin(t)
             }
@@ -327,7 +327,7 @@ impl VdevFile {
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
     pub async fn open<P: AsRef<Path>>(path: P)
-        -> Result<(Self, LabelReader), Error>
+        -> Result<(Self, LabelReader)>
     {
         let file = OpenOptions::new()
             .read(true)
@@ -404,7 +404,7 @@ impl VdevFile {
     /// Read just one of a vdev's labels
     // TODO: Take File by reference`
     async fn read_label(f: File, label: u32)
-        -> Result<(LabelReader, File), (Error, File)>
+        -> std::result::Result<(LabelReader, File), (Error, File)>
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
@@ -586,7 +586,7 @@ struct ReadAt {
 }
 
 impl Future for ReadAt {
-    type Output = Result<(), Error>;
+    type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
     // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
@@ -610,7 +610,7 @@ struct WriteAt{
 }
 
 impl Future for WriteAt {
-    type Output = Result<(), Error>;
+    type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
     // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
@@ -635,7 +635,7 @@ struct ReadvAt{
 }
 
 impl Future for ReadvAt {
-    type Output = Result<(), Error>;
+    type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
     // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
@@ -660,7 +660,7 @@ struct WritevAt{
 }
 
 impl Future for WritevAt {
-    type Output = Result<(), Error>;
+    type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
     // EAGAIN).  VdevBlock handles those errors synchronously by calling poll()
@@ -687,7 +687,7 @@ mock!{
             where P: AsRef<Path> + 'static;
         pub fn erase_zone(&mut self, lba: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        pub async fn open<P>(path: P) -> Result<(Self, LabelReader), Error>
+        pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
             where P: AsRef<Path> + 'static;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;

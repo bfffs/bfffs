@@ -12,6 +12,7 @@ use bfffs_core::{
     device_manager::DevManager,
     rpc,
     Error,
+    Result,
 };
 use cfg_if::cfg_if;
 use clap::{crate_version, Clap};
@@ -174,7 +175,7 @@ impl Bfffsd {
         &self,
         mountpoint: PathBuf,
         name: String,
-    ) -> impl Future<Output = Result<(), Error>> + Send {
+    ) -> impl Future<Output = Result<()>> + Send {
         let mo2 = self.mount_opts.clone();
         cfg_if! {
             if #[cfg(test)] {

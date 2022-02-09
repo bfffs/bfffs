@@ -80,7 +80,7 @@ struct Syncer {
 }
 
 impl Syncer {
-    fn kick(&self) -> impl Future<Output=Result<(), Error>> {
+    fn kick(&self) -> impl Future<Output=Result<()>> {
         let mut tx2 = self.tx.clone();
         async move {
             tx2.send(SyncerMsg::Kick)
@@ -186,7 +186,7 @@ impl Inner {
         inner: &Arc<Inner>,
         tree_id: TreeID,
         tod: TreeOnDisk<RID>)
-    -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>, Error>> + Send
+    -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>>> + Send
     {
         let idml2 = inner.idml.clone();
         let tree = ITree::<FSKey, FSValue<RID>>::open(idml2, false, tod);
@@ -199,7 +199,7 @@ impl Inner {
 
     // Must be called from within a Tokio executor context
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
-        -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>, Error>> + Send
+        -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>>> + Send
     {
         let inner2 = inner.clone();
         async move {
@@ -225,9 +225,9 @@ impl Inner {
         nremove: usize,
         blob_bytes: usize,
         f: F,
-    ) -> impl Future<Output=Result<R, Error>>
+    ) -> impl Future<Output=Result<R>>
         where F: FnOnce(ReadWriteFilesystem) -> B,
-              B: Future<Output=Result<R, Error>>,
+              B: Future<Output=Result<R>>,
     {
         inner.dirty.store(true, Ordering::Relaxed);
         Inner::open_filesystem(&inner, tree_id)
@@ -256,7 +256,7 @@ impl Inner {
     /// - `label_idx`:  0-based index of the label to write
     /// - `txg`:        The current transaction group of the database
     fn write_label(&self, label: &Label, label_idx: u32, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>>
+        -> impl Future<Output=Result<()>>
     {
         let mut labeller = LabelWriter::new(label_idx);
         labeller.serialize(label).unwrap();
@@ -285,7 +285,7 @@ impl Database {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
-    pub fn check(&self) -> impl Future<Output=Result<bool, Error>> {
+    pub fn check(&self) -> impl Future<Output=Result<bool>> {
         // Should check that:
         // * RAID parity is consistent and checksums match
         //   - For each entry in the RIDT, read it from disk in "verify mode",
@@ -311,7 +311,7 @@ impl Database {
         idml_fut.and_then(|passed| forest_fut.map_ok(move |r| passed & r))
     }
 
-    fn check_forest(&self) -> impl Future<Output=Result<bool, Error>> {
+    fn check_forest(&self) -> impl Future<Output=Result<bool>> {
         let inner2 = self.inner.clone();
         self.inner.forest.trees()
         .try_fold(true, move |passed, (tree_id, tod)| {
@@ -343,7 +343,7 @@ impl Database {
 
     /// Dump a YAMLized representation of the given Tree in text format.
     pub async fn dump(&self, f: &mut dyn io::Write, tree: TreeID)
-        -> Result<(), Error>
+        -> Result<()>
     {
         Inner::open_filesystem(&self.inner, tree).await.unwrap();
         match self.inner.fs_trees.try_read() {
@@ -356,7 +356,7 @@ impl Database {
     ///
     /// Does not sync a transaction.  Does not rewrite the labels.
     fn flush(inner: &Arc<Inner>)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         if !inner.dirty.load(Ordering::Relaxed) {
             return future::ok(()).boxed();
@@ -380,7 +380,7 @@ impl Database {
     // Note: it returns a Boxed future rather than `impl Future` to prevent
     // type-length limit errors in the compiler.
     pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
-        -> Pin<Box<dyn Future<Output=Result<(Property, PropertySource), Error>>
+        -> Pin<Box<dyn Future<Output=Result<(Property, PropertySource)>>
             + Send>>
     {
         // Outline:
@@ -425,7 +425,7 @@ impl Database {
     fn insert_prop(
         dataset: &ReadWriteFilesystem,
         prop: Property,
-    ) -> impl Future<Output=Result<(), Error>>
+    ) -> impl Future<Output=Result<()>>
     {
         let objkey = ObjKey::Property(prop.name());
         let key = FSKey::new(PROPERTY_OBJECT, objkey);
@@ -434,7 +434,7 @@ impl Database {
         .map_ok(drop)
     }
 
-    pub async fn lookup_fs(&self, name: &str) -> Result<Option<TreeID>, Error>
+    pub async fn lookup_fs(&self, name: &str) -> Result<Option<TreeID>>
     {
         self.inner.forest.lookup(name).await
     }
@@ -444,7 +444,7 @@ impl Database {
     /// Must be called from the tokio domain.
     pub async fn create_fs<S>(&self, parent: Option<TreeID>, name: S,
                   props: Vec<Property>)
-        -> Result<TreeID, Error>
+        -> Result<TreeID>
         where S: Into<String> + 'static
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
@@ -532,9 +532,9 @@ impl Database {
     }
 
     fn fsread_real<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>> + Send
+        -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
-              B: Future<Output = Result<R, Error>> + Send + 'static,
+              B: Future<Output = Result<R>> + Send + 'static,
               R: 'static,
     {
         self.ro_filesystem(tree_id)
@@ -544,9 +544,9 @@ impl Database {
     /// Perform a read-only operation on a Filesystem
     #[cfg(not(test))]
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>> + Send
+        -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
-              B: Future<Output = Result<R, Error>> + Send + 'static,
+              B: Future<Output = Result<R>> + Send + 'static,
               R: 'static,
     {
         self.fsread_real(tree_id, f)
@@ -554,9 +554,9 @@ impl Database {
 
     /// Perform a streaming read-only operation on a Filesystem
     pub fn fsreads<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Stream<Item=Result<R, Error>> + Send
+        -> impl Stream<Item=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
-              B: Stream<Item = Result<R, Error>> + Send + 'static,
+              B: Stream<Item = Result<R>> + Send + 'static,
               R: 'static,
     {
         self.ro_filesystem(tree_id)
@@ -602,7 +602,7 @@ impl Database {
     }
 
     fn ro_filesystem(&self, tree_id: TreeID)
-        -> impl Future<Output=Result<ReadOnlyFilesystem, Error>>
+        -> impl Future<Output=Result<ReadOnlyFilesystem>>
     {
         let inner2 = self.inner.clone();
         let idml2 = self.inner.idml.clone();
@@ -618,7 +618,7 @@ impl Database {
     // Silence clippy: the borrow checker frowns upon its suggestion
     #[allow(clippy::needless_collect)]
     pub fn set_prop(&self, tree_id: TreeID, prop: Property)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         // Outline:
         // 1) Open the dataset's tree and set the property there.
@@ -658,7 +658,7 @@ impl Database {
 
     /// Finish the current transaction group and start a new one.
     pub fn sync_transaction(&self)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         future::try_join(self.syncer.kick(),
                          Database::sync_transaction_priv(&self.inner))
@@ -666,7 +666,7 @@ impl Database {
     }
 
     fn sync_transaction_priv(inner: &Arc<Inner>)
-        -> impl Future<Output=Result<(), Error>>
+        -> impl Future<Output=Result<()>>
     {
         // Outline:
         // 1) Flush the trees
@@ -742,9 +742,9 @@ impl Database {
         nremove: usize,
         blob_bytes: usize,
         f: F
-    ) -> impl Future<Output=Result<R, Error>> + Send
+    ) -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
-              B: Future<Output=Result<R, Error>> + Send,
+              B: Future<Output=Result<R>> + Send,
               R: 'static
     {
         Inner::fswrite(self.inner.clone(), tree_id, ninsert, nrange_delete,
@@ -777,9 +777,9 @@ impl Database {
 #[cfg(test)]
 impl MockDatabase {
     pub fn fsread<F, B, R>(&self, tree_id: TreeID, f: F)
-        -> impl Future<Output=Result<R, Error>> + Send
+        -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
-              B: Future<Output=Result<R, Error>> + Send + 'static,
+              B: Future<Output=Result<R>> + Send + 'static,
               R: 'static,
     {
         f(self.fsread_inner(tree_id))
@@ -793,9 +793,9 @@ impl MockDatabase {
         _nremove: usize,
         _blob_bytes: usize,
         f: F
-    ) -> impl Future<Output=Result<R, Error>> + Send
+    ) -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadWriteFilesystem) -> B + Send + 'static,
-              B: Future<Output=Result<R, Error>> + Send,
+              B: Future<Output=Result<R>> + Send,
               R: 'static
     {
         f(self.fswrite_inner(tree_id))

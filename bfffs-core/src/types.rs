@@ -201,6 +201,8 @@ impl From<Error> for i32 {
     }
 }
 
+pub type Result<T> = ::std::result::Result<T, Error>;
+
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
@@ -270,7 +272,7 @@ impl TypicalSize for PBA {
 pub struct RID(pub u64);
 
 impl Display for RID {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         self.0.fmt(f)
     }
 }
@@ -293,13 +295,13 @@ impl Uuid {
         Uuid(uuid::Uuid::new_v4())
     }
 
-    pub fn parse_str(input: &str) -> Result<Uuid, uuid::Error> {
+    pub fn parse_str(input: &str) -> std::result::Result<Uuid, uuid::Error> {
         uuid::Uuid::parse_str(input).map(Uuid)
     }
 }
 
 impl<'de> Deserialize<'de> for Uuid {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
         where D: Deserializer<'de>
     {
         <[u8; 16]>::deserialize(deserializer)
@@ -316,7 +318,7 @@ impl Display for Uuid {
 // LCOV_EXCL_STOP
 
 impl Serialize for Uuid {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
         let bytes = self.0.as_bytes();

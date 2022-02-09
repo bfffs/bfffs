@@ -114,8 +114,7 @@ pub struct RangeQuery<A, D, K, T, V>
     data: VecDeque<(K, V)>,
     end: Bound<T>,
     last_fut: Option<Pin<Box<dyn Future<
-        Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
-                      Error>>
+        Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>)>>
         + Send
     >>>,
     /// Handle to the tree
@@ -159,7 +158,7 @@ impl<A, D, K, T, V> RangeQuery<A, D, K, T, V>
 
     fn pin_get_last_fut(self: Pin<&mut Self>) ->
         &mut Option<Pin<Box<dyn Future<Output=
-            Result<(VecDeque<(K, V)>, Option<Bound<T>>), Error>
+            Result<(VecDeque<(K, V)>, Option<Bound<T>>)>
         > + Send >>>
     {
         // // This is okay because `last_fut` is never considered pinned
@@ -175,7 +174,7 @@ impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
           T: Debug + Ord + Clone + Send + 'static,
           V: Value
 {
-    type Item = Result<(K, V), Error>;
+    type Item = Result<(K, V)>;
 
     #[instrument(skip(self, cx))]
     fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
@@ -234,8 +233,7 @@ struct CleanZonePass1Inner<D, K, V>
 
     /// Used when an operation must block
     last_fut: Option<Pin<Box<dyn Future<
-        Output=Result<(VecDeque<NodeId<K>>, Option<K>),
-                      Error>>
+        Output=Result<(VecDeque<NodeId<K>>, Option<K>)>>
         + Send
     >>>,
 
@@ -294,7 +292,7 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
           K: Key,
           V: Value
 {
-    type Item = Result<NodeId<K>, Error>;
+    type Item = Result<NodeId<K>>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context)
         -> Poll<Option<Self::Item>>
@@ -308,7 +306,8 @@ impl<D, K, V> Stream for CleanZonePass1<D, K, V>
                 let i = self.inner.borrow();
                 if i.cursor.is_some() {
                     drop(i);
-                    let mut f = stream::poll_fn(|cx| -> Poll<Option<Result<(), Error>>> {
+                    let mut f = stream::poll_fn(|cx| -> Poll<Option<Result<()>>>
+                    {
                         let mut i = self.inner.borrow_mut();
                         let mut f = i.last_fut.take().unwrap_or_else(|| {
                             let l = i.cursor.unwrap();
@@ -380,8 +379,7 @@ struct InnerLiteral<A: Addr, K: Key, V: Value> {
 
 /// The return type of `Tree::check_r`
 type CheckR<K> = Pin<Box<dyn Future<
-    Output=Result<(bool, RangeInclusive<K>, Range<TxgT>),
-                  Error>>
+    Output=Result<(bool, RangeInclusive<K>, Range<TxgT>)>>
     + Send>>;
 
 
@@ -463,7 +461,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     fn addresses_r<R, T>(dml: Arc<D>, height: u8, guard: TreeReadGuard<A, K, V>,
                          mut tx: mpsc::Sender<A>, txgs: R)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where TxgT: Borrow<T>,
               R: Clone + RangeBounds<T> + Send + Sync + 'static,
               T: Ord + Clone + Send
@@ -471,7 +469,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         let child_addresses = guard.as_int().children.iter()
         .filter(|c| c.ptr.is_addr() && ranges_overlap(&txgs, &c.txgs))
         .map(|c| Ok(*c.ptr.as_addr()))
-        .collect::<Vec<Result<A, _>>>();
+        .collect::<Vec<std::result::Result<A, _>>>();
         async move {
             tx.send_all(&mut stream::iter(child_addresses.into_iter()))
             .map_err(|_| Error::EPIPE)
@@ -500,7 +498,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Audit the whole Tree for consistency and invariants
     // TODO: check node size limits, too
-    pub async fn check(self: Arc<Self>) -> Result<bool, Error> {
+    pub async fn check(self: Arc<Self>) -> Result<bool> {
         // Keep the whole tree locked and use LIFO lock discipline
         let tree_guard = self.read().await;
         let height = tree_guard.height;
@@ -693,7 +691,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// records.  The first one is the Tree itself, and the rest are other
     /// on-disk Nodes.  All the Nodes can be combined into a single YAML map by
     /// simply removing the `...\n---` separators.
-    pub async fn dump(&self, f: &mut dyn io::Write) -> Result<(), Error> {
+    pub async fn dump(&self, f: &mut dyn io::Write) -> Result<()> {
         // Outline:
         // * Lock the whole tree and proceed bottom-up.
         // * YAMLize each Node
@@ -731,7 +729,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         node: TreeReadGuard<A, K, V>,
         ser: Rc<RefCell<serde_yaml::Serializer<Box<dyn io::Write + 'a>>>>
     ) -> Pin<Box<dyn Future<
-            Output=Result<TreeReadGuard<A, K, V>, Error>> + 'a
+            Output=Result<TreeReadGuard<A, K, V>>> + 'a
         >>
     {
         let ser2 = ser.clone();
@@ -749,7 +747,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         } else {
             Box::pin(future::ok(Vec::new()))
                 as Pin<Box<dyn Future<
-                    Output=Result<Vec<TreeReadGuard<A, K, V>>, _>
+                    Output=Result<Vec<TreeReadGuard<A, K, V>>>
                 >>>
         }.map_ok(move |v: Vec<TreeReadGuard<A, K, V>>| {
             if !node.is_leaf() {
@@ -779,8 +777,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         txg: TxgT,
         credit: Credit
     ) -> impl Future<
-            Output=Result<(TreeWriteGuard<A, K, V>, i8, i8, Credit),
-            Error>
+            Output=Result<(TreeWriteGuard<A, K, V>, i8, i8, Credit)>
         >
         where K: Borrow<Q>, Q: Ord
     {
@@ -839,7 +836,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     }
 
     /// Flush all in-memory Nodes to disk.
-    pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<(), Error>
+    pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<()>
     {
         while let true = Tree::flush_once(self.clone(), txg).await? {
         }
@@ -867,7 +864,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // high key Leaf nodes.  That would be inefficient, because it's likely that
     // the Int nodes could become redirtied again quickly.  Better to treat all
     // keys fairly, and to flush leaf nodes before int nodes.
-    async fn flush_once(self: Arc<Self>, txg: TxgT) -> Result<bool, Error>
+    async fn flush_once(self: Arc<Self>, txg: TxgT) -> Result<bool>
     {
         let dml = self.dml.clone();
         let lcomp = self.leaf_compressor;
@@ -937,7 +934,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// terminal int node.
     async fn flush_leaves(dml: Arc<D>, leaf_compressor: Compression,
         mut node: TreeWriteGuard<A, K, V>, txg: TxgT)
-        -> Result<Option<K>, Error>
+        -> Result<Option<K>>
     {
         let int = node.as_int_mut();
         int.children.iter_mut()
@@ -958,7 +955,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     let txgs = txg .. txg + 1;
                     elem.ptr = TreePtr::Addr(addr);
                     elem.txgs = txgs;
-                    let r: Result<(), Error> = Ok(());
+                    let r: Result<()> = Ok(());
                     r
                 }
             }).collect::<FuturesUnordered<_>>()
@@ -989,7 +986,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         height: u8,
         txg: TxgT,
         lowest: K)
-        -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<K>>> + Send>>
     {
         debug_assert!(height >= 2);
 
@@ -1040,7 +1037,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Lookup the value of key `k`.  Return `None` if no value is present.
     #[instrument(skip(self))]
-    pub fn get(&self, k: K) -> impl Future<Output=Result<Option<V>, Error>>
+    pub fn get(&self, k: K) -> impl Future<Output=Result<Option<V>>>
     {
         let dml2 = self.dml.clone();
         self.read()
@@ -1057,7 +1054,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Lookup the value of key `k` in a node, which must already be locked.
     #[instrument(skip(dml, node))]
     fn get_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>, k: K)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>
     {
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
@@ -1082,8 +1079,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// If the Bound is `None`, then the search is complete.
     #[instrument(skip(self))]
     fn get_range<R, T>(&self, range: R)
-        -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
-                       Error>> + Send
+        -> impl Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>)>> + Send
         where K: Borrow<T>,
               R: Clone + Debug + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
@@ -1105,8 +1101,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     #[instrument(skip(dml, guard, next_guard))]
     fn get_range_r<R, T>(dml: Arc<D>, guard: TreeReadGuard<A, K, V>,
                          next_guard: Option<TreeReadGuard<A, K, V>>, range: R)
-        -> Pin<Box<dyn Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>),
-                          Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<(VecDeque<(K, V)>, Option<Bound<T>>)>> + Send>>
         where K: Borrow<T>,
               R: Clone + Debug + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + Send + 'static
@@ -1205,7 +1200,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// - `credit`: Writeback credit.  Should be sufficient for at least 2 total
     ///             leaf nodes, plus anything required by the value.
     pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT, credit: Credit)
-        -> Result<Option<V>, Error>
+        -> Result<Option<V>>
     {
         let guard = self.write().await;
         let (mut rg, mut cg, credit) = Tree::xlock_root(&self.dml, guard, txg,
@@ -1243,7 +1238,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                   v: V,
                   txg: TxgT,
                   credit: Credit)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>
     {
         // First, split the node, if necessary
         if (*child).should_split(&k, &self.limits) {
@@ -1270,7 +1265,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                            v: V,
                            txg: TxgT,
                            credit: Credit)
-        -> Result<Option<V>, Error>
+        -> Result<Option<V>>
     {
         let child_idx = node.as_int().position(&k);
         if k < node.as_int().children[child_idx].key {
@@ -1292,7 +1287,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         txg: TxgT,
         dml: &D,
         credit: Credit)
-        -> impl Future<Output=Result<Option<V>, Error>>
+        -> impl Future<Output=Result<Option<V>>>
     {
         let (old_v, excess) = child.as_leaf_mut().insert(k, v, credit);
         elem.txgs = txg..txg + 1;
@@ -1312,7 +1307,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Return the highest valued key in the `Tree`
     #[instrument(skip(self))]
-    pub fn last_key(&self) -> impl Future<Output=Result<Option<K>, Error>> {
+    pub fn last_key(&self) -> impl Future<Output=Result<Option<K>>> {
         let dml2 = self.dml.clone();
         self.read()
             .then(move |tree_guard| {
@@ -1328,7 +1323,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// children
     #[instrument(skip(dml, node))]
     fn last_key_r(dml: Arc<D>, node: TreeReadGuard<A, K, V>)
-        -> Pin<Box<dyn Future<Output=Result<Option<K>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<K>>> + Send>>
     {
         let next_node_fut = match *node {
             NodeData::Leaf(ref leaf) => {
@@ -1424,7 +1419,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         range: R,
         txg: TxgT,
         credit: Credit
-    ) -> Result<(), Error>
+    ) -> Result<()>
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1554,8 +1549,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         txg: TxgT,
         mut credit: Credit
     ) -> impl Future<Output=Result<
-            (HashSet<usize>, bool, usize, Credit),
-            Error
+            (HashSet<usize>, bool, usize, Credit)
         >> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
@@ -1759,7 +1753,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         range: R,
         txg: TxgT,
         credit: Credit
-    ) -> impl Future<Output=Result<(), Error>> + Send
+    ) -> impl Future<Output=Result<()>> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1817,9 +1811,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         txg: TxgT,
         credit: Credit
     ) -> Pin<Box<dyn Future<Output=Result<
-            (HashSet<usize>, Credit),
-            Error
-        >> + Send>>
+            (HashSet<usize>, Credit)>> + Send>>
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Ord + Clone + 'static + Debug
@@ -1957,7 +1949,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Delete the indicated range of children from the Tree
     fn range_delete_purge(dml: Arc<D>, height: u8, range: Range<usize>,
                           mut guard: TreeWriteGuard<A, K, V>, txg: TxgT)
-        -> impl Future<Output=Result<TreeWriteGuard<A, K, V>, Error>> + Send
+        -> impl Future<Output=Result<TreeWriteGuard<A, K, V>>> + Send
     {
         if height == 0 {
             // Simply delete the leaves
@@ -2007,7 +1999,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Remove and return the value at key `k`, if any.
     pub async fn remove(self: Arc<Self>, k: K, txg: TxgT, credit: Credit)
-        -> Result<Option<V>, Error>
+        -> Result<Option<V>>
     {
         let tree_guard = self.write().await;
         let (_, rg, credit) = Tree::xlock_and_merge_root(self.dml.clone(),
@@ -2022,7 +2014,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                   child_idx: usize, child: TreeWriteGuard<A, K, V>, k: K,
                   txg: TxgT,
                   credit: Credit)
-        -> Pin<Box<dyn Future<Output=Result<Option<V>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>
     {
         // First, fix the node, if necessary.  Merge/steal even if the node
         // currently satifisfies the min fanout, because we may remove end up
@@ -2050,7 +2042,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             k: K,
             txg: TxgT,
             mut credit: Credit
-        ) -> Result<Option<V>, Error>
+        ) -> Result<Option<V>>
     {
 
         if node.is_leaf() {
@@ -2069,7 +2061,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Render the Tree into a `TreeOnDisk` object.  Requires that the Tree
     /// already be flushed.  Will fail if the Tree is dirty.
-    pub fn serialize(&self) -> Result<TreeOnDisk<A>, Error> {
+    pub fn serialize(&self) -> Result<TreeOnDisk<A>> {
         self.root.try_read()
         .map(|root_guard| {
             let iod = InnerOnDisk{
@@ -2096,7 +2088,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         compressor: Compression,
         node: Node<A, K, V>,
         txg: TxgT)
-        -> Result<A, Error>
+        -> Result<A>
     {
         let leaf_data = node.0.try_unwrap().unwrap().into_leaf();
         let (flushed_leaf_data, credit) = leaf_data.flush(&*dml, txg).await?;
@@ -2121,7 +2113,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             RwLockWriteGuard<TreeRoot<A, K, V>>,
             TreeWriteGuard<A, K, V>,
             Credit
-        ), Error>> + Send
+        )>> + Send
     {
         // First, lock the root IntElem
         // If it's not a leaf and has a single child:
@@ -2174,8 +2166,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             Output=Result<(
                 RwLockWriteGuard<TreeRoot<A, K, V>>,
                 TreeWriteGuard<A, K, V>,
-                Credit),
-            Error>
+                Credit)>
         > + Send>>
     {
         guard.elem.txgs.end = txg + 1;
@@ -2254,7 +2245,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     // nodes one at a time, so we just let it slide.
     pub async fn clean_zone(self: Arc<Self>, pbas: Range<PBA>,
                             txgs: Range<TxgT>, txg: TxgT)
-        -> Result<(), Error>
+        -> Result<()>
     {
         // We can't rewrite children before their parents while sticking to a
         // lock-coupling discipline.  And we can't rewrite parents before their
@@ -2303,7 +2294,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
     /// in the indicated range of PBAs.  `txgs` must include all transactions in
     /// which anything was written to any block in `pbas`.
     async fn get_dirty_nodes(self: Arc<Self>, params: GetDirtyNodeParams<K>)
-        -> Result<(VecDeque<NodeId<K>>, Option<K>), Error>
+        -> Result<(VecDeque<NodeId<K>>, Option<K>)>
     {
         let tree_guard = self.read().await;
         let h = tree_guard.height;
@@ -2340,8 +2331,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                          height: u8,
                          next_key: Option<K>,
                          params: GetDirtyNodeParams<K>)
-        -> Pin<Box<dyn Future<Output=Result<(VecDeque<NodeId<K>>, Option<K>),
-                          Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<(VecDeque<NodeId<K>>, Option<K>)>> + Send>>
     {
         if height == params.echelon + 1 {
             let nodes = guard.as_int().children.iter().filter_map(|child| {
@@ -2385,7 +2375,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 
     /// Rewrite `node`, without modifying its contents
     fn rewrite_node(self: Arc<Self>, node: NodeId<K>, txg: TxgT)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         self.write()
         .then(move |mut guard| {
@@ -2424,7 +2414,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
 
     fn rewrite_node_r(dml: Arc<D>, mut guard: TreeWriteGuard<ddml::DRP, K, V>,
                       height: u8, node: NodeId<K>, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         debug_assert!(height > 0);
         let child_idx = guard.as_int().position(&node.key);

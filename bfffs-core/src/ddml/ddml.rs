@@ -70,7 +70,7 @@ impl DDML {
 
     /// Get directly from disk, bypassing cache
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Output=Result<Box<T>, Error>> + Send
+        -> impl Future<Output=Result<Box<T>>> + Send
     {
         self.read(*drp).map_ok(move |dbs| {
             Box::new(T::deserialize(dbs))
@@ -103,7 +103,7 @@ impl DDML {
 
     /// Read a record from disk
     fn read(&self, drp: DRP)
-        -> impl Future<Output=Result<DivBufShared, Error>> + Send
+        -> impl Future<Output=Result<DivBufShared>> + Send
     {
         // Outline
         // 1) Read
@@ -152,7 +152,7 @@ impl DDML {
 
     /// Read a record and return ownership of it, bypassing Cache
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Output=Result<Box<T>, Error>> + Send
+        -> impl Future<Output=Result<Box<T>>> + Send
     {
         let lbas = drp.asize();
         let pba = drp.pba;
@@ -171,7 +171,7 @@ impl DDML {
     /// Does most of the work of DDML::put
     fn put_common<T>(&self, cacheref: &T, compression: Compression,
                      txg: TxgT)
-        -> impl Future<Output=Result<DRP, Error>> + Send
+        -> impl Future<Output=Result<DRP>> + Send
         where T: borrow::Borrow<dyn CacheRef>
     {
         // Outline:
@@ -207,7 +207,7 @@ impl DDML {
     /// Write a buffer bypassing cache.  Return the same buffer
     pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-        -> impl Future<Output=Result<DRP, Error>> + Send
+        -> impl Future<Output=Result<DRP>> + Send
         where T: borrow::Borrow<dyn CacheRef>
     {
         self.put_common(cacheref, compression, txg)
@@ -219,7 +219,7 @@ impl DDML {
     }
 
     pub fn write_label(&self, labeller: LabelWriter)
-        -> impl Future<Output=Result<(), Error>> + Send
+        -> impl Future<Output=Result<()>> + Send
     {
         self.pool.write_label(labeller)
     }
@@ -229,7 +229,7 @@ impl DML for DDML {
     type Addr = DRP;
 
     fn delete(&self, drp: &DRP, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         self.cache.lock().unwrap().remove(&Key::PBA(drp.pba));
         Box::pin(self.pool.free(drp.pba, drp.asize()))
@@ -241,7 +241,7 @@ impl DML for DDML {
 
     #[instrument(skip(self))]
     fn get<T: Cacheable, R: CacheRef>(&self, drp: &DRP)
-        -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
     {
         // Outline:
         // 1) Fetch from cache, or
@@ -262,7 +262,7 @@ impl DML for DDML {
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {
         let lbas = drp.asize();
         let pba = drp.pba;
@@ -277,7 +277,7 @@ impl DML for DDML {
     #[instrument(skip(self))]
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr>> + Send>>
     {
         let cache2 = self.cache.clone();
         let db = cacheable.make_ref();
@@ -299,7 +299,7 @@ impl DML for DDML {
     }
 
     fn sync_all(&self, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
         Box::pin(self.pool.sync_all())
     }
@@ -315,37 +315,37 @@ mock! {
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
         pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-            -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         pub fn list_closed_zones(&self)
             -> Box<dyn Iterator<Item=ClosedZone> + Send>;
         pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn pool_name(&self) -> &str;
         pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
-            -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         pub fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>
+            -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>
             where T: borrow::Borrow<dyn CacheRef>;
         pub fn size(&self) -> LbaT;
         pub fn write_label(&self, labeller: LabelWriter)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }
     impl DML for DDML {
         type Addr = DRP;
 
         fn delete(&self, addr: &DRP, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         fn evict(&self, addr: &DRP);
         fn get<T: Cacheable, R: CacheRef>(&self, addr: &DRP)
-            -> Pin<Box<dyn Future<Output=Result<Box<R>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>;
         fn pop<T: Cacheable, R: CacheRef>(&self, rid: &DRP, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<Box<T>, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                                  txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<DRP, Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>;
         fn repay(&self, credit: Credit);
         fn sync_all(&self, txg: TxgT)
-            -> Pin<Box<dyn Future<Output=Result<(), Error>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }
 }
 

@@ -171,7 +171,7 @@ impl<'a> FreeSpaceMap {
 
     fn deserialize(vdev: Arc<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
         -> Pin<Box<
-                dyn Future<Output=Result<(Self, Arc<dyn VdevRaidApi>), Error>>
+                dyn Future<Output=Result<(Self, Arc<dyn VdevRaidApi>)>>
                 + Send
             >>
     {
@@ -374,7 +374,7 @@ impl<'a> FreeSpaceMap {
     /// space.  If `lbas` was zero, return `None`.  If `lbas` was nonzero and
     /// the requested zone has insufficient space, return ENOSPC.
     fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT, lbas: LbaT,
-                 txg: TxgT) -> Result<Option<(ZoneT, LbaT)>, Error> {
+                 txg: TxgT) -> Result<Option<(ZoneT, LbaT)>> {
         self.dirty_zone(id);
         let idx = id as usize;
         let space = end - start;
@@ -407,7 +407,7 @@ impl<'a> FreeSpaceMap {
 
     /// Open a FreeSpaceMap from an already-formatted `VdevRaid`.
     async fn open(vdev: Arc<dyn VdevRaidApi>)
-        -> Result<(Self, Arc<dyn VdevRaidApi + 'static>), Error>
+        -> Result<(Self, Arc<dyn VdevRaidApi + 'static>)>
     {
         let total_zones = vdev.zones();
         // NB: it would be slightly faster to created it with the correct
@@ -517,7 +517,7 @@ impl<'a> FreeSpaceMap {
 
 impl Display for FreeSpaceMap {
     /// Print a human-readable summary of the FreeSpaceMap
-    fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let t = self.total_zones;
         let le = self.empty_zones.len();
         let o = self.open_zones.len();
@@ -634,7 +634,7 @@ struct SpacemapOnDisk {
 
 impl SpacemapOnDisk {
     fn deserialize(block: LbaT, buf: &DivBuf)
-        -> bincode::Result<Result<Self, Error>>
+        -> bincode::Result<Result<Self>>
     {
         bincode::deserialize::<SpacemapOnDisk>(&buf[..])
         .map(|sod| {
@@ -823,7 +823,7 @@ impl Cluster {
     ///
     /// Returns a new `Cluster` and a `LabelReader` that may be used to
     /// construct other vdevs stacked on top.
-    pub async fn open(vdev_raid: Arc<dyn VdevRaidApi>) -> Result<Self, Error>
+    pub async fn open(vdev_raid: Arc<dyn VdevRaidApi>) -> Result<Self>
     {
         FreeSpaceMap::open(vdev_raid).await
             .map(Cluster::new)
@@ -866,7 +866,7 @@ impl Cluster {
     /// The LBA where the data will be written, and a
     /// `Future` for the operation in progress.
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> Result<(LbaT, BoxVdevFut), Error>
+        -> Result<(LbaT, BoxVdevFut)>
     {
         // Outline:
         // 1) Try allocating in an open zone

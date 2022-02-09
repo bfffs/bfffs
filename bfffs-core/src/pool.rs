@@ -189,7 +189,7 @@ impl Pool {
     }
 
     pub fn flush(&self, idx: u32)
-        -> impl Future<Output=Result<(), Error>> + Send + Sync
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         self.clusters.iter()
         .map(|cl| cl.flush(idx))
@@ -358,7 +358,7 @@ impl Pool {
     ///
     /// The `PBA` where the data was written
     pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<PBA, Error>> + Send>>
+        -> Pin<Box<dyn Future<Output=Result<PBA>> + Send>>
     {
         let cluster = self.stats.choose_cluster();
         let cidx = cluster as usize;
@@ -367,7 +367,7 @@ impl Pool {
         match self.clusters[cidx].write(buf, txg) {
             Ok((lba, wfut)) => {
                 self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
-                wfut.map(move |r: Result<(), Error>| {
+                wfut.map(move |r: Result<()>| {
                     stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                     r.map(|_| {
                         stats2.allocated_space[cidx]

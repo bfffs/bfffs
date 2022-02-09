@@ -19,7 +19,7 @@ struct LruEntry {
 }
 
 impl Debug for LruEntry {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "LruEntry {{ lru: {:?}, mru: {:?} }}", self.lru, self.mru)
     }
 }

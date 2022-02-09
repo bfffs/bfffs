@@ -1,6 +1,6 @@
 use std::{convert::TryFrom, path::PathBuf, process::exit, sync::Arc};
 
-use bfffs::{Bfffs, Error};
+use bfffs::{Bfffs, Result};
 use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
@@ -26,7 +26,7 @@ impl Check {
     // * RIDT and AllocT are exact inverses
     // * RIDT contains no orphan entries not found in the FSTrees
     // * Spacemaps match actual usage
-    pub async fn main(self) -> Result<(), Error> {
+    pub async fn main(self) -> Result<()> {
         let dev_manager = DevManager::default();
         for dev in self.disks.iter() {
             dev_manager.taste(dev).await.unwrap();
@@ -99,7 +99,7 @@ impl Dump {
         db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
-    async fn main(self) -> Result<(), Error> {
+    async fn main(self) -> Result<()> {
         if self.fsm {
             self.dump_fsm().await;
         } else if self.tree {
@@ -136,7 +136,7 @@ mod fs {
     }
 
     impl Create {
-        pub(super) async fn main(self, sock: &Path) -> Result<(), Error> {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
             let props = self
                 .properties
@@ -170,7 +170,7 @@ mod fs {
     }
 
     impl Mount {
-        pub(super) async fn main(self, sock: &Path) -> Result<(), Error> {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
             bfffs.fs_mount(self.name, self.mountpoint).await
         }
@@ -216,7 +216,7 @@ mod pool {
     }
 
     impl Create {
-        pub(super) async fn main(self) -> Result<(), Error> {
+        pub(super) async fn main(self) -> Result<()> {
             let zone_size = self.zone_size.map(|mbs| {
                 let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
                 NonZeroU64::new(lbas).expect("zone_size may not be zero")
@@ -395,7 +395,7 @@ struct Cli {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
     let cli: Cli = Cli::parse();
     match cli.cmd {
         SubCommand::Check(check) => check.main().await,
