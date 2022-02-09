@@ -4,10 +4,10 @@
 //! This library is for programmatic access to BFFFS.  It is intended to be A
 //! stable API.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use bfffs_core::rpc;
-pub use bfffs_core::Error;
+pub use bfffs_core::{controller::TreeID, property::Property, Error};
 use tokio_seqpacket::UnixSeqpacket;
 
 // TODO: move definition into bfffs_core after
@@ -26,6 +26,36 @@ impl Bfffs {
         Self::new(Path::new("/var/run/bfffsd.sock")).await.unwrap()
     }
 
+    /// Create a new file system
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   Name of the new file system, including the pool
+    /// `props`     -   Any non-default properties to set on the file system
+    pub async fn fs_create(
+        &self,
+        fsname: String,
+        props: Vec<Property>,
+    ) -> Result<TreeID> {
+        let req = rpc::fs::create(fsname, props);
+        self.call(req).await.unwrap().into_fs_create()
+    }
+
+    /// Mount a file system
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   Name of the file system to mount, including the pool
+    /// `mountpoint` -  Path to mount the file system.
+    pub async fn fs_mount(
+        &self,
+        fsname: String,
+        mountpoint: PathBuf,
+    ) -> Result<()> {
+        let req = rpc::fs::mount(mountpoint, fsname);
+        self.call(req).await.unwrap().into_fs_mount()
+    }
+
     /// Connect to the server whose socket is at this path
     pub async fn new(sock: &Path) -> Result<Self> {
         let peer = UnixSeqpacket::connect(sock).await.map_err(Error::from)?;
@@ -33,7 +63,7 @@ impl Bfffs {
     }
 
     /// Submit an RPC request to the server
-    pub async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
+    async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
         const BUFSIZ: usize = 128;
 
         let encoded: Vec<u8> = bincode::serialize(&req).unwrap();
