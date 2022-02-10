@@ -6,10 +6,10 @@ use bfffs_core::{
     device_manager::DevManager,
     property::Property,
 };
-use clap::{crate_version, Clap};
+use clap::{crate_version, Parser};
 use futures::TryFutureExt;
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 /// Consistency check
 struct Check {
     #[clap(required(true))]
@@ -47,7 +47,7 @@ impl Check {
     }
 }
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 /// Dump internal filesystem information
 struct Dump {
     /// Dump the Free Space Map
@@ -109,7 +109,7 @@ impl Dump {
     }
 }
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 /// Debugging tools
 enum DebugCmd {
     Dump(Dump),
@@ -121,7 +121,7 @@ mod fs {
     use super::*;
 
     /// Create a new file system
-    #[derive(Clap, Clone, Debug)]
+    #[derive(Parser, Clone, Debug)]
     pub(super) struct Create {
         /// File system name
         pub(super) name:       String,
@@ -153,7 +153,7 @@ mod fs {
     }
 
     /// Mount a file system
-    #[derive(Clap, Clone, Debug)]
+    #[derive(Parser, Clone, Debug)]
     pub(super) struct Mount {
         /// Mount options, comma delimited
         #[clap(
@@ -176,7 +176,7 @@ mod fs {
         }
     }
 
-    #[derive(Clap, Clone, Debug)]
+    #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify file systems
     pub(super) enum FsCmd {
         Create(Create),
@@ -200,7 +200,7 @@ mod pool {
     use super::*;
 
     /// Create a new storage pool
-    #[derive(Clap, Clone, Debug)]
+    #[derive(Parser, Clone, Debug)]
     pub(super) struct Create {
         /// Dataset properties, comma delimited
         #[clap(short, long, require_delimiter(true), value_delimiter(','))]
@@ -366,14 +366,14 @@ mod pool {
         }
     }
 
-    #[derive(Clap, Clone, Debug)]
+    #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify storage pools
     pub(super) enum PoolCmd {
         Create(Create),
     }
 }
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 enum SubCommand {
     Check(Check),
     #[clap(subcommand)]
@@ -384,7 +384,7 @@ enum SubCommand {
     Pool(pool::PoolCmd),
 }
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[clap(version = crate_version!())]
 struct Cli {
     /// Path to the bfffsd socket

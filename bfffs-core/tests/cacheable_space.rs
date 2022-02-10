@@ -16,7 +16,7 @@ use bfffs_core::{
     TxgT,
     writeback::{Credit, WriteBack}
 };
-use clap::Clap;
+use clap::Parser;
 use divbuf::DivBufShared;
 use futures::FutureExt;
 use std::{
@@ -365,7 +365,7 @@ fn measure(name: &str, pos: &str, n: usize, verbose: bool,
     err.abs() <= 5.0
 }
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 struct Cli {
     #[clap(long = "nocapture")]
     verbose: bool

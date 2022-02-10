@@ -4,7 +4,7 @@
 
 use bfffs_core::fs_tree::*;
 use chashmap::CHashMap;
-use clap::Clap;
+use clap::Parser;
 use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;
 use rand::{
@@ -141,7 +141,7 @@ impl Worker {
     }
 }
 
-#[derive(Clap, Clone, Copy, Debug)]
+#[derive(Parser, Clone, Copy, Debug)]
 /// Generate hash collisions for dirent and extattr storage in BFFFS
 struct Cli {
     /// Generate extended attributes instead of directory entries

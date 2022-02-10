@@ -28,9 +28,9 @@ tokio-seqpacket = "0.5.4"
 tracing = "0.1.5"
 
 [dependencies.clap]
-version = "3.0.0-beta.4"
+version = "3.0.14"
 default-features = true
-features=  [ "wrap_help"]
+features=  [ "cargo", "derive", "wrap_help"]
 
 [dependencies.tracing-subscriber]
 version = "0.2.15"

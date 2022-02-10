@@ -44,9 +44,9 @@ tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}
 
 [dev-dependencies.clap]
-version = "3.0.0-beta.4"
+version = "3.0.14"
 default-features = true
-features=  [ "wrap_help" ]
+features=  [ "derive", "wrap_help" ]
 
 [dev-dependencies]
 chashmap = "2"

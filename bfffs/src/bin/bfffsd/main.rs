@@ -15,7 +15,7 @@ use bfffs_core::{
     Result,
 };
 use cfg_if::cfg_if;
-use clap::{crate_version, Clap};
+use clap::{crate_version, Parser};
 use fuse3::{raw::Session, MountOptions};
 #[cfg(not(test))]
 use futures::FutureExt;
@@ -34,7 +34,7 @@ mod fs;
 
 use crate::fs::FuseFs;
 
-#[derive(Clap, Clone, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[clap(version = crate_version!())]
 struct Cli {
     /// Mount options, comma delimited.  Apply to all BFFFS mounts

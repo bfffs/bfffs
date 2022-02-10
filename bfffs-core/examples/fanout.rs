@@ -14,7 +14,7 @@ use bfffs_core::{
     tree::*,
     writeback::{Credit, WriteBack}
 };
-use clap::Clap;
+use clap::Parser;
 use divbuf::DivBufShared;
 use futures::{
     Future,
@@ -416,7 +416,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     println!("Overall Metadata fraction: {:#.3}%", 100.0 * mf);
 }
 
-#[derive(Clap, Clone, Copy, Debug)]
+#[derive(Parser, Clone, Copy, Debug)]
 struct Cli {
     /// simulate sequential insertion
     #[clap(short = 's')]
