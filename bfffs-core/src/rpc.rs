@@ -27,6 +27,23 @@ pub mod fs {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
+    pub struct DsInfo {
+        pub name:   String,
+        pub props:  Vec<Property>,
+        pub offset: u64
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct List {
+        pub name: String,
+        pub offset: Option<u64>
+    }
+
+    pub fn list(name: String, offset: Option<u64>) -> Request {
+        Request::FsList(List{name, offset})
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
     pub struct Mount {
         pub mountpoint: PathBuf,
         /// Comma-separated mount options
@@ -48,12 +65,14 @@ pub mod fs {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Request {
     FsCreate(fs::Create),
+    FsList(fs::List),
     FsMount(fs::Mount)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
     FsCreate(Result<TreeID>),
+    FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>)
 }
 
@@ -61,6 +80,13 @@ impl Response {
     pub fn into_fs_create(self) -> Result<TreeID> {
         match self {
             Response::FsCreate(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_list(self) -> Result<Vec<fs::DsInfo>> {
+        match self {
+            Response::FsList(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

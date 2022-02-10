@@ -54,7 +54,7 @@ async fn setup() -> Database {
         });
     db.expect_lookup_fs()
         .with(eq(""))
-        .return_const(Ok(Some(TreeID(0))));
+        .returning(|_| future::ok(Some(TreeID(0))).boxed());
     // Use a small recordsize for most tests, because it's faster to test
     // conditions that require multiple records.
     let props = vec![Property::RecordSize(12)];

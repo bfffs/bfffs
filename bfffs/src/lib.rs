@@ -4,10 +4,14 @@
 //! This library is for programmatic access to BFFFS.  It is intended to be A
 //! stable API.
 
-use std::path::{Path, PathBuf};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 
 use bfffs_core::rpc;
 pub use bfffs_core::{controller::TreeID, property::Property, Error, Result};
+use futures::{stream, Stream};
 use tokio_seqpacket::UnixSeqpacket;
 
 /// A connection to the bfffsd server
@@ -37,6 +41,41 @@ impl Bfffs {
         self.call(req).await.unwrap().into_fs_create()
     }
 
+    /// List the given dataset and all of its children
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   The dataset to list, including pool name
+    /// `offs`      -   A stream resume token.  It must be either `None` or the
+    ///                 value returned from a previous call to this function.
+    ///                 Children will be returned beginning after the entry
+    ///                 whose offset is `offs`.
+    // Modeled after getdirentries(2).
+    pub fn fs_list<'a>(
+        &'a self,
+        name: String,
+        offs: Option<u64>,
+    ) -> impl Stream<Item = Result<rpc::fs::DsInfo>> + '_ {
+        stream::try_unfold((offs, VecDeque::new()), move |(offs, mut v)| {
+            let name2 = name.clone();
+            async move {
+                if v.is_empty() {
+                    let req = rpc::fs::list(name2.clone(), offs);
+                    v = self.call(req).await?.into_fs_list()?.into();
+                    if v.is_empty() {
+                        return Ok(None);
+                    }
+                }
+                let x: Option<(rpc::fs::DsInfo, (Option<u64>, VecDeque<_>))> =
+                    v.pop_front().map(|dsinfo| {
+                        let offset = Some(dsinfo.offset);
+                        (dsinfo, (offset, v))
+                    });
+                Ok(x)
+            }
+        })
+    }
+
     /// Mount a file system
     ///
     /// # Arguments
@@ -60,7 +99,7 @@ impl Bfffs {
 
     /// Submit an RPC request to the server
     async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
-        const BUFSIZ: usize = 128;
+        const BUFSIZ: usize = 4096;
 
         let encoded: Vec<u8> = bincode::serialize(&req).unwrap();
         let nwrite = self.peer.send(&encoded).await.map_err(Error::from)?;
