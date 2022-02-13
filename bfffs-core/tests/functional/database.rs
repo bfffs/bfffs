@@ -8,36 +8,27 @@ use bfffs_core::pool::*;
 use bfffs_core::vdev_block::*;
 use bfffs_core::vdev_file::*;
 use bfffs_core::raid;
-use futures::{TryFutureExt, future};
+use futures::future;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex}
 };
-use super::*;
-use tokio::runtime::Runtime;
 
-fn open_db(rt: &Runtime, path: PathBuf) -> Database {
-    rt.block_on(async move {
-        VdevFile::open(path)
-        .and_then(|(leaf, reader)| {
-            let block = VdevBlock::new(leaf);
-            let (vr, lr) = raid::open(None, vec![(block, reader)]);
-            cluster::Cluster::open(vr)
-            .map_ok(move |cluster| (cluster, lr))
-        }).map_ok(move |(cluster, reader)|{
-            let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
-            let cache = Cache::with_capacity(4_194_304);
-            let arc_cache = Arc::new(Mutex::new(cache));
-            let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
-            let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
-            Database::open(Arc::new(idml), reader)
-        }).await
-    }).unwrap()
+async fn open_db(path: PathBuf) -> Database {
+    let (leaf, reader) = VdevFile::open(path).await.unwrap();
+    let block = VdevBlock::new(leaf);
+    let (vr, lr) = raid::open(None, vec![(block, reader)]);
+    let cluster = cluster::Cluster::open(vr).await.unwrap();
+    let (pool, reader) = Pool::open(None, vec![(cluster, lr)]);
+    let cache = Cache::with_capacity(4_194_304);
+    let arc_cache = Arc::new(Mutex::new(cache));
+    let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
+    let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
+    Database::open(Arc::new(idml), reader)
 }
 
 mod persistence {
     use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
@@ -71,19 +62,18 @@ mod persistence {
 
     const POOLNAME: &str = "TestPool";
 
-    #[fixture]
-    fn objects() -> (Runtime, Database, TempDir, PathBuf) {
+    async fn harness() -> (Database, TempDir, PathBuf) {
         let len = 1 << 26;  // 64 MB
-        let tempdir = t!(
-            Builder::new().prefix("test_database_persistence").tempdir()
-        );
+        let tempdir = Builder::new()
+            .prefix("test_database_persistence")
+            .tempdir()
+            .unwrap();
         let filename = tempdir.path().join("vdev");
         {
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
+            let file = fs::File::create(&filename).unwrap();
+            file.set_len(len).unwrap();
         }
         let paths = [filename.clone()];
-        let rt = basic_runtime();
         let cs = NonZeroU64::new(1);
         let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
         let clusters = vec![cluster];
@@ -91,37 +81,29 @@ mod persistence {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        let db = rt.block_on(async {
-            Database::create(idml)
-        });
+        let db = Database::create(idml);
         // Due to bincode's variable-length encoding and the
         // unpredictability of the root filesystem's timestamp, writing the
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
-        // let tree_id = rt.block_on(db.create_fs(None, "",
-        //      Vec::new()))
-        //  .unwrap();
-        (rt, db, tempdir, filename)
+        // let tree_id = db.create_fs(None, "", Vec::new()).await.unwrap();
+        (db, tempdir, filename)
     }
 
     // Test open-after-write
-    #[rstest]
-    fn open(objects: (Runtime, Database, TempDir, PathBuf)) {
-        let (rt, old_db, _tempdir, path) = objects;
-        rt.block_on(
-            old_db.sync_transaction()
-        ).unwrap();
+    #[tokio::test]
+    async fn open() {
+        let (old_db, _tempdir, path) = harness().await;
+        old_db.sync_transaction().await.unwrap();
         drop(old_db);
-        let _db = open_db(&rt, path);
+        let _db = open_db(path);
     }
 
-    #[rstest]
-    fn sync_transaction(objects: (Runtime, Database, TempDir, PathBuf)) {
-        let (rt, db, _tempdir, path) = objects;
-        rt.block_on(
-            db.sync_transaction()
-        ).unwrap();
+    #[tokio::test]
+    async fn sync_transaction() {
+        let (db, _tempdir, path) = harness().await;
+        db.sync_transaction().await.unwrap();
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, pool, and idml labels
@@ -150,7 +132,6 @@ mod t {
         idml::*,
     };
     use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
     use std::{
         fs,
         num::NonZeroU64,
@@ -160,18 +141,18 @@ mod t {
 
     const POOLNAME: &str = "TestPool";
 
-    #[fixture]
-    fn objects() -> (Runtime, Database, TempDir, TreeID) {
+    async fn harness() -> (Database, TempDir, TreeID) {
         let len = 1 << 26;  // 64 MB
-        let tempdir =
-            t!(Builder::new().prefix("test_database_t").tempdir());
+        let tempdir = Builder::new()
+            .prefix("test_database_t")
+            .tempdir()
+            .unwrap();
         let filename = tempdir.path().join("vdev");
         {
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
+            let file = fs::File::create(&filename).unwrap();
+            file.set_len(len).unwrap();
         }
         let paths = [filename];
-        let rt = basic_runtime();
         let cs = NonZeroU64::new(1);
         let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
         let clusters = vec![cluster];
@@ -179,60 +160,46 @@ mod t {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        let (db, tree_id) = rt.block_on(async move {
-            let db = Database::create(idml);
-            let tree_id = db.create_fs(None, "", Vec::new())
-                .await.unwrap();
-            (db, tree_id)
-        });
-        (rt, db, tempdir, tree_id)
+        let db = Database::create(idml);
+        let tree_id = db.create_fs(None, "", Vec::new()).await.unwrap();
+        (db, tempdir, tree_id)
     }
 
-    #[rstest]
-    fn get_prop_default(objects: (Runtime, Database, TempDir, TreeID)) {
-        let (rt, db, _tempdir, tree_id) = objects;
+    #[tokio::test]
+    async fn get_prop_default() {
+        let (db, _tempdir, tree_id) = harness().await;
 
-        let (val, source) = rt.block_on(async {
-            db.get_prop(tree_id, PropertyName::Atime)
+        let (val, source) = db.get_prop(tree_id, PropertyName::Atime)
             .await
-        }).unwrap();
+            .unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
         assert_eq!(source, PropertySource::Default);
     }
 
-    #[rstest]
-    fn open_filesystem(objects: (Runtime, Database, TempDir, TreeID)) {
-        let (rt, db, tempdir, tree_id) = objects;
+    #[tokio::test]
+    async fn open_filesystem() {
+        let (db, tempdir, tree_id) = harness().await;
         // Sync the database, then drop and reopen it.  That's the only way to
         // clear Inner::fs_trees
-        rt.block_on(
-            db.sync_transaction()
-        ).unwrap();
+        db.sync_transaction().await.unwrap();
         drop(db);
         let filename = tempdir.path().join("vdev");
-        let db = open_db(&rt, filename);
-        rt.block_on(async move {
-            db.fsread(tree_id, |_| future::ok(()))
-            .await
-        }).unwrap();
+        let db = open_db(filename).await;
+        db.fsread(tree_id, |_| future::ok(())).await.unwrap();
     }
 
     mod create_fs {
         use pretty_assertions::assert_eq;
         use super::*;
 
-        #[rstest]
-        fn with_props(objects: (Runtime, Database, TempDir, TreeID)) {
-            let (rt, db, _tempdir, first_tree_id) = objects;
+        #[tokio::test]
+        async fn with_props() {
+            let (db, _tempdir, first_tree_id) = harness().await;
             let props = vec![Property::RecordSize(5)];
-            let tree_id = rt.block_on(async {
-                db.create_fs(None, "", props)
+            let tree_id = db.create_fs(None, "", props).await.unwrap();
+            let (val, source) = db.get_prop(tree_id, PropertyName::RecordSize)
                 .await
-            }).unwrap();
-            let (val, source) = rt.block_on(async {
-                db.get_prop(tree_id, PropertyName::RecordSize)
-                .await
-            }).unwrap();
+                .unwrap();
             assert_ne!(tree_id, first_tree_id);
             assert_eq!(val, Property::RecordSize(5));
             assert_eq!(source, PropertySource::Local);
@@ -240,53 +207,41 @@ mod t {
 
         /// Creating a new filesystem, when the database's in-memory cache is
         /// cold, should not reuse a TreeID.
-        #[rstest]
-        fn cold_cache(objects: (Runtime, Database, TempDir, TreeID)) {
-            let (rt, db, tempdir, first_tree_id) = objects;
+        #[tokio::test]
+        async fn cold_cache() {
+            let (db, tempdir, first_tree_id) = harness().await;
             // Sync the database, then drop and reopen it.  That's the only way
             // to clear Inner::fs_trees
-            rt.block_on(
-                db.sync_transaction()
-            ).unwrap();
+            db.sync_transaction().await.unwrap();
             drop(db);
             let filename = tempdir.path().join("vdev");
-            let db = open_db(&rt, filename);
+            let db = open_db(filename).await;
 
-            let tree_id = rt.block_on(async {
-                db.create_fs(None, "", vec![])
-                .await
-            }).unwrap();
+            let tree_id = db.create_fs(None, "", vec![]).await.unwrap();
             assert_ne!(tree_id, first_tree_id);
         }
 
-        #[rstest]
-        fn twice(objects: (Runtime, Database, TempDir, TreeID)) {
-            let (rt, db, _tempdir, first_tree_id) = objects;
-            let tree_id1 = rt.block_on(async {
-                db.create_fs(None, "", vec![])
-                .await
-            }).unwrap();
+        #[tokio::test]
+        async fn twice() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let tree_id1 = db.create_fs(None, "", vec![]).await.unwrap();
             assert_ne!(tree_id1, first_tree_id);
 
-            let tree_id2 = rt.block_on(async {
-                db.create_fs(None, "", vec![])
+            let tree_id2 = db.create_fs(None, "", vec![])
                 .await
-            }).unwrap();
+                .unwrap();
             assert_ne!(tree_id2, first_tree_id);
             assert_ne!(tree_id2, tree_id1);
         }
     }
 
-    #[rstest]
-    fn set_prop(objects: (Runtime, Database, TempDir, TreeID)) {
-        let (rt, db, _tempdir, tree_id) = objects;
+    #[tokio::test]
+    async fn set_prop() {
+        let (db, _tempdir, tree_id) = harness().await;
 
-        let (val, source) = rt.block_on(async {
-            db.set_prop(tree_id, Property::Atime(false))
-            .and_then(move |_| {
-                db.get_prop(tree_id, PropertyName::Atime)
-            }).await
-        }).unwrap();
+        db.set_prop(tree_id, Property::Atime(false)).await.unwrap();
+        let (val, source) = db.get_prop(tree_id, PropertyName::Atime).await
+            .unwrap();
         assert_eq!(val, Property::Atime(false));
         assert_eq!(source, PropertySource::Local);
     }
@@ -297,15 +252,16 @@ mod t {
     // TODO: add tests for inherited properties, once it's possible to make
     // multiple datasets.
 
-    #[test]
-    fn shutdown() {
-        let rt = basic_runtime();
+    #[tokio::test]
+    async fn shutdown() {
         let len = 1 << 30;  // 1GB
-        let tempdir =
-            t!(Builder::new().prefix("database.tempdir()::shutdown").tempdir());
+        let tempdir = Builder::new()
+            .prefix("database.tempdir()::shutdown")
+            .tempdir()
+            .unwrap();
         let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
+        let file = fs::File::create(&filename).unwrap();
+        file.set_len(len).unwrap();
         drop(file);
         let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
         let pool = Pool::create(String::from("database::shutdown"),
@@ -317,10 +273,8 @@ mod t {
         );
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
-        rt.block_on(async {
-            let db = Database::create(Arc::new(idml));
-            db.shutdown().await
-        });
+        let db = Database::create(Arc::new(idml));
+        db.shutdown().await;
     }
 
     // TODO: add a test that Database::flush gets called periodically.  Verify
