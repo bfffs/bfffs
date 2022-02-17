@@ -5,6 +5,7 @@ use std::{
     os::unix::{fs::PermissionsExt, io::RawFd},
     path::{Path, PathBuf},
     process::exit,
+    sync::Arc,
 };
 
 use bfffs_core::{
@@ -26,7 +27,7 @@ use nix::{
     unistd,
 };
 use tokio::signal::unix::{signal, SignalKind};
-use tokio_seqpacket::{UCred, UnixSeqpacketListener};
+use tokio_seqpacket::{UCred, UnixSeqpacket, UnixSeqpacketListener};
 use tracing::{error, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -94,15 +95,39 @@ struct Bfffsd {
     controller:   Controller,
     _dev_manager: DevManager,
     mount_opts:   MountOptions,
-    sock:         Socket,
 }
 
 impl Bfffsd {
+    async fn handle_client(self: Arc<Self>, peer: UnixSeqpacket) {
+        const BUFSIZ: usize = 4096;
+        let mut buf = vec![0u8; BUFSIZ];
+
+        loop {
+            let nread = peer.recv(&mut buf).await.unwrap();
+            if nread == 0 {
+                warn!("Client did not send request");
+                break;
+            } else if nread >= BUFSIZ {
+                warn!("Client sent unexpectedly large request");
+                break;
+            } else {
+                buf.truncate(nread);
+                let req: rpc::Request = bincode::deserialize(&buf[..]).unwrap();
+                let creds = peer.peer_cred().unwrap();
+                let resp = self.process_rpc(req, creds).await;
+                let encoded: Vec<u8> = bincode::serialize(&resp).unwrap();
+                let nwrite = peer.send(&encoded).await;
+                if nwrite.is_err() || nwrite.unwrap() != encoded.len() {
+                    warn!("Client disconnected before reading response");
+                    break;
+                }
+            }
+        }
+    }
+
     async fn new(cli: Cli) -> Self {
         let mut cache_size: Option<usize> = None;
         let mut writeback_size: Option<usize> = None;
-
-        let sock = Socket::new(&cli.sock);
 
         let mut mount_opts = MountOptions::default();
         mount_opts.fs_name("bfffs");
@@ -166,7 +191,6 @@ impl Bfffsd {
             controller,
             _dev_manager: dev_manager,
             mount_opts,
-            sock,
         }
     }
 
@@ -193,7 +217,11 @@ impl Bfffsd {
         }
     }
 
-    async fn process(&self, req: rpc::Request, creds: UCred) -> rpc::Response {
+    async fn process_rpc(
+        &self,
+        req: rpc::Request,
+        creds: UCred,
+    ) -> rpc::Response {
         match req {
             rpc::Request::FsCreate(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
@@ -220,7 +248,7 @@ impl Bfffsd {
         }
     }
 
-    async fn run(mut self) {
+    async fn run(self: Arc<Self>, mut sock: Socket) {
         let c2 = self.controller.clone();
 
         // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
@@ -234,26 +262,8 @@ impl Bfffsd {
         });
 
         loop {
-            const BUFSIZ: usize = 4096;
-            let mut buf = vec![0u8; BUFSIZ];
-
-            let peer = self.sock.listener.accept().await.unwrap();
-            let nread = peer.recv(&mut buf).await.unwrap();
-            if nread == 0 {
-                warn!("Client did not send request");
-            } else if nread >= BUFSIZ {
-                warn!("Client sent unexpectedly large request");
-            } else {
-                buf.truncate(nread);
-                let req: rpc::Request = bincode::deserialize(&buf[..]).unwrap();
-                let creds = peer.peer_cred().unwrap();
-                let resp = self.process(req, creds).await;
-                let encoded: Vec<u8> = bincode::serialize(&resp).unwrap();
-                let nwrite = peer.send(&encoded).await;
-                if nwrite.is_err() || nwrite.unwrap() != encoded.len() {
-                    warn!("Client disconnected before reading response");
-                }
-            }
+            let peer = sock.listener.accept().await.unwrap();
+            tokio::spawn(self.clone().handle_client(peer));
         }
     }
 }
@@ -266,8 +276,10 @@ async fn main() {
         .init();
     let cli: Cli = Cli::parse();
 
-    let bfffsd = Bfffsd::new(cli).await;
-    bfffsd.run().await;
+    let sock = Socket::new(&cli.sock);
+    let bfffsd = Arc::new(Bfffsd::new(cli).await);
+
+    bfffsd.run(sock).await;
 }
 
 #[cfg(test)]
