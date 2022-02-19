@@ -609,7 +609,7 @@ mod fs {
     // Dumps a nearly empty FS tree.  All of the real work is done in
     // Tree::dump, so the bulk of testing is in the tree tests.
     #[tokio::test]
-    async fn dump() {
+    async fn dump_fs() {
         let (fs, _cache, _db) = harness(vec![]).await;
         let mut buf = Vec::with_capacity(1024);
         let root = fs.root();
@@ -619,7 +619,7 @@ mod fs {
         // Clear timestamps to make the dump output deterministic
         clear_timestamps(&fs, &root).await;
         fs.sync().await;
-        fs.dump(&mut buf).await.unwrap();
+        fs.dump_fs(&mut buf).await.unwrap();
 
         let fs_tree = String::from_utf8(buf).unwrap();
         let expected = r#"---

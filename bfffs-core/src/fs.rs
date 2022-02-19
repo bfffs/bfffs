@@ -1132,8 +1132,8 @@ impl Fs {
 
     /// Dump a YAMLized representation of the filesystem's Tree to a plain
     /// `std::fs::File`.
-    pub async fn dump(&self, f: &mut dyn io::Write) -> std::result::Result<(), i32> {
-        self.db.dump(f, self.tree)
+    pub async fn dump_fs(&self, f: &mut dyn io::Write) -> std::result::Result<(), i32> {
+        self.db.dump_fs(f, self.tree)
         .map_err(|e| e.into())
         .await
     }
