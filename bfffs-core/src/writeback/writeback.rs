@@ -11,7 +11,6 @@ use serde_derive::Deserialize;
 use std::{
     cmp::Ordering,
     collections::VecDeque,
-    convert::TryInto,
     mem,
     ops::Add,
     pin::Pin,

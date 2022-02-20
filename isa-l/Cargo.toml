@@ -1,5 +1,6 @@
 [package]
 name = "isa-l"
+edition = "2021"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 build = "build.rs"
