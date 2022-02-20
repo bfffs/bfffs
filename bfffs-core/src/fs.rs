@@ -369,7 +369,6 @@ impl FileData {
 /// Bridges the synchronous with Tokio domains, and the system-independent with
 /// system-dependent filesystem interfaces.
 pub struct Fs {
-    //cr: CreditRequirements,
     db: Arc<Database>,
     next_object: AtomicU64,
     tree: TreeID,
