@@ -42,7 +42,12 @@ use crate::fs::FuseFs;
 #[clap(version = crate_version!())]
 struct Cli {
     /// Mount options, comma delimited.  Apply to all BFFFS mounts
-    #[clap(short = 'o', long, require_delimiter(true), value_delimiter(','))]
+    #[clap(
+        short = 'o',
+        long,
+        require_value_delimiter(true),
+        value_delimiter(',')
+    )]
     options:   Vec<String>,
     #[clap(long, default_value = "/var/run/bfffsd.sock")]
     sock:      PathBuf,
@@ -332,8 +337,8 @@ mod t {
     fn missing_arg(#[case] args: Vec<&str>) {
         let e = Cli::try_parse_from(args).unwrap_err();
         assert!(
-            e.kind == MissingRequiredArgument ||
-                e.kind == DisplayHelpOnMissingArgumentOrSubcommand
+            e.kind() == MissingRequiredArgument ||
+                e.kind() == DisplayHelpOnMissingArgumentOrSubcommand
         );
     }
 
