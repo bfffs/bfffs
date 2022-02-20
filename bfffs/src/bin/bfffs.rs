@@ -149,7 +149,7 @@ mod fs {
         #[clap(
             short = 'o',
             long,
-            require_delimiter(true),
+            require_value_delimiter(true),
             value_delimiter(',')
         )]
         pub(super) properties: Vec<String>,
@@ -208,7 +208,7 @@ mod fs {
         #[clap(
             short = 'o',
             long,
-            require_delimiter(true),
+            require_value_delimiter(true),
             value_delimiter(',')
         )]
         pub(super) options:    Vec<String>,
@@ -253,7 +253,12 @@ mod pool {
     #[derive(Parser, Clone, Debug)]
     pub(super) struct Create {
         /// Dataset properties, comma delimited
-        #[clap(short, long, require_delimiter(true), value_delimiter(','))]
+        #[clap(
+            short,
+            long,
+            require_value_delimiter(true),
+            value_delimiter(',')
+        )]
         pub(super) properties: Vec<String>,
         /// Simulated zone size in MB
         #[clap(long)]
@@ -484,8 +489,8 @@ mod t {
     fn missing_arg(#[case] args: Vec<&str>) {
         let e = Cli::try_parse_from(args).unwrap_err();
         assert!(
-            e.kind == MissingRequiredArgument ||
-                e.kind == DisplayHelpOnMissingArgumentOrSubcommand
+            e.kind() == MissingRequiredArgument ||
+                e.kind() == DisplayHelpOnMissingArgumentOrSubcommand
         );
     }
 
