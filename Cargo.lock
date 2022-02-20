@@ -424,8 +424,8 @@ checksum = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 
 [[package]]
 name = "fuse3"
-version = "0.2.1"
-source = "git+https://github.com/asomers/fuse3.git?rev=190061a#190061a66c830de686253c2f96de5e1c46b0e5b4"
+version = "0.3.0"
+source = "git+https://github.com/asomers/fuse3.git?rev=6b05ba4e7df66fc689147f26907997fb1b93bf18#6b05ba4e7df66fc689147f26907997fb1b93bf18"
 dependencies = [
  "async-trait",
  "bincode",
