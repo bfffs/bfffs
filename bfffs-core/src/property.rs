@@ -2,7 +2,6 @@
 //! Dataset Properties
 use crate::{Error, Result};
 use serde_derive::*;
-use std::convert::TryFrom;
 
 /// All dataset properties are associated with this fake inode number.
 pub const PROPERTY_OBJECT: u64 = 0;

@@ -2,7 +2,7 @@
 name = "bfffs-fio"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
-edition = "2018"
+edition = "2021"
 # As a fio external ioengine, we must depend pretty intimately on fio's
 # internals.  So this crate must be GPL-2 too.
 license = "GPL-2.0"

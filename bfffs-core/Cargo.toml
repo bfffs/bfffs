@@ -2,7 +2,7 @@
 name = "bfffs-core"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [lib]
 # BFFFS doesn't use doctests, because it's not a real library.
