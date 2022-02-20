@@ -7,7 +7,7 @@ use bfffs_core::{
     property::Property,
 };
 use clap::{crate_version, Parser};
-use futures::TryFutureExt;
+use futures::{future, TryFutureExt, TryStreamExt};
 
 #[derive(Parser, Clone, Debug)]
 /// Consistency check
@@ -152,6 +152,35 @@ mod fs {
         }
     }
 
+    /// List file systems
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct List {
+        pub(super) datasets: Vec<String>,
+    }
+
+    impl List {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            // TODO: recursion, sorting, properties
+            // Sort datasets by name, until other sort options are added
+            let mut all = Vec::new();
+            for ds in self.datasets.into_iter() {
+                bfffs
+                    .fs_list(ds, None)
+                    .try_for_each(|dsinfo| {
+                        all.push(dsinfo);
+                        future::ok(())
+                    })
+                    .await?;
+            }
+            all.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+            for dsinfo in all.into_iter() {
+                println!("{}", dsinfo.name);
+            }
+            Ok(())
+        }
+    }
+
     /// Mount a file system
     #[derive(Parser, Clone, Debug)]
     pub(super) struct Mount {
@@ -180,6 +209,7 @@ mod fs {
     /// Create, destroy, and modify file systems
     pub(super) enum FsCmd {
         Create(Create),
+        List(List),
         Mount(Mount),
     }
 }
@@ -402,6 +432,7 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Create(create)) => {
             create.main(&cli.sock).await
         }
+        SubCommand::Fs(fs::FsCmd::List(list)) => list.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,

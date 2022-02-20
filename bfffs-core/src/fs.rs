@@ -3,7 +3,7 @@
 
 use bitfield::*;
 use crate::{
-    database::*,
+    database::{Database, ReadOnlyFilesystem, ReadWriteFilesystem, TreeID},
     dataset::{RangeQuery, ReadDataset},
     fs_tree::*,
     property::*,

@@ -8,7 +8,7 @@ use bfffs_core::pool::*;
 use bfffs_core::vdev_block::*;
 use bfffs_core::vdev_file::*;
 use bfffs_core::raid;
-use futures::future;
+use futures::{TryStreamExt, future};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex}
@@ -141,7 +141,7 @@ mod t {
 
     const POOLNAME: &str = "TestPool";
 
-    async fn harness() -> (Database, TempDir, TreeID) {
+    fn new_empty_database() -> (Database, TempDir) {
         let len = 1 << 26;  // 64 MB
         let tempdir = Builder::new()
             .prefix("test_database_t")
@@ -161,6 +161,11 @@ mod t {
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
+        (db, tempdir)
+    }
+
+    async fn harness() -> (Database, TempDir, TreeID) {
+        let (db, tempdir) = new_empty_database();
         let tree_id = db.create_fs(None, "", Vec::new()).await.unwrap();
         (db, tempdir, tree_id)
     }
@@ -232,6 +237,86 @@ mod t {
                 .unwrap();
             assert_ne!(tree_id2, first_tree_id);
             assert_ne!(tree_id2, tree_id1);
+        }
+    }
+
+    mod lookup_fs {
+        use pretty_assertions::assert_eq;
+        use super::*;
+
+        #[tokio::test]
+        async fn no_root_filesystem() {
+            let (db, _tempdir) = new_empty_database();
+            assert_eq!(Ok(None), db.lookup_fs("").await);
+        }
+    }
+
+    mod readdir {
+        use pretty_assertions::assert_eq;
+        use super::*;
+
+        #[tokio::test]
+        async fn dataset_does_not_exist() {
+            let (db, _tempdir, _first_tree_id) = harness().await;
+            assert_eq!(
+                Ok(vec![]),
+                db.readdir(TreeID(666), 0).try_collect::<Vec<_>>().await
+            );
+        }
+
+        #[tokio::test]
+        async fn no_children() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            assert_eq!(
+                Ok(vec![]),
+                db.readdir(first_tree_id, 0).try_collect::<Vec<_>>().await
+            );
+        }
+
+        #[tokio::test]
+        async fn one_child() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo", vec![])
+                .await
+                .unwrap();
+            let children = db.readdir(first_tree_id, 0)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            assert_eq!(children[0].name, "foo");
+            assert_eq!(children[0].id, tree_id1);
+        }
+
+        #[tokio::test]
+        async fn two_children() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo", vec![])
+                .await
+                .unwrap();
+            let tree_id2 = db.create_fs(Some(first_tree_id), "bar", vec![])
+                .await
+                .unwrap();
+            let children = db.readdir(first_tree_id, 0)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            // The order of results is determined by a hash function and is
+            // reproducible but not meaningful
+            assert_eq!(2, children.len());
+            assert_eq!(children[0].name, "bar");
+            assert_eq!(children[0].id, tree_id2);
+            assert_eq!(children[1].name, "foo");
+            assert_eq!(children[1].id, tree_id1);
+
+            // Now read results again, but provide an offset to skip the first
+            // child.
+            let children2 = db.readdir(first_tree_id, children[0].offs)
+                .try_collect::<Vec<_>>()
+                .await
+                .unwrap();
+            assert_eq!(1, children2.len());
+            assert_eq!(children2[0].name, "foo");
+            assert_eq!(children2[0].id, tree_id1);
         }
     }
 

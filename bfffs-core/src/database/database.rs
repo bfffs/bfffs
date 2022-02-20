@@ -4,7 +4,7 @@ use crate::{
     cleaner::*,
     dataset::{ITree, ReadOnlyDataset, ReadWriteDataset},
     dml::DML,
-    fs_tree::*,
+    fs_tree::{self, FSKey, FSValue, Inode, ObjKey, FileType, Timespec},
     idml::*,
     label::*,
     property::*,
@@ -264,6 +264,17 @@ impl Inner {
     }
 }
 
+/// A directory entry in the Forest.
+///
+/// Each dirent corresponds to one file system.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Dirent {
+    /// Dataset name, excluding pool and parent file system name, if any.
+    pub name: String,
+    pub id: TreeID,
+    pub offs: u64
+}
+
 pub struct Database {
     cleaner: Cleaner,
     inner: Arc<Inner>,
@@ -434,9 +445,10 @@ impl Database {
         .map_ok(drop)
     }
 
-    pub async fn lookup_fs(&self, name: &str) -> Result<Option<TreeID>>
+    pub fn lookup_fs<'a>(&'a self, name: &'a str)
+        -> impl Future<Output=Result<Option<TreeID>>> + Send + 'static
     {
-        self.inner.forest.lookup(name).await
+        self.inner.forest.lookup(name)
     }
 
     /// Create a new, blank filesystem
@@ -491,7 +503,7 @@ impl Database {
             let inode_value = FSValue::Inode(inode);
 
             // Create the /. and /.. directory entries
-            let dot_dirent = Dirent {
+            let dot_dirent = fs_tree::Dirent {
                 ino,
                 dtype: libc::DT_DIR,
                 name:  OsString::from(".")
@@ -500,7 +512,7 @@ impl Database {
             let dot_key = FSKey::new(ino, dot_objkey);
             let dot_value = FSValue::DirEntry(dot_dirent);
 
-            let dotdot_dirent = Dirent {
+            let dotdot_dirent = fs_tree::Dirent {
                 ino: 1,     // The VFS replaces this
                 dtype: libc::DT_DIR,
                 name:  OsString::from("..")
@@ -574,6 +586,21 @@ impl Database {
         unimplemented!()
     }
     // LCOV_EXCL_STOP
+
+    /// List all of the children of `dataset`.
+    ///
+    /// Note that `dataset` may or may not actually exist.  `offs`, if provided,
+    /// is a resume cookie provided by a previous call.
+    pub fn readdir(&self, dataset: TreeID, offs: u64)
+        -> impl Stream<Item=Result<Dirent>> + Send
+    {
+        self.inner.forest.readdir(dataset, offs)
+            .map_ok(|(te, offs)| Dirent {
+                name: te.name,
+                id: te.tree_id,
+                offs
+            })
+    }
 
     fn new(idml: Arc<IDML>, forest: Forest) -> Self
     {

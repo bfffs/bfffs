@@ -20,7 +20,7 @@ use clap::{crate_version, Parser};
 use fuse3::{raw::Session, MountOptions};
 #[cfg(not(test))]
 use futures::FutureExt;
-use futures::{Future, TryFutureExt};
+use futures::{Future, TryFutureExt, TryStreamExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -122,6 +122,9 @@ impl Bfffsd {
                     break;
                 }
             }
+            // XXX The resize operation can be eliminated after
+            // tokio-seqpacket-rs gains support for Rust's read_buf feature.
+            buf.resize(BUFSIZ, 0);
         }
     }
 
@@ -231,6 +234,36 @@ impl Bfffsd {
                         self.controller.create_fs(&req.name, req.props).await;
                     rpc::Response::FsCreate(r)
                 }
+            }
+            rpc::Request::FsList(req) => {
+                // this value of chunkqty is a guess, not well-calculated
+                const CHUNKQTY: usize = 64;
+
+                let mut rstream = self
+                    .controller
+                    .list_fs(&req.name, req.offset)
+                    .try_chunks(CHUNKQTY);
+                let r = rstream
+                    .try_next()
+                    .map_ok(|ov| {
+                        match ov {
+                            Some(v) => {
+                                v.into_iter()
+                                    .map(|de| {
+                                        rpc::fs::DsInfo {
+                                            name:   de.name,
+                                            props:  vec![], // TODO
+                                            offset: de.offs,
+                                        }
+                                    })
+                                    .collect::<Vec<_>>()
+                            }
+                            None => vec![],
+                        }
+                    })
+                    .map_err(|tce| tce.1)
+                    .await;
+                rpc::Response::FsList(r)
             }
             rpc::Request::FsMount(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {

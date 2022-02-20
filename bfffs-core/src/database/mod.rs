@@ -8,16 +8,27 @@
 use crate::{
     dataset::ITree,
     idml::IDML,
-    tree::{Key, MinValue, TreeOnDisk, Value},
+    tree::{Key, MinValue, RangeQuery, TreeOnDisk, Value},
     types::*,
     writeback::Credit
 };
-use futures::{TryStream, TryStreamExt, future};
+use futures::{
+    Future,
+    FutureExt,
+    Stream,
+    TryFutureExt,
+    TryStream,
+    TryStreamExt,
+    future,
+    task::{Context, Poll}
+};
 use metrohash::MetroHash64;
 use mockall_double::*;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     hash::Hasher,
+    ops::Range,
+    pin::Pin,
     sync::Arc
 };
 
@@ -25,6 +36,7 @@ mod database;
 
 #[double]
 pub use self::database::Database;
+pub use self::database::Dirent;
 
 pub use self::database::ReadOnlyFilesystem;
 pub use self::database::ReadWriteFilesystem;
@@ -71,6 +83,15 @@ impl ForestKey {
         assert!(offset > 0, "this type of collision is TODO");
         ForestKey{ tree_id: parent, offset}
     }
+
+    /// Create a range of `ForestKey` that will include all the TreeEnt children
+    /// of dataset `parent` beginning at `offset`
+    pub fn tree_ent_range(parent: TreeID, offset: u64) -> Range<Self> {
+        let start = ForestKey{tree_id: parent, offset: offset.max(1)};
+        let end = ForestKey{tree_id: parent.next().unwrap(), offset: 0};
+        start..end
+    }
+
 }
 
 impl Key for ForestKey {
@@ -184,32 +205,74 @@ impl Forest {
         Ok(tree_id)
     }
 
+    /// List all of the children of a dataset
+    pub fn readdir(&self, parent: TreeID, offs: u64)
+        -> impl Stream<Item=Result<(TreeEnt, u64)>> + Send
+    {
+        struct ReaddirStream {
+            rq: RangeQuery<RID, IDML, ForestKey, ForestKey, ForestValue>,
+        }
+        impl Stream for ReaddirStream {
+            type Item = Result<(TreeEnt, u64)>;
+
+            fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
+                -> Poll<Option<Self::Item>>
+            {
+                match Pin::new(&mut self.rq).poll_next(cx) {
+                    Poll::Ready(Some(Ok((k, v)))) => match v {
+                        ForestValue::TreeEnt(tree_ent) => {
+                            Poll::Ready(Some(Ok((tree_ent, k.offset + 1))))
+                        }
+                        x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                    },
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+        let rq = self.0.range(ForestKey::tree_ent_range(parent, offs));
+        ReaddirStream{rq}
+    }
+
     /// Lookup a TreeID by its name
-    pub async fn lookup(&self, name: &str) -> Result<Option<TreeID>>
+    pub fn lookup(&self, name: &str) ->
+        impl Future<Output=Result<Option<TreeID>>> + Send
     {
         let mut tree_id = TreeID(0);
         if name.is_empty() {
             // Special case: the pool's root file system has no parent, and
-            // therefore no TreeEnt
-            return Ok(Some(tree_id));
+            // therefore no TreeEnt.  We just need to check that the Tree exists
+            let key = ForestKey::tree(tree_id);
+            return self.0.get(key)
+                .map_ok(move |otv| {
+                    otv.map(|tv| {
+                        assert!(matches!(tv, ForestValue::Tree(_)));
+                        tree_id
+                    })
+                }).boxed();
         }
 
-        for component in name.split('/') {
-            let parent = tree_id;
-            let te_key = ForestKey::tree_ent(parent, component);
-            match self.0.clone().get(te_key).await? {
-                Some(ForestValue::TreeEnt(te)) => {
-                    assert_eq!(te.name, component);
-                    tree_id = te.tree_id;
+        let inner = self.0.clone();
+        let name2 = name.to_owned();
+        async move {
+            for component in name2.split('/') {
+                let parent = tree_id;
+                let te_key = ForestKey::tree_ent(parent, component);
+                match inner.get(te_key).await? {
+                    Some(ForestValue::TreeEnt(te)) => {
+                        assert_eq!(te.name, component);
+                        tree_id = te.tree_id;
+                    }
+                    Some(ForestValue::Tree(tv)) => {
+                        panic!("Unexpected ForestValue::Tree for key {:?}: {:?}",
+                               te_key, tv);
+                    }
+                    None => return Ok(None)
                 }
-                Some(ForestValue::Tree(tv)) => {
-                    panic!("Unexpected ForestValue::Tree for key {:?}: {:?}",
-                           te_key, tv);
-                }
-                None => return Ok(None)
             }
-        }
-        Ok(Some(tree_id))
+            Ok(Some(tree_id))
+        }.boxed()
     }
 
     /// Open an existing Forest from disk
