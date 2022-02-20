@@ -7,10 +7,7 @@ use std::{
 };
 
 use assert_cmd::{cargo::cargo_bin, prelude::*};
-use nix::{
-    mount::{unmount, MntFlags},
-    sys::statfs::statfs,
-};
+use nix::mount::{unmount, MntFlags};
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 
@@ -85,19 +82,13 @@ async fn ok(harness: Harness) {
         .assert()
         .success();
 
-    // Mounting a file system is not synchronous.
-    // https://github.com/Sherlock-Holo/fuse3/issues/27
-    waitfor(Duration::from_secs(5), || {
-        statfs(&mountpoint).unwrap().filesystem_type_name() == "fusefs.bfffs"
-    })
-    .expect("Timeout waiting for bfffs to mount");
     unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
 #[rstest]
 #[tokio::test]
 async fn options(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::noatime");
+    require_fusefs!("bfffs::fs::mount::options");
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -114,13 +105,6 @@ async fn options(harness: Harness) {
         .assert()
         .success();
 
-    // Mounting a file system is not synchronous.
-    // https://github.com/Sherlock-Holo/fuse3/issues/27
-    waitfor(Duration::from_secs(5), || {
-        statfs(&mountpoint).unwrap().filesystem_type_name() == "fusefs.bfffs"
-    })
-    .expect("Timeout waiting for bfffs to mount");
-
     // TODO: figure out how to check if atime is active.
 
     unmount(&mountpoint, MntFlags::empty()).unwrap();
@@ -130,7 +114,7 @@ async fn options(harness: Harness) {
 #[rstest]
 #[tokio::test]
 async fn subfs(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::ok");
+    require_fusefs!("bfffs::fs::mount::subfs");
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -154,11 +138,5 @@ async fn subfs(harness: Harness) {
         .assert()
         .success();
 
-    // Mounting a file system is not synchronous.
-    // https://github.com/Sherlock-Holo/fuse3/issues/27
-    waitfor(Duration::from_secs(5), || {
-        statfs(&mountpoint).unwrap().filesystem_type_name() == "fusefs.bfffs"
-    })
-    .expect("Timeout waiting for bfffs to mount");
     unmount(&mountpoint, MntFlags::empty()).unwrap();
 }

@@ -17,7 +17,10 @@ use bfffs_core::{
 };
 use cfg_if::cfg_if;
 use clap::{crate_version, Parser};
-use fuse3::{raw::Session, MountOptions};
+use fuse3::{
+    raw::{MountHandle, Session},
+    MountOptions,
+};
 #[cfg(not(test))]
 use futures::FutureExt;
 use futures::{Future, TryFutureExt, TryStreamExt};
@@ -202,7 +205,7 @@ impl Bfffsd {
         &self,
         mountpoint: PathBuf,
         name: String,
-    ) -> impl Future<Output = Result<()>> + Send {
+    ) -> impl Future<Output = Result<MountHandle>> + Send {
         let mo2 = self.mount_opts.clone();
         cfg_if! {
             if #[cfg(test)] {
@@ -269,13 +272,13 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsMount(Err(Error::EPERM))
                 } else {
-                    // TODO: synchronously check that the mount succeeded.  This
-                    // will require an extension to fuse3.
-                    tokio::spawn(
-                        self.mount(req.mountpoint, req.name)
-                            .map_err(|e| error!("mount: {:?}", e)),
-                    );
-                    rpc::Response::FsMount(Ok(()))
+                    match self.mount(req.mountpoint, req.name).await {
+                        Ok(_) => rpc::Response::FsMount(Ok(())),
+                        Err(e) => {
+                            error!("mount: {:?}", e);
+                            rpc::Response::FsMount(Err(e))
+                        }
+                    }
                 }
             }
         }

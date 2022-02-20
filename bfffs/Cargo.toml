@@ -18,7 +18,7 @@ bincode = "1.0.1"
 bfffs-core = { path = "../bfffs-core" }
 bytes = "1.0"
 cfg-if = "1.0"
-fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "190061a", optional = true, features = ["tokio-runtime"] }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "6b05ba4e7df66fc689147f26907997fb1b93bf18", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
 nix = "0.23.0"

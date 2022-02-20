@@ -25,7 +25,7 @@ task:
     # Use stable features
     - name: cargo test (stable)
       env:
-        VERSION: 1.54.0
+        VERSION: 1.56.0
       freebsd_instance:
         image: freebsd-12-3-release-amd64
   << : *SETUP
