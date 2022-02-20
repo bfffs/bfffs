@@ -86,11 +86,17 @@ impl Controller {
         }.await
     }
 
+    /// Dump a YAMLized representation of the Forest in text format.
+    pub async fn dump_forest(&self, f: &mut dyn io::Write) -> Result<()>
+    {
+        self.db.dump_forest(f).await
+    }
+
     /// Dump a YAMLized representation of the given Tree in text format.
-    pub async fn dump(&self, f: &mut dyn io::Write, tree: TreeID)
+    pub async fn dump_fs(&self, f: &mut dyn io::Write, tree: TreeID)
         -> Result<()>
     {
-        self.db.dump(f, tree).await
+        self.db.dump_fs(f, tree).await
     }
 
     /// Get the value of the `propname` property the given dataset

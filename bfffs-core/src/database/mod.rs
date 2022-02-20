@@ -27,6 +27,7 @@ use mockall_double::*;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     hash::Hasher,
+    io,
     ops::Range,
     pin::Pin,
     sync::Arc
@@ -144,6 +145,13 @@ impl Forest {
     pub fn create(idml: Arc<IDML>) -> Self {
         // Compression ratio is a total guess; it hasn't been measured yet.
         Self(Arc::new(ITree::create(idml, true, 4.0, 2.0)))
+    }
+
+    /// Dump a a YAMLized representation of the Forest
+    pub async fn dump(&self, f: &mut dyn io::Write)
+        -> Result<()>
+    {
+        self.0.dump(f).await
     }
 
     /// Flush all in-memory Nodes to disk.

@@ -50,6 +50,9 @@ impl Check {
 #[derive(Parser, Clone, Debug)]
 /// Dump internal filesystem information
 struct Dump {
+    /// Dump the Forest
+    #[clap(long)]
+    forest:    bool,
     /// Dump the Free Space Map
     #[clap(short, long)]
     fsm:       bool,
@@ -64,6 +67,21 @@ struct Dump {
 }
 
 impl Dump {
+    async fn dump_forest(self) {
+        let dev_manager = DevManager::default();
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let db = dev_manager
+            .import_by_name(self.pool_name)
+            .await
+            .unwrap_or_else(|_e| {
+                eprintln!("Error: pool not found");
+                exit(1);
+            });
+        db.dump_forest(&mut std::io::stdout()).await.unwrap()
+    }
+
     async fn dump_fsm(self) {
         let dev_manager = DevManager::default();
         for disk in self.disks.iter() {
@@ -96,11 +114,13 @@ impl Dump {
         let db = Arc::new(db);
         // For now, hardcode tree_id to 0
         let tree_id = TreeID(0);
-        db.dump(&mut std::io::stdout(), tree_id).await.unwrap()
+        db.dump_fs(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
     async fn main(self) -> Result<()> {
-        if self.fsm {
+        if self.forest {
+            self.dump_forest().await;
+        } else if self.fsm {
             self.dump_fsm().await;
         } else if self.tree {
             self.dump_tree().await

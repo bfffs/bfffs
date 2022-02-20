@@ -43,6 +43,35 @@ fn help() {
 
 #[rstest]
 #[tokio::test]
+async fn forest(harness: Harness) {
+    let (filename, _tempdir) = harness;
+
+    // The output format is tested by the Fs functional tests.  In the
+    // integration tests, just test that it looks basically correct.
+    bfffs()
+        .arg("debug")
+        .arg("dump")
+        .arg("--forest")
+        .arg("mypool")
+        .arg(filename)
+        .assert()
+        .success()
+        .stdout(predicates::str::contains(
+            r"root:
+  height: 1
+  elem:
+    key:
+      tree_id: 0
+      offset: 0
+    txgs:
+      start: 0
+      end: 1
+    ptr:
+      Addr:",
+        ));
+}
+#[rstest]
+#[tokio::test]
 async fn fsm(harness: Harness) {
     let (filename, _tempdir) = harness;
 

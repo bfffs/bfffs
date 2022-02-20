@@ -7,7 +7,7 @@
 use cfg_if::cfg_if;
 use crate::types::*;
 use serde_derive::{Deserialize, Serialize};
-use serde::de::DeserializeOwned;
+use serde::{de::DeserializeOwned, ser::{Serialize, Serializer}};
 use std::ops::Range;
 
 mod node;
@@ -47,6 +47,19 @@ pub struct CreditRequirements {
     pub remove: usize
 }
 
+fn serialize_reserved<S>(reserved: &[u8; 7], s: S)
+    -> std::result::Result<S::Ok, S::Error>
+    where S: Serializer
+{
+    if s.is_human_readable() {
+        // When dumping to YAML, print on a single line
+        0u64.serialize(s)
+    } else {
+        // but for Bincode, use the default representation as bytes
+        (*reserved).serialize(s)
+    }
+}
+
 /// A version of `Inner` that is serializable
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
@@ -55,6 +68,7 @@ struct InnerOnDisk<A: Addr> {
     // than will ever be created by mankind, even with fanout of 2.
     height: u8,
     // Makes the rest of the structure line up nicely in a hexdump
+    #[serde(serialize_with = "serialize_reserved")]
     _reserved: [u8; 7],
     limits: Limits,
     root: A,

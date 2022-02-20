@@ -352,8 +352,15 @@ impl Database {
         Database::new(idml, forest)
     }
 
+    /// Dump a YAMLized representation of the Forest in text format.
+    pub async fn dump_forest(&self, f: &mut dyn io::Write)
+        -> Result<()>
+    {
+        self.inner.forest.dump(f).await
+    }
+
     /// Dump a YAMLized representation of the given Tree in text format.
-    pub async fn dump(&self, f: &mut dyn io::Write, tree: TreeID)
+    pub async fn dump_fs(&self, f: &mut dyn io::Write, tree: TreeID)
         -> Result<()>
     {
         Inner::open_filesystem(&self.inner, tree).await.unwrap();

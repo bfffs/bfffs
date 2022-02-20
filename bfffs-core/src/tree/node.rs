@@ -248,6 +248,8 @@ pub struct LeafData<K: Key, V> {
     /// dirty and not exclusively locked, this should be at least as great as
     /// `wb_space()`.
     // Is there any way to eliminate this based on K::USES_CREDIT?
+    // TODO: don't serialize credit for Bincode.  For YAML, need to decide if
+    // it's useful enough in the unit tests.
     credit: Credit,
     #[cfg(test)] pub(super) items: BTreeMap<K, V>,
     #[cfg(not(test))] items: BTreeMap<K, V>,
