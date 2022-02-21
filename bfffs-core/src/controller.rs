@@ -36,7 +36,6 @@ pub struct Dirent {
     pub offs: u64
 }
 
-#[derive(Clone)]
 pub struct Controller {
     db: Arc<Database>
 }
@@ -56,8 +55,12 @@ impl Controller {
     /// The returned `Receiver` will deliver notification when cleaning is
     /// complete.  However, there is no requirement to poll it.  The client may
     /// drop it, and cleaning will continue in the background.
-    pub fn clean(&self) -> oneshot::Receiver<()> {
-        self.db.clean()
+    pub fn clean(&self, pool: &str) -> Result<oneshot::Receiver<()>> {
+        if pool == self.db.pool_name() {
+            Ok(self.db.clean())
+        } else {
+            Err(Error::ENOENT)
+        }
     }
 
     /// Create a new, blank filesystem

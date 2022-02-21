@@ -61,19 +61,37 @@ pub mod fs {
     }
 }
 
+pub mod pool {
+    use super::Request;
+    use serde_derive::{Deserialize, Serialize};
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Clean {
+        pub pool: String
+    }
+
+    pub fn clean(pool: String) -> Request {
+        Request::PoolClean(Clean {
+            pool
+        })
+    }
+}
+
 /// An RPC request from bfffs to bfffsd
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Request {
     FsCreate(fs::Create),
     FsList(fs::List),
-    FsMount(fs::Mount)
+    FsMount(fs::Mount),
+    PoolClean(pool::Clean)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
     FsCreate(Result<TreeID>),
     FsList(Result<Vec<fs::DsInfo>>),
-    FsMount(Result<()>)
+    FsMount(Result<()>),
+    PoolClean(Result<()>),
 }
 
 impl Response {
@@ -94,6 +112,13 @@ impl Response {
     pub fn into_fs_mount(self) -> Result<()> {
         match self {
             Response::FsMount(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_pool_clean(self) -> Result<()> {
+        match self {
+            Response::PoolClean(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

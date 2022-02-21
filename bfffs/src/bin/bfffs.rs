@@ -235,7 +235,7 @@ mod fs {
 }
 
 mod pool {
-    use std::{num::NonZeroU64, sync::Mutex};
+    use std::{num::NonZeroU64, path::Path, sync::Mutex};
 
     use bfffs_core::{
         cache::Cache,
@@ -248,6 +248,20 @@ mod pool {
     };
 
     use super::*;
+
+    /// Clean freed space on a pool
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Clean {
+        /// Pool name
+        pub(super) pool_name: String,
+    }
+
+    impl Clean {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            bfffs.pool_clean(self.pool_name).await
+        }
+    }
 
     /// Create a new storage pool
     #[derive(Parser, Clone, Debug)]
@@ -424,6 +438,7 @@ mod pool {
     #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify storage pools
     pub(super) enum PoolCmd {
+        Clean(Clean),
         Create(Create),
     }
 }
@@ -461,6 +476,9 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
+        SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
+            clean.main(&cli.sock).await
+        }
     }
 }
 
