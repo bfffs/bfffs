@@ -160,6 +160,8 @@ struct Inner {
     // NB: This is likely to be highly contended and very slow.  Better to
     // replace it with a per-cpu counter.
     dirty: AtomicBool,
+    // Owner for the file system trees.  They must be owned by the Database
+    // rather than the Fs so that the Database may flush and sync them all.
     fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
     /// Stores the Tree of Trees on disk.
     /// * keys are of type ForestKey
@@ -668,7 +670,7 @@ impl Database {
                 Database::insert_prop(&dataset, prop)
             }).map(move |r| {
                 // BTreeMap sadly doesn't have a range_delete method.
-                // https://github.com/rust-lang/rust/issues/42849
+                // https://github.com/rust-lang/rust/issues/70530
                 let keys = guard.range(PropCacheKey::range(name))
                 .map(|(k, _v)| *k)
                 .collect::<Vec<_>>();
