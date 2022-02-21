@@ -97,6 +97,12 @@ impl Bfffs {
         Ok(Self { peer })
     }
 
+    /// Clean freed space on a pool
+    pub async fn pool_clean(&self, pool: String) -> Result<()> {
+        let req = rpc::pool::clean(pool);
+        self.call(req).await.unwrap().into_pool_clean()
+    }
+
     /// Submit an RPC request to the server
     async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
         const BUFSIZ: usize = 4096;

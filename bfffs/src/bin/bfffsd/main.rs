@@ -29,7 +29,6 @@ use nix::{
     sys::stat::Mode,
     unistd,
 };
-use tokio::signal::unix::{signal, SignalKind};
 use tokio_seqpacket::{UCred, UnixSeqpacket, UnixSeqpacketListener};
 use tracing::{error, warn};
 use tracing_subscriber::EnvFilter;
@@ -286,22 +285,18 @@ impl Bfffsd {
                     }
                 }
             }
+            rpc::Request::PoolClean(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::PoolClean(Err(Error::EPERM))
+                } else {
+                    let r = self.controller.clean(&req.pool).map(drop);
+                    rpc::Response::PoolClean(r)
+                }
+            }
         }
     }
 
     async fn run(self: Arc<Self>, mut sock: Socket) {
-        let c2 = self.controller.clone();
-
-        // Run the cleaner on receipt of SIGUSR1.  While not ideal long-term,
-        // this is very handy for debugging the cleaner.
-        tokio::spawn(async move {
-            let mut stream = signal(SignalKind::user_defined1()).unwrap();
-            loop {
-                stream.recv().await;
-                c2.clean().await.unwrap()
-            }
-        });
-
         loop {
             let peer = sock.listener.accept().await.unwrap();
             tokio::spawn(self.clone().handle_client(peer));
