@@ -24,7 +24,7 @@ pub enum Property {
 
     /// Suggested block size for newly written data.
     ///
-    /// Units are in bytes, log base 2.  So `RecordSize(16)` means 16KB records.
+    /// Units are in bytes, log base 2.  So `RecordSize(16)` means 64KB records.
     /// BFFFS will usually divide files into blocks of this many bytes.  But the
     /// record size is only advisory.  The default is 128KB.
     RecordSize(u8),
