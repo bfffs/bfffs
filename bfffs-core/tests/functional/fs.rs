@@ -2263,11 +2263,12 @@ root:
         let srcdir = OsString::from("srcdir");
         let dst = OsString::from("dst");
         let dstdir = OsString::from("dstdir");
+        let dotdotname = OsStr::from_bytes(b"..");
         let srcdir_fd = fs.mkdir(&root, &srcdir, 0o755, 0, 0).await
         .unwrap();
         let dstdir_fd = fs.mkdir(&root, &dstdir, 0o755, 0, 0).await
         .unwrap();
-        let fd = fs.mkdir(&srcdir_fd, &src, 0o755, 0, 0).await.unwrap();
+        let mut fd = fs.mkdir(&srcdir_fd, &src, 0o755, 0, 0).await.unwrap();
         let src_ino = fd.ino();
 
         assert_eq!(fd.ino(),
@@ -2275,12 +2276,29 @@ root:
                 None, &dst).await
             .unwrap()
         );
+        fd.reparent(dstdir_fd.ino());
+
+        // Check that the moved directory's parent is correct in memory
+        assert_eq!(dstdir_fd.ino(), fd.parent().unwrap());
+        let dotdot_fd = fs.lookup(Some(&dstdir_fd), &fd, dotdotname).await
+            .unwrap();
+        assert_eq!(dotdot_fd.ino(), dstdir_fd.ino());
+        assert_eq!(dotdot_fd.parent(), Some(root.ino()));
 
         fs.inactive(fd).await;
+
+        // Check that the moved directory's parent is correct on disk
+        let fd = fs.ilookup(src_ino).await.unwrap();
+        assert_eq!(fd.parent(), Some(dstdir_fd.ino()));
+        fs.inactive(fd).await;
+
+        // Check that the moved directory is visible by its new, not old, name
         let dst_fd = fs.lookup(Some(&root), &dstdir_fd, &dst).await.unwrap();
         assert_eq!(dst_fd.ino(), src_ino);
         let r = fs.lookup(Some(&root), &srcdir_fd, &src).await;
         assert_eq!(r.unwrap_err(), libc::ENOENT);
+
+        // Check parents' link counts
         let srcdir_attr = fs.getattr(&srcdir_fd).await.unwrap();
         assert_eq!(srcdir_attr.nlink, 2);
         let dstdir_attr = fs.getattr(&dstdir_fd).await.unwrap();

@@ -1988,13 +1988,13 @@ impl Fs {
     ///
     /// # Arguments
     ///
-    /// - `parent_fd`:  `FileData` of the parent directory, as returned by
+    /// - `parent`:     `FileData` of the parent directory, as returned by
     ///                 [`lookup`].
     /// - `fd`:         `FileData` of the directory entry to be moved, if
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to move.
     /// - `newparent`:  `FileData` of the new parent directory
-    /// - `newfd`:      `FileData` of the target file (if it exists).  Must be
+    /// - `newino`:     `FileData` of the target file (if it exists).  Must be
     ///                 provided if the target already exists!
     /// - `newname`:    New name for the file
     ///
@@ -2017,8 +2017,9 @@ impl Fs {
         // 3a) Update old parent's attributes
         // 3b) Update new parent's attributes, unless it's the same as old
         //     parent.
-        // 3ci) If dst existed and is not a directory, decrement its link count
-        // 3cii) If dst existed and is a directory, remove it
+        // 3c) If new dst is a directory, update its ".." dirent
+        // 3di) If dst existed and is not a directory, decrement its link count
+        // 3dii) If dst existed and is a directory, remove it
         let src_objkey = ObjKey::dir_entry(name);
         let owned_name = name.to_owned();
         let dst_objkey = ObjKey::dir_entry(newname);
@@ -2130,8 +2131,22 @@ impl Fs {
                 } else {
                     future::ok(()).boxed()
                 };
+                let dotdot_fut = if isdir && parent_ino != newparent_ino {
+                    let dirent = Dirent {
+                        ino: newparent_ino,
+                        dtype: libc::DT_DIR,
+                        name:  OsString::from("..")
+                    };
+                    let filename = OsString::from("..");
+                    let key = FSKey::new(ino, ObjKey::dir_entry(&filename));
+                    htable::insert(ds.clone(), key, dirent, filename)
+                        .map_ok(drop)
+                        .boxed()
+                } else {
+                    future::ok(()).boxed()
+                };
                 let unlink_fut = if let Some(v) = old_dst_ino {
-                    // 3ci) Decrement old dst's link count
+                    // 3di) Decrement old dst's link count
                     if isdir {
                         let fut = Fs::do_rmdir(ds, newparent_ino, v, false,
                                                );
@@ -2144,7 +2159,8 @@ impl Fs {
                 } else {
                     future::ok(()).boxed()
                 };
-                future::try_join3(unlink_fut, p_nlink_fut, np_nlink_fut)
+                future::try_join4(dotdot_fut, unlink_fut, p_nlink_fut,
+                    np_nlink_fut)
                 .map_ok(move |_| ino)
             })
         }).map_err(Error::into)
