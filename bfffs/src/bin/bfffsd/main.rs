@@ -40,6 +40,7 @@ use crate::fs::FuseFs;
 #[derive(Parser, Clone, Debug)]
 #[clap(version = crate_version!())]
 struct Cli {
+    // TODO: configurable log level
     /// Mount options, comma delimited.  Apply to all BFFFS mounts
     #[clap(
         short = 'o',
