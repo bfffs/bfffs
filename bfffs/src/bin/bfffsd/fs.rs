@@ -341,6 +341,11 @@ impl Filesystem for FuseFs {
         // XXX will FUSE_FORGET ever be sent with nlookup less than the actual
         // lookup count?  Not as far as I know.
         // TODO: figure out how to expire entries from the name cache, too
+        if ino == 1 {
+            // Special case: since fusefs never does a lookup for the root
+            // inode, its FORGETs may be "unmatched"
+            return;
+        }
         let mut fd = self
             .files
             .lock()
@@ -1098,8 +1103,8 @@ impl From<Arc<Fs>> for FuseFs {
     fn from(fs: Arc<Fs>) -> Self {
         let mut files = HashMap::default();
         let names = HashMap::default();
-        // fusefs(5) never seems to lookup the root inode.  Prepopulate it into
-        // the cache
+        // fusefs(5) looks up the root inode (see fuse_vfsop_root).  Prepopulate
+        // it into the cache.
         files.insert(1, fs.root());
         FuseFs {
             fs,

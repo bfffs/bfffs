@@ -83,6 +83,17 @@ impl Bfffs {
         self.call(req).await.unwrap().into_fs_mount()
     }
 
+    /// Unmount a file system
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   Name of the file system to mount, including the pool
+    /// `force`     -   Forcibly unmount the file system, even if still in use.
+    pub async fn fs_unmount(&self, fsname: &str, force: bool) -> Result<()> {
+        let req = rpc::fs::unmount(fsname.to_owned(), force);
+        self.call(req).await.unwrap().into_fs_unmount()
+    }
+
     /// Connect to the server whose socket is at this path
     pub async fn new(sock: &Path) -> Result<Self> {
         let peer = UnixSeqpacket::connect(sock).await.map_err(Error::from)?;

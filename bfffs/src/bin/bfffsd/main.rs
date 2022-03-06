@@ -22,7 +22,7 @@ use fuse3::{
     raw::{MountHandle, Session},
     MountOptions,
 };
-use futures::{stream::FuturesUnordered, Future, TryFutureExt, TryStreamExt};
+use futures::{stream::FuturesUnordered, TryFutureExt, TryStreamExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -299,6 +299,19 @@ impl Bfffsd {
                     }
                 }
             }
+            rpc::Request::FsUnmount(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsUnmount(Err(Error::EPERM))
+                } else {
+                    match self.unmount(&req.name, req.force).await {
+                        Ok(_) => rpc::Response::FsUnmount(Ok(())),
+                        Err(e) => {
+                            error!("unmount: {:?}", e);
+                            rpc::Response::FsUnmount(Err(e))
+                        }
+                    }
+                }
+            }
             rpc::Request::PoolClean(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::PoolClean(Err(Error::EPERM))
@@ -315,6 +328,10 @@ impl Bfffsd {
             let peer = sock.listener.accept().await.unwrap();
             tokio::spawn(self.clone().handle_client(peer));
         }
+    }
+
+    async fn unmount(&self, name: &str, force: bool) -> Result<()> {
+        self.controller.unmount(name, force).await
     }
 }
 

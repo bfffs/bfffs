@@ -322,4 +322,22 @@ impl Controller {
     pub async fn sync_transaction(&self) -> Result<()> {
         self.db.sync_transaction().await
     }
+
+    pub async fn unmount(&self, name: &str, force: bool) -> Result<()>
+    {
+        use nix::mount::{unmount, MntFlags};
+
+        let mut flags = MntFlags::empty();
+        if force {
+            flags.insert(MntFlags::MNT_FORCE);
+        }
+        let (prop, _) = self.get_prop(name, PropertyName::Mountpoint).await?;
+        // unmount(2) can block waiting for the daemon to respond.  And the
+        // daemon might be using this thread to read from /dev/fuse.  So we must
+        // spawn a separate thread for unmount(2).
+        tokio::task::spawn_blocking(move || {
+            unmount(prop.as_str(), flags)
+                .map_err(Error::from)
+        }).await.unwrap()
+    }
 }

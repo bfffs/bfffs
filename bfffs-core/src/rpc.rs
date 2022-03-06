@@ -46,7 +46,7 @@ pub mod fs {
     pub struct Mount {
         /// Comma-separated mount options
         pub opts: String,
-        /// File system name, including with the pool
+        /// File system name, including the pool
         pub name: String,
     }
 
@@ -56,6 +56,22 @@ pub mod fs {
             name
         })
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Unmount {
+        /// Forcibly unmount, even if in-use
+        pub force: bool,
+        /// File system name, including the pool
+        pub name: String,
+    }
+
+    pub fn unmount(name: String, force: bool) -> Request {
+        Request::FsUnmount(Unmount {
+            name,
+            force
+        })
+    }
+
 }
 
 pub mod pool {
@@ -80,6 +96,7 @@ pub enum Request {
     FsCreate(fs::Create),
     FsList(fs::List),
     FsMount(fs::Mount),
+    FsUnmount(fs::Unmount),
     PoolClean(pool::Clean)
 }
 
@@ -88,6 +105,7 @@ pub enum Response {
     FsCreate(Result<TreeID>),
     FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>),
+    FsUnmount(Result<()>),
     PoolClean(Result<()>),
 }
 
@@ -116,6 +134,13 @@ impl Response {
     pub fn into_pool_clean(self) -> Result<()> {
         match self {
             Response::PoolClean(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_unmount(self) -> Result<()> {
+        match self {
+            Response::FsUnmount(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

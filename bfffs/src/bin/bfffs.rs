@@ -224,12 +224,30 @@ mod fs {
         }
     }
 
+    /// Unmount a file system
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Unmount {
+        /// Focibly unmount the file system even if files are still active.
+        #[clap(short, long)]
+        pub(super) force: bool,
+        /// File system name, including the pool.
+        pub(super) name:  String,
+    }
+
+    impl Unmount {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            bfffs.fs_unmount(&self.name, self.force).await
+        }
+    }
+
     #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify file systems
     pub(super) enum FsCmd {
         Create(Create),
         List(List),
         Mount(Mount),
+        Unmount(Unmount),
     }
 }
 
@@ -471,6 +489,9 @@ async fn main() -> Result<()> {
         }
         SubCommand::Fs(fs::FsCmd::List(list)) => list.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
+        SubCommand::Fs(fs::FsCmd::Unmount(unmount)) => {
+            unmount.main(&cli.sock).await
+        }
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
         SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
@@ -619,6 +640,43 @@ mod t {
                 if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
                     assert_eq!(mount.name, "testpool/foo");
                     assert!(mount.options.is_empty());
+                }
+            }
+        }
+
+        mod unmount {
+            use super::*;
+
+            #[test]
+            fn force() {
+                let args = vec!["bfffs", "fs", "unmount", "-f", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Unmount(_))));
+                if let SubCommand::Fs(FsCmd::Unmount(unmount)) = cli.cmd {
+                    assert_eq!(unmount.name, "testpool");
+                    assert!(unmount.force);
+                }
+            }
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "unmount", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Unmount(_))));
+                if let SubCommand::Fs(FsCmd::Unmount(unmount)) = cli.cmd {
+                    assert_eq!(unmount.name, "testpool");
+                    assert!(!unmount.force);
+                }
+            }
+
+            #[test]
+            fn subfs() {
+                let args = vec!["bfffs", "fs", "unmount", "testpool/foo"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Unmount(_))));
+                if let SubCommand::Fs(FsCmd::Unmount(unmount)) = cli.cmd {
+                    assert_eq!(unmount.name, "testpool/foo");
+                    assert!(!unmount.force);
                 }
             }
         }
