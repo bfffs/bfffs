@@ -21,7 +21,7 @@ type Harness = (Vec<PathBuf>, TempDir);
 fn harness() -> Harness {
     let len = 1 << 30; // 1 GB
     let tempdir = Builder::new()
-        .prefix("test_integration_bfffs_pool_create")
+        .prefix(concat!(module_path!(), "."))
         .tempdir()
         .unwrap();
     let mut paths = Vec::new();

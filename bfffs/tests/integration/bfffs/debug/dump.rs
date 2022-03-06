@@ -13,7 +13,7 @@ type Harness = (PathBuf, TempDir);
 fn harness() -> Harness {
     let len = 1 << 30; // 1 GB
     let tempdir = Builder::new()
-        .prefix("test_integration_bfffs_debug_dump")
+        .prefix(concat!(module_path!(), "."))
         .tempdir()
         .unwrap();
     let filename = tempdir.path().join("vdev");

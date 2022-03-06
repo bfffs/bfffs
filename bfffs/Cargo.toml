@@ -40,6 +40,7 @@ features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 [dev-dependencies]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
+function_name = "0.2.0"
 mockall = "0.11.0"
 predicates = "2.1.0"
 rstest = "0.11.0"

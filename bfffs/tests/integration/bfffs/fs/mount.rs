@@ -7,6 +7,7 @@ use std::{
 };
 
 use assert_cmd::{cargo::cargo_bin, prelude::*};
+use function_name::named;
 use nix::mount::{unmount, MntFlags};
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
@@ -24,7 +25,7 @@ struct Harness {
 fn harness() -> Harness {
     let len = 1 << 30; // 1 GB
     let tempdir = Builder::new()
-        .prefix("test_integration_bfffs_fs_mount")
+        .prefix(concat!(module_path!(), "."))
         .tempdir()
         .unwrap();
     let filename = tempdir.path().join("vdev");
@@ -65,10 +66,11 @@ fn harness() -> Harness {
 }
 
 // Unmount the file system and remount it in the same location
+#[named]
 #[rstest]
 #[tokio::test]
 async fn mount_again(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::ok");
+    require_fusefs!();
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -98,10 +100,11 @@ async fn mount_again(harness: Harness) {
     unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
+#[named]
 #[rstest]
 #[tokio::test]
 async fn ok(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::ok");
+    require_fusefs!();
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -119,10 +122,11 @@ async fn ok(harness: Harness) {
     unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
+#[named]
 #[rstest]
 #[tokio::test]
 async fn options(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::options");
+    require_fusefs!();
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -145,10 +149,11 @@ async fn options(harness: Harness) {
 }
 
 /// Mount a dataset other than the pool root
+#[named]
 #[rstest]
 #[tokio::test]
 async fn subfs(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::subfs");
+    require_fusefs!();
 
     let mountpoint = harness.tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
@@ -176,10 +181,11 @@ async fn subfs(harness: Harness) {
 }
 
 /// It should not be possible to mount the same file system twice
+#[named]
 #[rstest]
 #[tokio::test]
 async fn ebusy(harness: Harness) {
-    require_fusefs!("bfffs::fs::mount::ebusy");
+    require_fusefs!();
 
     let mountpoint1 = harness.tempdir.path().join("mnt1");
     fs::create_dir(&mountpoint1).unwrap();
