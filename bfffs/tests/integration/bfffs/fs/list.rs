@@ -22,7 +22,7 @@ struct Harness {
 fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
     let len = 1 << 30; // 1 GB
     let tempdir = Builder::new()
-        .prefix("test_integration_bfffs_fs_list")
+        .prefix(concat!(module_path!(), "."))
         .tempdir()
         .unwrap();
     let filename = tempdir.path().join("vdev");

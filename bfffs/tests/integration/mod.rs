@@ -54,7 +54,7 @@ macro_rules! skip {
 #[cfg(target_os = "freebsd")]
 #[macro_export]
 macro_rules! require_fusefs {
-    ($name: expr) => {
+    () => {
         use ::sysctl::CtlValue;
         use nix::unistd::Uid;
 
@@ -64,7 +64,7 @@ macro_rules! require_fusefs {
         {
             skip!(
                 "{} requires the ability to mount fusefs. Skipping test.",
-                $name
+                concat!(::std::module_path!(), "::", function_name!())
             );
         }
     };
