@@ -7,7 +7,6 @@ use crate::{
     fs_tree::{self, FSKey, FSValue, Inode, ObjKey, FileType, Timespec},
     idml::*,
     label::*,
-    property::*,
     tree::TreeOnDisk,
     types::*,
 };
@@ -24,15 +23,13 @@ use futures::{
     select,
     stream::{self, FuturesUnordered},
 };
-use futures_locks::{Mutex, RwLock};
+use futures_locks::RwLock;
 #[cfg(test)] use mockall::automock;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
     io,
-    ops::Range,
-    pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -46,25 +43,6 @@ use tokio::{
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
-struct PropCacheKey {
-    prop: PropertyName,
-    tree: TreeID
-}
-
-impl PropCacheKey {
-    fn new(prop: PropertyName, tree: TreeID) -> Self {
-        PropCacheKey{prop, tree}
-    }
-
-    /// Construct a range that encompasses the named property for every dataset
-    fn range(name: PropertyName) -> Range<Self> {
-        let start = PropCacheKey::new(name, TreeID(0));
-        let end = PropCacheKey::new(name.next(), TreeID(0));
-        start..end
-    }
-}
 
 #[derive(Debug)]
 enum SyncerMsg {
@@ -172,7 +150,6 @@ struct Inner {
     // TreeID>) or by (<parent name>, <name>) or by <parent TreeID, hash(name)>?
     forest: Forest,
     idml: Arc<IDML>,
-    propcache: Mutex<BTreeMap<PropCacheKey, (Property, PropertySource)>>,
 }
 
 impl Inner {
@@ -180,8 +157,7 @@ impl Inner {
     {
         let dirty = AtomicBool::new(true);
         let fs_trees = RwLock::new(BTreeMap::new());
-        let propcache = Mutex::new(BTreeMap::new());
-        Inner{dirty, fs_trees, idml, forest, propcache}
+        Inner{dirty, fs_trees, idml, forest}
     }
 
     fn new_filesystem(
@@ -195,8 +171,11 @@ impl Inner {
         let atree = Arc::new(tree);
         let atree2 = atree.clone();
         inner.fs_trees.with_write(move |mut wguard| {
-            future::ready(wguard.insert(tree_id, atree2))
-        }).map(|_| Ok(atree))
+            wguard.entry(tree_id).or_insert(atree2);
+            future::ready(())
+        }).map(|_| {
+            Ok(atree)
+        })
     }
 
     // Must be called from within a Tokio executor context
@@ -395,67 +374,26 @@ impl Database {
         }.boxed()
     }
 
-    /// Get the value of the `name` property for the dataset identified by
-    /// `tree`.
-    // Note: it returns a Boxed future rather than `impl Future` to prevent
-    // type-length limit errors in the compiler.
-    pub fn get_prop(&self, tree_id: TreeID, name: PropertyName)
-        -> Pin<Box<dyn Future<Output=Result<(Property, PropertySource)>>
-            + Send>>
+    /// Lookup a Tree's parent
+    ///
+    /// # Returns
+    ///
+    /// The parent's id (if any)
+    pub fn lookup_parent(&self, tree: TreeID)
+        -> impl Future<Output=Result<Option<TreeID>>>
+            + Send + 'static
     {
-        // Outline:
-        // 1) Look for the property in the propcache
-        // 2) If not present, open the dataset's tree and look for it there.
-        // 3) If not present, open that dataset's parent and recurse
-        // 4) If present nowhere, get the default value.
-        // 5) Add it to the propcache.
-        let inner2 = self.inner.clone();
-        self.inner.propcache.with(move |mut guard| {
-            let key = PropCacheKey::new(name, tree_id);
-            if let Some((prop, source)) = guard.get(&key) {
-                future::ok((prop.clone(), *source)).boxed()
-            } else {
-                let objkey = ObjKey::Property(name);
-                let key = FSKey::new(PROPERTY_OBJECT, objkey);
-                let fut = Inner::open_filesystem(&inner2, tree_id)
-                .and_then(move |fs| {
-                    fs.get(key)
-                }).map_ok(move |r| {
-                    let (prop, source) = if let Some(v) = r {
-                        match v {
-                            FSValue::Property(p) => (p, PropertySource::Local),
-                            _ => panic!("Unexpected value {:?} for key {:?}",
-                                        v, key)
-                        }
-                    } else {
-                        // No value found; use the default
-                        // TODO: look through parent datasets
-                        (Property::default_value(name), PropertySource::Default)
-                    };
-                    let cache_key = PropCacheKey::new(name, tree_id);
-                    guard.insert(cache_key, (prop.clone(), source));
-                    (prop, source)
-                });
-                fut.boxed()
-            }
-        }).boxed()
+        self.inner.forest.lookup_parent(tree)
     }
 
-    /// Insert a property into the filesystem, but don't modify the propcache
-    fn insert_prop(
-        dataset: &ReadWriteFilesystem,
-        prop: Property,
-    ) -> impl Future<Output=Result<()>>
-    {
-        let objkey = ObjKey::Property(prop.name());
-        let key = FSKey::new(PROPERTY_OBJECT, objkey);
-        let value = FSValue::Property(prop);
-        dataset.insert(key, value)
-        .map_ok(drop)
-    }
-
+    /// Lookup a TreeID by its name.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of the parent's id (if any) and the tree's id (if it exists)
     pub fn lookup_fs<'a>(&'a self, name: &'a str)
-        -> impl Future<Output=Result<Option<TreeID>>> + Send + 'static
+        -> impl Future<Output=Result<(Option<TreeID>, Option<TreeID>)>>
+            + Send + 'static
     {
         self.inner.forest.lookup(name)
     }
@@ -463,8 +401,7 @@ impl Database {
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
-    pub async fn create_fs<S>(&self, parent: Option<TreeID>, name: S,
-                  props: Vec<Property>)
+    pub async fn create_fs<S>(&self, parent: Option<TreeID>, name: S)
         -> Result<TreeID>
         where S: Into<String> + 'static
     {
@@ -472,7 +409,6 @@ impl Database {
         let idml2 = self.inner.idml.clone();
         let idml3 = self.inner.idml.clone();
         let inner3 = self.inner.clone();
-        let ninsert = props.len() + 3;
         // The FS tree's compressibility varies greatly, especially based on
         // whether the write pattern is sequential or random.  5.98x is the
         // lower value for random access.  We'll use that rather than the
@@ -489,7 +425,7 @@ impl Database {
             *txg_guard).await?;
 
         // Create the filesystem's root directory
-        Inner::fswrite(inner3, tree_id, ninsert, 0, 0, 0, move |dataset|
+        Inner::fswrite(inner3, tree_id, 3, 0, 0, 0, move |dataset|
         {
             let ino = 1;    // FUSE requires root dir to have inode 1
             let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -531,10 +467,7 @@ impl Database {
             let dotdot_value = FSValue::DirEntry(dotdot_dirent);
 
             // Set initial properties
-            let futs = props.iter()
-            .map(|prop|
-                 Database::insert_prop(&dataset, prop.clone()).boxed()
-            ).collect::<FuturesUnordered<_>>();
+            let futs = FuturesUnordered::new();
             futs.push(
                 dataset.insert(inode_key, inode_value).map_ok(drop)
                 .boxed()
@@ -647,42 +580,6 @@ impl Database {
             .map_ok(|fs| ReadOnlyFilesystem::new(idml2, fs))
             .await
         }
-    }
-
-    // TODO: Make prop an Option.  A None value will signify that the property
-    // should be inherited.
-    // Silence clippy: the borrow checker frowns upon its suggestion
-    #[allow(clippy::needless_collect)]
-    pub fn set_prop(&self, tree_id: TreeID, prop: Property)
-        -> impl Future<Output=Result<()>> + Send
-    {
-        // Outline:
-        // 1) Open the dataset's tree and set the property there.
-        // 2) Invalidate that property from the propcache.  Since it's hard to
-        //    tell which datasets might be inherited from this one, just
-        //    invalidate all cached values for this property.
-        // 3) Insert the new value into the propcache.
-        let inner2 = self.inner.clone();
-        self.inner.propcache.with(move |mut guard| {
-            let name = prop.name();
-            let prop2 = prop.clone();
-            Inner::fswrite(inner2, tree_id, 1, 0, 0, 0, move |dataset| {
-                Database::insert_prop(&dataset, prop)
-            }).map(move |r| {
-                // BTreeMap sadly doesn't have a range_delete method.
-                // https://github.com/rust-lang/rust/issues/70530
-                let keys = guard.range(PropCacheKey::range(name))
-                .map(|(k, _v)| *k)
-                .collect::<Vec<_>>();
-                for k in keys.into_iter() {
-                    guard.remove(&k);
-                }
-
-                let key = PropCacheKey::new(name, tree_id);
-                guard.insert(key, (prop2, PropertySource::Local));
-                r
-            })
-        })
     }
 
     /// Shutdown all background tasks and close the Database
@@ -840,18 +737,6 @@ impl MockDatabase {
 
 #[cfg(test)]
 mod t {
-mod prop_cache_key {
-    use pretty_assertions::assert_eq;
-    use super::super::*;
-
-    #[test]
-    fn range() {
-        let atime_range = PropCacheKey::range(PropertyName::Atime);
-        let recsize_range = PropCacheKey::range(PropertyName::RecordSize);
-        assert_eq!(atime_range.end, recsize_range.start);
-    }
-}
-
 mod database {
     use super::super::*;
     use super::super::super::{ForestKey, ForestValue};
@@ -893,12 +778,15 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(true)));
 
-        let tod = ForestValue::Tree(TreeOnDisk::default());
+        let tree = ForestValue::Tree(crate::database::Tree {
+            parent: None,
+            tod: TreeOnDisk::default()
+        });
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tod))));
+            .return_const(Some(Ok((forest_key, tree))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -935,12 +823,15 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(false)));
 
-        let tod = ForestValue::Tree(TreeOnDisk::default());
+        let tree = ForestValue::Tree(crate::database::Tree {
+            parent: None,
+            tod: TreeOnDisk::default()
+        });
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tod))));
+            .return_const(Some(Ok((forest_key, tree))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -977,12 +868,15 @@ mod database {
             .once()
             .returning(|| Box::pin(future::ok::<bool, Error>(true)));
 
-        let tod = ForestValue::Tree(TreeOnDisk::default());
+        let tree = ForestValue::Tree(crate::database::Tree {
+            parent: None,
+            tod: TreeOnDisk::default()
+        });
         let mut rq = RangeQuery::default();
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tod))));
+            .return_const(Some(Ok((forest_key, tree))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)

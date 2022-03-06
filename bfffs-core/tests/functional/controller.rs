@@ -50,7 +50,7 @@ mod create_fs {
     #[rstest]
     #[tokio::test]
     async fn root_fs(harness: Harness) {
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.new_fs(POOLNAME).await.unwrap();
     }
 
@@ -59,10 +59,10 @@ mod create_fs {
     #[tokio::test]
     async fn eexist(harness: Harness) {
         let fsname = format!("{}/child", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&fsname, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&fsname).await.unwrap();
         assert_eq!(
-            harness.0.create_fs(&fsname, vec![]).await.unwrap_err(),
+            harness.0.create_fs(&fsname).await.unwrap_err(),
             Error::EEXIST
         );
     }
@@ -72,8 +72,8 @@ mod create_fs {
     #[tokio::test]
     async fn child(harness: Harness) {
         let fsname = format!("{}/child", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&fsname, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&fsname).await.unwrap();
         harness.0.new_fs(&fsname).await.unwrap();
     }
 
@@ -83,9 +83,9 @@ mod create_fs {
     async fn grandchild(harness: Harness) {
         let cname = format!("{}/child", POOLNAME);
         let gcname = format!("{}/child/grandchild", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&cname, vec![]).await.unwrap();
-        harness.0.create_fs(&gcname, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&cname).await.unwrap();
+        harness.0.create_fs(&gcname).await.unwrap();
         harness.0.new_fs(&gcname).await.unwrap();
     }
 
@@ -95,9 +95,9 @@ mod create_fs {
     /// Missing or wrong pool name
     async fn missing_parent(harness: Harness) {
         let gcname = format!("{}/child/grandchild", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
         assert_eq!(
-            harness.0.create_fs(&gcname, vec![]).await.unwrap_err(),
+            harness.0.create_fs(&gcname).await.unwrap_err(),
             Error::ENOENT
         );
     }
@@ -107,21 +107,107 @@ mod create_fs {
     #[tokio::test]
     async fn missing_pool_name(harness: Harness) {
         assert_eq!(
-            harness.0.create_fs("foo", vec![]).await.unwrap_err(),
+            harness.0.create_fs("foo").await.unwrap_err(),
             Error::ENOENT
         )
     }
+}
 
+mod get_prop {
+    use super::*;
+    use rstest_reuse::{apply, template};
+
+    fn get_nondefault_value(propname: PropertyName) -> Property {
+        match propname {
+            PropertyName::Atime => Property::Atime(false),
+            PropertyName::RecordSize => Property::RecordSize(15),
+            PropertyName::Invalid => unimplemented!()
+        }
+    }
+
+    // Try to lookup a property for a dataset that does not exist
     #[rstest]
     #[tokio::test]
-    async fn with_props(harness: Harness) {
-        let propname = PropertyName::Atime;
-        let props = vec![Property::Atime(false)];
-        harness.0.create_fs(POOLNAME, props).await.unwrap();
-        let (value, source) = harness.0.get_prop(POOLNAME, propname).await
-            .unwrap();
-        assert_eq!(Property::Atime(false), value);
-        assert_eq!(PropertySource::Local, source);
+    async fn enoent(harness: Harness) {
+        assert_eq!(
+            Err(Error::ENOENT),
+            harness.0.get_prop("TestPool/foo", PropertyName::Atime).await
+        );
+    }
+
+    #[template]
+    #[rstest(propname,
+        case(PropertyName::Atime),
+        case(PropertyName::RecordSize)
+    )]
+    fn all_props(#[case] propname: PropertyName) {}
+
+    async fn test(
+        harness: Harness,
+        source: PropertySource,
+        mounted: bool,
+        propname: PropertyName)
+    {
+        let dsname = format!("{}/child", POOLNAME);
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&dsname).await.unwrap();
+        let expected = if let PropertySource::Default = source {
+            Property::default_value(propname)
+        } else {
+            get_nondefault_value(propname)
+        };
+        match source {
+            PropertySource::Default => (),
+            PropertySource::Local =>
+                harness.0.set_prop(&dsname, expected.clone()).await.unwrap(),
+            PropertySource::Inherited =>
+                harness.0.set_prop(POOLNAME, expected.clone()).await.unwrap(),
+        }
+        let _fs = if mounted {
+            Some(harness.0.new_fs(&dsname).await)
+        } else {
+            None
+        };
+        assert_eq!(
+            (expected, source),
+            harness.0.get_prop(&dsname, propname).await.unwrap()
+        );
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn default_mounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Default, true, propname).await
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn default_unmounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Default, false, propname).await
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn inherited_mounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Inherited, true, propname).await
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn inherited_unmounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Inherited, false, propname).await
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn local_mounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Local, true, propname).await
+    }
+
+    #[apply(all_props)]
+    #[tokio::test]
+    async fn local_unmounted(harness: Harness, propname: PropertyName) {
+        test(harness, PropertySource::Local, false, propname).await
     }
 }
 
@@ -159,7 +245,7 @@ mod list_fs {
     #[rstest]
     #[tokio::test]
     async fn no_children(harness: Harness) {
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
         let datasets = harness.0.list_fs(POOLNAME, None)
             .try_collect::<Vec<_>>()
             .await
@@ -172,8 +258,8 @@ mod list_fs {
     #[tokio::test]
     async fn one_child(harness: Harness) {
         let dsname = format!("{}/child", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&dsname, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&dsname).await.unwrap();
         let datasets = harness.0.list_fs(POOLNAME, None)
             .try_collect::<Vec<_>>()
             .await
@@ -190,9 +276,9 @@ mod list_fs {
     async fn two_children(harness: Harness) {
         let dsname1 = format!("{}/child", POOLNAME);
         let dsname2 = format!("{}/other_child", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&dsname1, vec![]).await.unwrap();
-        harness.0.create_fs(&dsname2, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&dsname1).await.unwrap();
+        harness.0.create_fs(&dsname2).await.unwrap();
         let datasets1 = harness.0.list_fs(POOLNAME, None)
             .try_collect::<Vec<_>>()
             .await
@@ -227,9 +313,9 @@ mod list_fs {
     async fn one_grandchild(harness: Harness) {
         let childname = format!("{}/child", POOLNAME);
         let grandchildname = format!("{}/child/grandchild", POOLNAME);
-        harness.0.create_fs(POOLNAME, vec![]).await.unwrap();
-        harness.0.create_fs(&childname, vec![]).await.unwrap();
-        harness.0.create_fs(&grandchildname, vec![]).await.unwrap();
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&childname).await.unwrap();
+        harness.0.create_fs(&grandchildname).await.unwrap();
         let l1datasets = harness.0.list_fs(POOLNAME, None)
             .try_collect::<Vec<_>>()
             .await
@@ -246,5 +332,34 @@ mod list_fs {
         assert_eq!(2, l2datasets.len());
         assert_eq!(childname, l2datasets[0].name);
         assert_eq!(grandchildname, l2datasets[1].name);
+    }
+}
+
+mod set_prop {
+    use super::*;
+
+    /// Try to set a property on a nonexistent dataset
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(harness: Harness) {
+        assert_eq!(
+            Err(Error::ENOENT),
+            harness.0.set_prop("TestPool/foo", Property::Atime(false)).await
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn mounted(harness: Harness) {
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        let _fs = harness.0.new_fs(POOLNAME).await.unwrap();
+        harness.0.set_prop(POOLNAME, Property::Atime(false)).await.unwrap();
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn unmounted(harness: Harness) {
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.set_prop(POOLNAME, Property::Atime(false)).await.unwrap();
     }
 }

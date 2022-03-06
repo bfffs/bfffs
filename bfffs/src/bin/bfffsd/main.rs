@@ -23,7 +23,7 @@ use fuse3::{
 };
 #[cfg(not(test))]
 use futures::FutureExt;
-use futures::{Future, TryFutureExt, TryStreamExt};
+use futures::{stream::FuturesUnordered, Future, TryFutureExt, TryStreamExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -238,8 +238,20 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsMount(Err(Error::EPERM))
                 } else {
-                    let r =
-                        self.controller.create_fs(&req.name, req.props).await;
+                    let r = self
+                        .controller
+                        .create_fs(&req.name)
+                        .and_then(|tree_id| {
+                            req.props
+                                .into_iter()
+                                .map(|prop| {
+                                    self.controller.set_prop(&req.name, prop)
+                                })
+                                .collect::<FuturesUnordered<_>>()
+                                .try_collect::<Vec<_>>()
+                                .map_ok(move |_| tree_id)
+                        })
+                        .await;
                     rpc::Response::FsCreate(r)
                 }
             }

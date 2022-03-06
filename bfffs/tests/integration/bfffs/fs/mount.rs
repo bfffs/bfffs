@@ -64,6 +64,40 @@ fn harness() -> Harness {
     }
 }
 
+// Unmount the file system and remount it in the same location
+#[rstest]
+#[tokio::test]
+async fn mount_again(harness: Harness) {
+    require_fusefs!("bfffs::fs::mount::ok");
+
+    let mountpoint = harness.tempdir.path().join("mnt");
+    fs::create_dir(&mountpoint).unwrap();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool")
+        .arg(&mountpoint)
+        .assert()
+        .success();
+
+    unmount(&mountpoint, MntFlags::empty()).unwrap();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool")
+        .arg(&mountpoint)
+        .assert()
+        .success();
+
+    unmount(&mountpoint, MntFlags::empty()).unwrap();
+}
+
 #[rstest]
 #[tokio::test]
 async fn ok(harness: Harness) {
@@ -139,4 +173,39 @@ async fn subfs(harness: Harness) {
         .success();
 
     unmount(&mountpoint, MntFlags::empty()).unwrap();
+}
+
+/// It should not be possible to mount the same file system twice
+#[rstest]
+#[tokio::test]
+async fn ebusy(harness: Harness) {
+    require_fusefs!("bfffs::fs::mount::ebusy");
+
+    let mountpoint1 = harness.tempdir.path().join("mnt1");
+    fs::create_dir(&mountpoint1).unwrap();
+    let mountpoint2 = harness.tempdir.path().join("mnt2");
+    fs::create_dir(&mountpoint2).unwrap();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool")
+        .arg(&mountpoint1)
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool")
+        .arg(&mountpoint2)
+        .assert()
+        .failure()
+        .stderr("Error: EBUSY\n");
+
+    unmount(&mountpoint1, MntFlags::empty()).unwrap();
 }

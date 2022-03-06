@@ -321,7 +321,8 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                 let r = dev_manager.import_by_name(pool).await;
                 if let Ok(db) = r {
                     let adb = Arc::new(db);
-                    let root_fs = Fs::new(adb, "").await;
+                    let tree_id = adb.lookup_fs("").await.unwrap().1.unwrap();
+                    let root_fs = Fs::new(adb, tree_id).await;
                     let root = root_fs.root();
                     *fs = Some(Arc::new(root_fs));
                     *ROOT.write().unwrap() = Some(root);

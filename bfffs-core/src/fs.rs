@@ -31,7 +31,7 @@ use std::{
     os::unix::ffi::OsStrExt,
     pin::Pin,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering},
         Arc,
     }
 };
@@ -376,9 +376,9 @@ pub struct Fs {
     // These options may only be changed when the filesystem is mounting or
     // remounting the filesystem.
     /// Update files' atimes when reading?
-    atime: bool,
+    atime: AtomicBool,
     /// Record size for new files, in bytes, log base 2.
-    record_size: u8
+    record_size: AtomicU8
 }
 
 bitfield! {
@@ -1048,27 +1048,27 @@ impl Fs {
     ///
     /// * `database` -  An already open `Database` object
     /// * `name`    -   The dataset's name, excluding the pool
-    // Should be private.  Is only public so it can be used by the functional
-    // tests.
+    // Should be private to the crate.  Is only public so it can be used by the
+    // functional tests.
     #[doc(hidden)]
-    pub async fn new<S>(database: Arc<Database>, name: S) -> Self
-        where S: AsRef<str> + 'static
+    pub async fn new(
+        database: Arc<Database>,
+        tree_id: TreeID) -> Self
     {
-        let db2 = database.clone();
         let db3 = database.clone();
         let db4 = database.clone();
-        let tree_id = database.lookup_fs(name.as_ref()).await
-            .unwrap()
-            .expect("Filesystem does not yet exist");
         let (last_key, (atimep, _), (recsizep, _), _) =
         db4.fsread(tree_id, move |dataset| {
             let last_key_fut = dataset.last_key();
-            let atime_fut = db2.get_prop(tree_id, PropertyName::Atime);
-            let recsize_fut = db2.get_prop(tree_id, PropertyName::RecordSize);
+            let atime_fut = Fs::get_prop_locked(tree_id, db3.clone(),
+                                                PropertyName::Atime);
+            let recsize_fut = Fs::get_prop_locked(tree_id, db3.clone(),
+                                                  PropertyName::RecordSize);
             let di_fut = db3.fswrite(tree_id, 0, 1, 0, 0,
             move |dataset| async move {
                 // Delete all dying inodes.  If there are any, it means that
                 // the previous mount was uncleanly dismounted.
+                // TODO: don't do this when mounting read-only.
                 let ds = Arc::new(dataset);
                 let ds2 = ds.clone();
                 let had_dying_inodes = ds.range(FSKey::dying_inode_range())
@@ -1091,8 +1091,8 @@ impl Fs {
         }).map_err(Error::unhandled)
         .await.unwrap();
         let next_object = AtomicU64::new(last_key.unwrap().object() + 1);
-        let atime = atimep.as_bool();
-        let record_size = recsizep.as_u8();
+        let atime = AtomicBool::from(atimep.as_bool());
+        let record_size = AtomicU8::from(recsizep.as_u8());
 
         Fs {
             db: database,
@@ -1110,8 +1110,9 @@ impl Fs {
     pub async fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> std::result::Result<FileData, i32>
     {
+        let recsize = self.record_size.load(Ordering::Relaxed);
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
-                                          FileType::Reg(self.record_size));
+                                          FileType::Reg(recsize));
         self.do_create(create_args).await
     }
 
@@ -1157,6 +1158,47 @@ impl Fs {
         // file system.
         self.sync().await;
         Ok(())
+    }
+
+    /// Get the current value of the property `propname`
+    pub fn get_prop(&self, propname: PropertyName)
+        -> impl Future<Output = Result<(Property, PropertySource)>> + Send
+    {
+        let db2 = self.db.clone();
+        let tree = self.tree;
+        Fs::get_prop_locked(tree, db2, propname)
+    }
+
+    /// Get the current value of the property `propname`
+    pub(crate) fn get_prop_locked(
+        mut tree_id: TreeID,
+        db: Arc<Database>,
+        propname: PropertyName)
+        -> impl Future<Output = Result<(Property, PropertySource)>> + Send + 'static
+    {
+        // TODO: handle properties that have been overridden temporarily
+        let key = FSKey::new(PROPERTY_OBJECT, ObjKey::Property(propname));
+        async move {
+            let mut prop = Property::default_value(propname);
+            let mut source = PropertySource::Local;
+            loop {
+                if let Some(Some(p)) = db.fsread(tree_id, move |dataset|{
+                    dataset.get(key)
+                }).await?.map(FSValue::into_property) {
+                    prop = p;
+                    break;
+                }
+                let oparent = db.lookup_parent(tree_id).await?;
+                if let Some(parent) = oparent {
+                    source = PropertySource::Inherited;
+                    tree_id = parent;
+                } else {
+                    source = PropertySource::Default;
+                    break;
+                }
+            }
+            Ok((prop, source))
+        }
     }
 
     pub async fn getattr(&self, fd: &FileData) -> std::result::Result<GetAttr, i32> {
@@ -1784,7 +1826,7 @@ impl Fs {
         // We only need a writeable FS reference if we're going to update atime.
         // If not, then only get a read reference.  Read references are better
         // because they can be held during txg syncs.
-        if self.atime {
+        if self.atime.load(Ordering::Relaxed) {
             self.db.fswrite(self.tree, 1, 0, 0, 0, move |ds| async move {
                 let r = ds.get(inode_key).await?;
                 let mut value = r.expect("Inode not found");
@@ -2272,28 +2314,36 @@ impl Fs {
     }
 
     /// Change filesystem properties
-    pub async fn set_props(&mut self, props: Vec<Property>) {
-        for prop in props.iter() {
-            match prop {
-                Property::Atime(atime) => self.atime = *atime,
-                Property::RecordSize(exp) => self.record_size = *exp
-            }
+    pub async fn set_prop(&self, prop: Property) -> Result<()> {
+        match prop {
+            Property::Atime(atime) =>
+                self.atime.store(atime, Ordering::Relaxed),
+            Property::RecordSize(exp) =>
+                self.record_size.store(exp, Ordering::Relaxed)
         }
 
-        // Update on-disk properties in the background
-        let db2 = self.db.clone();
-        let tree_id = self.tree;
-        props.into_iter()
-        .map(move |prop| db2.set_prop(tree_id, prop))
-        .collect::<FuturesUnordered<_>>()
-        .try_collect::<Vec<_>>()
-        .map_ok(drop)
+        // Update on-disk properties
+        Fs::set_prop_unmounted(self.tree, &self.db, prop).await
+    }
+
+    /// Set a property on a file system that is not currently mounted
+    pub(crate) async fn set_prop_unmounted(
+        tree_id: TreeID,
+        db: &Database,
+        prop: Property)
+        -> Result<()>
+    {
+        let objkey = ObjKey::Property(prop.name());
+        let key = FSKey::new(PROPERTY_OBJECT, objkey);
+        let value = FSValue::Property(prop);
+        db.fswrite(tree_id, 1, 0, 0, 0, move |dataset|
+            dataset.insert(key, value)
+        ).map_ok(drop)
         .await
-        .expect("Fs::set_props failed");
     }
 
     pub async fn statvfs(&self) -> std::result::Result<libc::statvfs, i32> {
-        let rs = 1 << self.record_size;
+        let rs = 1 << self.record_size.load(Ordering::Relaxed);
         self.db.fsread(self.tree, move |dataset| {
             let blocks = dataset.size();
             let allocated = dataset.allocated();

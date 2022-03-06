@@ -42,8 +42,11 @@ mod fs {
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        db.create_fs(None, "", props).await.unwrap();
-        let fs = Fs::new(db.clone(), "").await;
+        let tree_id = db.create_fs(None, "").await.unwrap();
+        let fs = Fs::new(db.clone(), tree_id).await;
+        for prop in props.into_iter() {
+            fs.set_prop(prop).await.unwrap();
+        }
         (fs, cache, db)
     }
 
@@ -670,6 +673,17 @@ root:
           file_type: Dir
 "#;
         pretty_assertions::assert_eq!(expected, fs_tree);
+    }
+
+    #[tokio::test]
+    async fn get_prop_default() {
+        let (fs, _cache, _db) = harness4k().await;
+
+        let (val, source) = fs.get_prop(PropertyName::Atime)
+            .await
+            .unwrap();
+        assert_eq!(val, Property::default_value(PropertyName::Atime));
+        assert_eq!(source, PropertySource::Default);
     }
 
     /// getattr on the filesystem's root directory
@@ -1587,7 +1601,8 @@ root:
         drop(fs);
 
         // Mount again
-        let fs = Fs::new(db, "").await;
+        let tree_id = db.lookup_fs("").await.unwrap().1.unwrap();
+        let fs = Fs::new(db, tree_id).await;
 
         // Try to open the file again.
         // Wait up to 2 seconds for the inode to be deleted
@@ -2674,6 +2689,30 @@ root:
 
         // Timestamps should've been updated
         assert_ts_changed(&fs, &root, false, true, true, false).await;
+    }
+
+    #[tokio::test]
+    async fn set_prop() {
+        let (fs, _cache, _db) = harness4k().await;
+        fs.set_prop(Property::Atime(false)).await.unwrap();
+
+        // Read the property back
+        let (val, source) = fs.get_prop(PropertyName::Atime)
+            .await
+            .unwrap();
+        assert_eq!(val, Property::Atime(false));
+        assert_eq!(source, PropertySource::Local);
+
+        // Check that atime is truly disabled
+        let root = fs.root();
+        let fd = fs.create(&root, &OsString::from("x"), 0o644, 0, 0).await
+            .unwrap();
+        let buf = vec![42u8; 4096];
+        fs.write(&fd, 0, &buf[..], 0).await.unwrap();
+        clear_timestamps(&fs, &fd).await;
+
+        fs.read(&fd, 0, 4096).await.unwrap();
+        assert_ts_changed(&fs, &fd, false, false, false, false).await;
     }
 
     #[tokio::test]
@@ -3856,12 +3895,12 @@ mod torture {
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        let db = rt.block_on(async move {
-            db.create_fs(None, "", Vec::new()).await.unwrap();
-            db
+        let (tree_id, db) = rt.block_on(async move {
+            let tree_id = db.create_fs(None, "").await.unwrap();
+            (tree_id, db)
         });
         let fs = rt.block_on(async {
-            Fs::new(db.clone(), "").await
+            Fs::new(db.clone(), tree_id).await
         });
         let seed = seed.unwrap_or_else(|| {
             let mut seed = [0u8; 16];

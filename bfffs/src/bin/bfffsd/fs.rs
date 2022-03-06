@@ -7,7 +7,7 @@ use std::{
     os::unix::ffi::OsStrExt,
     pin::Pin,
     slice,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -68,7 +68,7 @@ pub const FUSE_FALLOC_FL_PUNCH_HOLE: u32 = 0x2;
 /// This object lives in the synchronous domain, and spawns commands into the
 /// Tokio domain.
 pub struct FuseFs {
-    fs:    Fs,
+    fs:    Arc<Fs>,
     /// Basically a vnode cache for FuseFS.  It must always be in sync with
     /// the real vnode cache in the kernel.  It is an error to drop an entry
     /// from here if its `lookup_count` is non-zero.
@@ -172,7 +172,7 @@ impl FuseFs {
         }
     }
 
-    pub fn new(fs: Fs) -> Self {
+    pub fn new(fs: Arc<Fs>) -> Self {
         FuseFs::from(fs)
     }
 
@@ -243,7 +243,7 @@ impl FuseFs {
 #[cfg(test)]
 impl Default for FuseFs {
     fn default() -> Self {
-        FuseFs::new(Fs::default())
+        FuseFs::new(Arc::new(Fs::default()))
     }
 }
 
@@ -1094,8 +1094,8 @@ impl Filesystem for FuseFs {
     }
 }
 
-impl From<Fs> for FuseFs {
-    fn from(fs: Fs) -> Self {
+impl From<Arc<Fs>> for FuseFs {
+    fn from(fs: Arc<Fs>) -> Self {
         let mut files = HashMap::default();
         let names = HashMap::default();
         // fusefs(5) never seems to lookup the root inode.  Prepopulate it into
