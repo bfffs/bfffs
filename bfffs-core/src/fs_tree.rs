@@ -944,10 +944,26 @@ impl<A: Addr> FSValue<A> {
         }
     }
 
+    //pub fn as_property(&mut self) -> Option<&mut Property> {
+        //if let FSValue::Property(ref mut prop) = self {
+            //Some(prop)
+        //} else {
+            //None
+        //}
+    //}
+
     /// How much writeback cache space will `nrecs` extents of size `rs` occupy,
     /// in the worst case?
     pub fn extent_space(rs: usize, nrecs: usize) -> usize {
         nrecs * (rs + InlineExtent::FUDGE)
+    }
+
+    pub fn into_property(self) -> Option<Property> {
+        if let FSValue::Property(prop) = self {
+            Some(prop)
+        } else {
+            None
+        }
     }
 
     /// How much space should this FSValue contribute to stat.st_blocks, in

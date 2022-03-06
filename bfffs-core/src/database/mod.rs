@@ -113,6 +113,18 @@ impl MinValue for ForestKey {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct Tree {
+    parent: Option<TreeID>,
+    tod: TreeOnDisk<RID>
+}
+
+impl Tree {
+    fn new(parent: Option<TreeID>, tod: TreeOnDisk<RID>) -> Self {
+        Tree{parent, tod}
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct TreeEnt {
     /// ID of the tree
     pub tree_id:    TreeID,
@@ -124,7 +136,7 @@ pub struct TreeEnt {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 enum ForestValue {
-    Tree(TreeOnDisk<RID>),
+    Tree(Tree),
     TreeEnt(TreeEnt)
 }
 
@@ -164,7 +176,7 @@ impl Forest {
         -> Result<TreeOnDisk<RID>>
     {
         match self.0.get(ForestKey::tree(tree_id)).await? {
-            Some(ForestValue::Tree(tod)) => Ok(tod),
+            Some(ForestValue::Tree(tree)) => Ok(tree.tod),
             Some(ForestValue::TreeEnt(te)) => {
                 panic!("TreeEnt unexpected with offset 0 {:?}", te);
             },
@@ -186,7 +198,7 @@ impl Forest {
             None => TreeID(0)
         };
         let new_tree_key = ForestKey::tree(tree_id);
-        let new_v = ForestValue::Tree(tod);
+        let new_v = ForestValue::Tree(Tree::new(parent,tod));
         let old_v = self.0.clone()
             .insert(new_tree_key, new_v, txg, Credit::null())
             .await?;
@@ -243,9 +255,13 @@ impl Forest {
         ReaddirStream{rq}
     }
 
-    /// Lookup a TreeID by its name
+    /// Lookup a TreeID by its name.
+    ///
+    /// # Returns
+    ///
+    /// A tuple of the parent's id (if any) and the tree's id (if it exists)
     pub fn lookup(&self, name: &str) ->
-        impl Future<Output=Result<Option<TreeID>>> + Send
+        impl Future<Output=Result<(Option<TreeID>, Option<TreeID>)>> + Send
     {
         let mut tree_id = TreeID(0);
         if name.is_empty() {
@@ -254,19 +270,21 @@ impl Forest {
             let key = ForestKey::tree(tree_id);
             return self.0.get(key)
                 .map_ok(move |otv| {
-                    otv.map(|tv| {
+                    let tree_id = otv.map(|tv| {
                         assert!(matches!(tv, ForestValue::Tree(_)));
                         tree_id
-                    })
+                    });
+                    (None, tree_id)
                 }).boxed();
         }
 
         let inner = self.0.clone();
         let name2 = name.to_owned();
         async move {
+            let mut parent = None;
             for component in name2.split('/') {
-                let parent = tree_id;
-                let te_key = ForestKey::tree_ent(parent, component);
+                parent = Some(tree_id);
+                let te_key = ForestKey::tree_ent(parent.unwrap(), component);
                 match inner.get(te_key).await? {
                     Some(ForestValue::TreeEnt(te)) => {
                         assert_eq!(te.name, component);
@@ -276,11 +294,33 @@ impl Forest {
                         panic!("Unexpected ForestValue::Tree for key {:?}: {:?}",
                                te_key, tv);
                     }
-                    None => return Ok(None)
+                    None => return Ok((None, None))
                 }
             }
-            Ok(Some(tree_id))
+            Ok((parent, Some(tree_id)))
         }.boxed()
+    }
+
+    /// Lookup a Tree's parent
+    ///
+    /// # Returns
+    ///
+    /// The parent's id (if any)
+    pub fn lookup_parent(&self, tree_id: TreeID)
+        -> impl Future<Output=Result<Option<TreeID>>> + Send
+    {
+            let key = ForestKey::tree(tree_id);
+            self.0.get(key)
+            .map_ok(move |otv: Option<ForestValue>| {
+                match otv {
+                    Some(ForestValue::Tree(tree)) => tree.parent,
+                    Some(ForestValue::TreeEnt(te)) => panic!(
+                        "Unexpected ForestValue::TreeEnt for key {:?}: {:?}",
+                        key, te),
+                    None => None
+                }
+            })
+            //.flatten()
     }
 
     /// Open an existing Forest from disk
@@ -300,7 +340,7 @@ impl Forest {
         .try_filter_map(|(key, value)| {
             future::ok(
                 match value {
-                    ForestValue::Tree(tod) => Some((key.tree_id, tod)),
+                    ForestValue::Tree(tree) => Some((key.tree_id, tree.tod)),
                     ForestValue::TreeEnt(_te) => None,
                 }
             )
@@ -315,9 +355,15 @@ impl Forest {
         -> Result<Option<TreeOnDisk<RID>>>
     {
         let key = ForestKey::tree(tree_id);
-        let v = ForestValue::Tree(tod);
+        let parent = match self.0.get(key).await? {
+            None => return Err(Error::ENOENT),
+            Some(ForestValue::Tree(tree)) => tree.parent,
+            Some(ForestValue::TreeEnt(te)) =>
+                panic!("TreeEnt unexpected with offset 0 {:?}", te)
+        };
+        let v = ForestValue::Tree(Tree::new(parent, tod));
         match self.0.clone().insert(key, v, txg, Credit::null()).await? {
-            Some(ForestValue::Tree(tod)) => Ok(Some(tod)),
+            Some(ForestValue::Tree(tree)) => Ok(Some(tree.tod)),
             Some(ForestValue::TreeEnt(te)) =>
                 panic!("TreeEnt unexpected with offset 0 {:?}", te),
             None => Ok(None)

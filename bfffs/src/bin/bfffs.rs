@@ -4,10 +4,11 @@ use bfffs::{Bfffs, Result};
 use bfffs_core::{
     database::TreeID,
     device_manager::DevManager,
+    fs::Fs,
     property::Property,
 };
 use clap::{crate_version, Parser};
-use futures::{future, TryFutureExt, TryStreamExt};
+use futures::{future, TryStreamExt};
 
 #[derive(Parser, Clone, Debug)]
 /// Consistency check
@@ -418,20 +419,21 @@ mod pool {
         pub async fn format(mut self) {
             let name = self.name.clone();
             let clusters = self.clusters.drain(..).collect();
-            let props = self.properties.clone();
             let db = {
                 let pool = Pool::create(name, clusters);
                 let cache =
                     Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
                 let ddml = Arc::new(DDML::new(pool, cache.clone()));
                 let idml = Arc::new(IDML::create(ddml, cache));
-                Database::create(idml)
+                Arc::new(Database::create(idml))
             };
             // Create the root file system
-            db.create_fs(None, "", props)
-                .and_then(|_tree_id| db.sync_transaction())
-                .await
-                .unwrap()
+            let tree_id = db.create_fs(None, "").await.unwrap();
+            let fs = Fs::new(db.clone(), tree_id).await;
+            for prop in self.properties.into_iter() {
+                fs.set_prop(prop).await.unwrap();
+            }
+            db.sync_transaction().await.unwrap();
         }
     }
 

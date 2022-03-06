@@ -87,7 +87,7 @@ mod persistence {
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
-        // let tree_id = db.create_fs(None, "", Vec::new()).await.unwrap();
+        // let tree_id = db.create_fs(None, "").await.unwrap();
         (db, tempdir, filename)
     }
 
@@ -127,11 +127,9 @@ mod t {
     use bfffs_core::{
         cache::*,
         pool::*,
-        property::*,
         ddml::*,
         idml::*,
     };
-    use pretty_assertions::assert_eq;
     use std::{
         fs,
         num::NonZeroU64,
@@ -166,7 +164,7 @@ mod t {
 
     async fn harness() -> (Database, TempDir, TreeID) {
         let (db, tempdir) = new_empty_database();
-        let tree_id = db.create_fs(None, "", Vec::new()).await.unwrap();
+        let tree_id = db.create_fs(None, "").await.unwrap();
         (db, tempdir, tree_id)
     }
 
@@ -204,31 +202,22 @@ root:
       ? tree_id: 0
         offset: 0
       : Tree:
-          height: 1
-          _reserved: 0
-          limits:
-            min_int_fanout: 91
-            max_int_fanout: 364
-            min_leaf_fanout: 576
-            max_leaf_fanout: 2302
-            _max_size: 4194304
-          root: 1
-          txgs:
-            start: 0
-            end: 1
+          parent: ~
+          tod:
+            height: 1
+            _reserved: 0
+            limits:
+              min_int_fanout: 91
+              max_int_fanout: 364
+              min_leaf_fanout: 576
+              max_leaf_fanout: 2302
+              _max_size: 4194304
+            root: 1
+            txgs:
+              start: 0
+              end: 1
 "#;
         pretty_assertions::assert_eq!(expected, forest);
-    }
-
-    #[tokio::test]
-    async fn get_prop_default() {
-        let (db, _tempdir, tree_id) = harness().await;
-
-        let (val, source) = db.get_prop(tree_id, PropertyName::Atime)
-            .await
-            .unwrap();
-        assert_eq!(val, Property::default_value(PropertyName::Atime));
-        assert_eq!(source, PropertySource::Default);
     }
 
     #[tokio::test]
@@ -244,21 +233,7 @@ root:
     }
 
     mod create_fs {
-        use pretty_assertions::assert_eq;
         use super::*;
-
-        #[tokio::test]
-        async fn with_props() {
-            let (db, _tempdir, first_tree_id) = harness().await;
-            let props = vec![Property::RecordSize(5)];
-            let tree_id = db.create_fs(None, "", props).await.unwrap();
-            let (val, source) = db.get_prop(tree_id, PropertyName::RecordSize)
-                .await
-                .unwrap();
-            assert_ne!(tree_id, first_tree_id);
-            assert_eq!(val, Property::RecordSize(5));
-            assert_eq!(source, PropertySource::Local);
-        }
 
         /// Creating a new filesystem, when the database's in-memory cache is
         /// cold, should not reuse a TreeID.
@@ -272,17 +247,17 @@ root:
             let filename = tempdir.path().join("vdev");
             let db = open_db(filename).await;
 
-            let tree_id = db.create_fs(None, "", vec![]).await.unwrap();
+            let tree_id = db.create_fs(None, "").await.unwrap();
             assert_ne!(tree_id, first_tree_id);
         }
 
         #[tokio::test]
         async fn twice() {
             let (db, _tempdir, first_tree_id) = harness().await;
-            let tree_id1 = db.create_fs(None, "", vec![]).await.unwrap();
+            let tree_id1 = db.create_fs(None, "").await.unwrap();
             assert_ne!(tree_id1, first_tree_id);
 
-            let tree_id2 = db.create_fs(None, "", vec![])
+            let tree_id2 = db.create_fs(None, "")
                 .await
                 .unwrap();
             assert_ne!(tree_id2, first_tree_id);
@@ -295,9 +270,38 @@ root:
         use super::*;
 
         #[tokio::test]
+        async fn child() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
+                .await
+                .unwrap();
+            assert_eq!(Ok((Some(TreeID(0)), Some(tree_id1))),
+                       db.lookup_fs("foo").await);
+        }
+
+        #[tokio::test]
+        async fn grandchild() {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
+                .await
+                .unwrap();
+            let tree_id2 = db.create_fs(Some(tree_id1), "bar")
+                .await
+                .unwrap();
+            assert_eq!(Ok((Some(tree_id1), Some(tree_id2))),
+                       db.lookup_fs("foo/bar").await);
+        }
+
+        #[tokio::test]
         async fn no_root_filesystem() {
             let (db, _tempdir) = new_empty_database();
-            assert_eq!(Ok(None), db.lookup_fs("").await);
+            assert_eq!(Ok((None, None)), db.lookup_fs("").await);
+        }
+
+        #[tokio::test]
+        async fn root() {
+            let (db, _tempdir, _first_tree_id) = harness().await;
+            assert_eq!(Ok((None, Some(TreeID(0)))), db.lookup_fs("").await);
         }
     }
 
@@ -326,7 +330,7 @@ root:
         #[tokio::test]
         async fn one_child() {
             let (db, _tempdir, first_tree_id) = harness().await;
-            let tree_id1 = db.create_fs(Some(first_tree_id), "foo", vec![])
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
             let children = db.readdir(first_tree_id, 0)
@@ -340,10 +344,10 @@ root:
         #[tokio::test]
         async fn two_children() {
             let (db, _tempdir, first_tree_id) = harness().await;
-            let tree_id1 = db.create_fs(Some(first_tree_id), "foo", vec![])
+            let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
-            let tree_id2 = db.create_fs(Some(first_tree_id), "bar", vec![])
+            let tree_id2 = db.create_fs(Some(first_tree_id), "bar")
                 .await
                 .unwrap();
             let children = db.readdir(first_tree_id, 0)
@@ -369,23 +373,6 @@ root:
             assert_eq!(children2[0].id, tree_id1);
         }
     }
-
-    #[tokio::test]
-    async fn set_prop() {
-        let (db, _tempdir, tree_id) = harness().await;
-
-        db.set_prop(tree_id, Property::Atime(false)).await.unwrap();
-        let (val, source) = db.get_prop(tree_id, PropertyName::Atime).await
-            .unwrap();
-        assert_eq!(val, Property::Atime(false));
-        assert_eq!(source, PropertySource::Local);
-    }
-
-    // TODO: add a test for getting a non-cached property, once it's possible to
-    // make multiple datasets
-
-    // TODO: add tests for inherited properties, once it's possible to make
-    // multiple datasets.
 
     #[tokio::test]
     async fn shutdown() {

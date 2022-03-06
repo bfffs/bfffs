@@ -1,9 +1,10 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use assert_cmd::prelude::*;
 use bfffs_core::{
     database::{Database, TreeID},
     device_manager::DevManager,
+    fs::Fs,
     property::{Property, PropertyName, PropertySource},
     vdev::Vdev,
     vdev_file::VdevFile,
@@ -66,9 +67,10 @@ async fn atime(harness: Harness) {
 
     // Check that we can actually open it.
     // Hard-code tree id until BFFFS supports multiple datasets
-    let db = open(pool_name, &filenames[0..1]).await;
+    let db = Arc::new(open(pool_name, &filenames[0..1]).await);
     let tree_id = TreeID(0);
-    let (val, src) = db.get_prop(tree_id, PropertyName::Atime).await.unwrap();
+    let fs = Fs::new(db, tree_id).await;
+    let (val, src) = fs.get_prop(PropertyName::Atime).await.unwrap();
     assert_eq!(val, Property::Atime(false));
     assert_eq!(src, PropertySource::Local);
 }
@@ -171,13 +173,11 @@ async fn recsize(harness: Harness) {
         .success();
 
     // Check that we can actually open it.
-    let db = open("mypool", &filenames[0..1]).await;
+    let db = Arc::new(open("mypool", &filenames[0..1]).await);
     // Hard-code tree id until BFFFS supports multiple datasets
     let tree_id = TreeID(0);
-    let (val, src) = db
-        .get_prop(tree_id, PropertyName::RecordSize)
-        .await
-        .unwrap();
+    let fs = Fs::new(db, tree_id).await;
+    let (val, src) = fs.get_prop(PropertyName::RecordSize).await.unwrap();
     assert_eq!(val, Property::RecordSize(16));
     assert_eq!(src, PropertySource::Local);
 }

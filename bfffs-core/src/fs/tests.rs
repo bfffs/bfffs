@@ -21,14 +21,7 @@ fn read_write_filesystem() -> ReadWriteFilesystem {
 }
 
 async fn setup() -> Database {
-    let mut rods = ReadOnlyFilesystem::default();
     let mut rwds = read_write_filesystem();
-    rods.expect_last_key()
-        .once()
-        .returning(|| {
-            let root_inode_key = FSKey::new(1, ObjKey::Inode);
-            future::ok(Some(root_inode_key)).boxed()
-        });
     rwds.expect_range()
         .once()
         .with(eq(FSKey::dying_inode_range()))
@@ -38,27 +31,36 @@ async fn setup() -> Database {
     let mut db = Database::default();
     db.expect_create_fs()
         .once()
-        .returning(|_, _: &'static str, _| Ok(TreeID(0)));
+        .returning(|_, _: &'static str| Ok(TreeID(0)));
     db.expect_fsread_inner()
-        .once()
-        .return_once(move |_| rods);
+        .times(3)
+        .returning(move |_| {
+            let mut rods = ReadOnlyFilesystem::default();
+            rods.expect_get()
+                .with(eq(FSKey::new(PROPERTY_OBJECT,
+                                    ObjKey::Property(PropertyName::Atime))))
+                .returning(|_| future::ok(None).boxed());
+            rods.expect_get()
+                .with(eq(FSKey::new(PROPERTY_OBJECT,
+                                    ObjKey::Property(PropertyName::RecordSize))))
+                .returning(|_| future::ok(None).boxed());
+            rods.expect_last_key()
+                .returning(|| {
+                    let root_inode_key = FSKey::new(1, ObjKey::Inode);
+                    future::ok(Some(root_inode_key)).boxed()
+                });
+            rods
+        });
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| rwds);
-    db.expect_get_prop()
-        .times(2)
-        .returning(|_tree_id, propname| {
-            let prop = Property::default_value(propname);
-            let source = PropertySource::Default;
-            future::ok((prop, source)).boxed()
-        });
+    db.expect_lookup_parent()
+        .with(eq(TreeID(0)))
+        .returning(|_| future::ok(None).boxed());
     db.expect_lookup_fs()
         .with(eq(""))
-        .returning(|_| future::ok(Some(TreeID(0))).boxed());
-    // Use a small recordsize for most tests, because it's faster to test
-    // conditions that require multiple records.
-    let props = vec![Property::RecordSize(12)];
-    db.create_fs(None, "", props).await.unwrap();
+        .returning(|_| future::ok((None, Some(TreeID(0)))).boxed());
+    db.create_fs(None, "").await.unwrap();
     db
 }
 
@@ -152,7 +154,7 @@ async fn create() {
         .once()
         .return_once(move |_| ds);
 
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
     assert_eq!(ino, fd.ino);
 }
@@ -260,7 +262,7 @@ async fn create_hash_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
 
     let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
     assert_eq!(ino, fd.ino);
@@ -386,7 +388,7 @@ async fn deleteextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2).await;
     assert_eq!(Ok(()), r);
@@ -442,7 +444,7 @@ async fn deleteextattr_3way_collision_enoattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = FileData::new(Some(1), ino);
     let r = fs.deleteextattr(&fd, namespace, &name2).await;
     assert_eq!(Err(libc::ENOATTR), r);
@@ -456,7 +458,7 @@ async fn fsync() {
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
 
     let fd = FileData::new(Some(1), ino);
     assert!(fs.fsync(&fd).await.is_ok());
@@ -495,7 +497,7 @@ async fn rename_eio() {
         .once()
         .return_once(move |_| ds);
 
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let root = fs.root();
     let fd = FileData::new_for_tests(Some(root.ino), src_ino);
     let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname).await;
@@ -681,7 +683,7 @@ async fn rmdir_with_blob_extattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let r = fs.rmdir(&fs.root(), &filename).await;
     assert_eq!(Ok(()), r);
 }
@@ -717,7 +719,7 @@ async fn setextattr() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes()).await;
     assert_eq!(Ok(()), r);
 }
@@ -809,25 +811,29 @@ async fn setextattr_3way_collision() {
     db.expect_fswrite_inner()
         .once()
         .return_once(move |_| ds);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes()).await;
     assert_eq!(Ok(()), r);
 }
 
 #[tokio::test]
-async fn set_props() {
+async fn set_prop() {
     let mut db = setup().await;
-    let tree_id = TreeID(0);
-    db.expect_set_prop()
+    let mut ds0 = read_write_filesystem();
+    let objkey = ObjKey::Property(PropertyName::Atime);
+    ds0.expect_insert()
         .once()
-        .with(eq(tree_id), eq(Property::Atime(false)))
-        .returning(|_, _| future::ok(()).boxed());
-    db.expect_set_prop()
+        .with(eq(FSKey::new(PROPERTY_OBJECT, objkey)),
+              eq(FSValue::Property(Property::Atime(false)))
+        )
+        .returning(|_, _| {
+            future::ok(None).boxed()
+        });
+    db.expect_fswrite_inner()
         .once()
-        .with(eq(tree_id), eq(Property::RecordSize(13)))
-        .returning(|_, _| future::ok(()).boxed());
-    let mut fs = Fs::new(Arc::new(db), "").await;
-    fs.set_props(vec![Property::Atime(false), Property::RecordSize(13)]).await;
+        .return_once(move |_| ds0);
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
+    fs.set_prop(Property::Atime(false)).await.unwrap();
 }
 
 #[tokio::test]
@@ -836,7 +842,7 @@ async fn sync() {
     db.expect_sync_transaction()
         .once()
         .returning(|| future::ok(()).boxed());
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
 
     fs.sync().await;
 }
@@ -986,7 +992,7 @@ async fn unlink() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
     assert_eq!(Ok(()), r);
@@ -1158,7 +1164,7 @@ async fn unlink_with_blob_extattr() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
     assert_eq!(Ok(()), r);
@@ -1321,7 +1327,7 @@ async fn unlink_with_extattr_hash_collision() {
         .once()
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
-    let fs = Fs::new(Arc::new(db), "").await;
+    let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let fd = FileData::new(Some(parent_ino), ino);
     let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
     assert_eq!(Ok(()), r);
