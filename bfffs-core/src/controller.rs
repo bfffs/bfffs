@@ -120,7 +120,7 @@ impl Controller {
             }
         }
         let db2 = self.db.clone();
-        Fs::get_prop_locked(tree_id, db2, propname).await
+        Fs::get_prop_unmounted(tree_id, db2, propname).await
     }
 
     /// List a dataset and all of its immediate childen

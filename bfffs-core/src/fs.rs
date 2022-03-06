@@ -1060,10 +1060,10 @@ impl Fs {
         let (last_key, (atimep, _), (recsizep, _), _) =
         db4.fsread(tree_id, move |dataset| {
             let last_key_fut = dataset.last_key();
-            let atime_fut = Fs::get_prop_locked(tree_id, db3.clone(),
-                                                PropertyName::Atime);
-            let recsize_fut = Fs::get_prop_locked(tree_id, db3.clone(),
-                                                  PropertyName::RecordSize);
+            let atime_fut = Fs::get_prop_unmounted(tree_id, db3.clone(),
+                                                   PropertyName::Atime);
+            let recsize_fut = Fs::get_prop_unmounted(tree_id, db3.clone(),
+                                                     PropertyName::RecordSize);
             let di_fut = db3.fswrite(tree_id, 0, 1, 0, 0,
             move |dataset| async move {
                 // Delete all dying inodes.  If there are any, it means that
@@ -1166,11 +1166,12 @@ impl Fs {
     {
         let db2 = self.db.clone();
         let tree = self.tree;
-        Fs::get_prop_locked(tree, db2, propname)
+        Fs::get_prop_unmounted(tree, db2, propname)
     }
 
-    /// Get the current value of the property `propname`
-    pub(crate) fn get_prop_locked(
+    /// Get the current value of a property on a file system that is not
+    /// currently mounted
+    pub(crate) fn get_prop_unmounted(
         mut tree_id: TreeID,
         db: Arc<Database>,
         propname: PropertyName)
