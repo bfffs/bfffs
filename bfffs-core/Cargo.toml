@@ -30,7 +30,7 @@ lazy_static = "1.0"
 libc = "0.2.105"
 metrohash = "1.0"
 mockall_double = "0.2.0"
-nix = "0.23.0"
+nix = { version = "0.24.0", default-features = false, features = ["fs", "ioctl", "mount", "time"] }
 num_enum = "0.5.1"
 num-traits = "0.2.0"
 serde = "1.0.60"
@@ -38,7 +38,7 @@ serde_derive = "1.0"
 serde_yaml = "0.8.16"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["rt", "sync", "time"] }
-tokio-file = { git = "https://github.com/asomers/tokio-file.git", rev = "a0af4f72b8e13c541a9bc345b31e2648629a2558" }
+tokio-file = "0.8.0"
 tracing = "0.1.5"
 tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}
@@ -71,7 +71,8 @@ default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 
 [build-dependencies]
-nix = "0.23.0"
+nix = { version = "0.24.0", default-features = false, features = ["feature"] }
+
 
 [[test]]
 name = "cacheable_space"
