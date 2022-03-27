@@ -2341,7 +2341,7 @@ impl Fs {
     }
 
     /// Set a property on a file system that is not currently mounted
-    pub(crate) async fn set_prop_unmounted(
+    pub async fn set_prop_unmounted(
         tree_id: TreeID,
         db: &Database,
         prop: Property)

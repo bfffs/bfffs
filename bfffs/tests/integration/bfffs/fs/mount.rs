@@ -15,9 +15,16 @@ use tempfile::{Builder, TempDir};
 use super::super::super::*;
 
 struct Harness {
-    _bfffsd:      Bfffsd,
-    pub tempdir:  TempDir,
-    pub sockpath: PathBuf,
+    _bfffsd:        Bfffsd,
+    pub tempdir:    TempDir,
+    pub mountpoint: PathBuf,
+    pub sockpath:   PathBuf,
+}
+
+impl Drop for Harness {
+    fn drop(&mut self) {
+        let _ignore_errors = unmount(&self.mountpoint, MntFlags::empty());
+    }
 }
 
 /// Create a pool for backing store
@@ -32,9 +39,13 @@ fn harness() -> Harness {
     let file = fs::File::create(&filename).unwrap();
     file.set_len(len).unwrap();
 
+    let mountpoint = tempdir.path().join("mnt");
+    fs::create_dir(&mountpoint).unwrap();
     bfffs()
         .arg("pool")
         .arg("create")
+        .arg("-p")
+        .arg(format!("mountpoint={}", mountpoint.display()))
         .arg("mypool")
         .arg(&filename)
         .assert()
@@ -61,6 +72,7 @@ fn harness() -> Harness {
     Harness {
         _bfffsd: bfffsd,
         sockpath,
+        mountpoint,
         tempdir,
     }
 }
@@ -72,8 +84,16 @@ fn harness() -> Harness {
 async fn mount_again(harness: Harness) {
     require_fusefs!();
 
-    let mountpoint = harness.tempdir.path().join("mnt");
-    fs::create_dir(&mountpoint).unwrap();
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("mount")
+        .arg("mypool")
+        .assert()
+        .success();
+
+    unmount(&harness.mountpoint, MntFlags::empty()).unwrap();
 
     bfffs()
         .arg("--sock")
@@ -81,23 +101,8 @@ async fn mount_again(harness: Harness) {
         .arg("fs")
         .arg("mount")
         .arg("mypool")
-        .arg(&mountpoint)
         .assert()
         .success();
-
-    unmount(&mountpoint, MntFlags::empty()).unwrap();
-
-    bfffs()
-        .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("mount")
-        .arg("mypool")
-        .arg(&mountpoint)
-        .assert()
-        .success();
-
-    unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
 #[named]
@@ -106,20 +111,14 @@ async fn mount_again(harness: Harness) {
 async fn ok(harness: Harness) {
     require_fusefs!();
 
-    let mountpoint = harness.tempdir.path().join("mnt");
-    fs::create_dir(&mountpoint).unwrap();
-
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("mount")
         .arg("mypool")
-        .arg(&mountpoint)
         .assert()
         .success();
-
-    unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
 #[named]
@@ -127,9 +126,6 @@ async fn ok(harness: Harness) {
 #[tokio::test]
 async fn options(harness: Harness) {
     require_fusefs!();
-
-    let mountpoint = harness.tempdir.path().join("mnt");
-    fs::create_dir(&mountpoint).unwrap();
 
     bfffs()
         .arg("--sock")
@@ -139,13 +135,10 @@ async fn options(harness: Harness) {
         .arg("-o")
         .arg("atime=off")
         .arg("mypool")
-        .arg(&mountpoint)
         .assert()
         .success();
 
     // TODO: figure out how to check if atime is active.
-
-    unmount(&mountpoint, MntFlags::empty()).unwrap();
 }
 
 /// Mount a dataset other than the pool root
@@ -155,8 +148,8 @@ async fn options(harness: Harness) {
 async fn subfs(harness: Harness) {
     require_fusefs!();
 
-    let mountpoint = harness.tempdir.path().join("mnt");
-    fs::create_dir(&mountpoint).unwrap();
+    let submp = harness.tempdir.path().join("mnt").join("foo");
+    fs::create_dir(&submp).unwrap();
 
     bfffs()
         .arg("--sock")
@@ -173,45 +166,16 @@ async fn subfs(harness: Harness) {
         .arg("fs")
         .arg("mount")
         .arg("mypool/foo")
-        .arg(&mountpoint)
         .assert()
         .success();
 
-    unmount(&mountpoint, MntFlags::empty()).unwrap();
+    unmount(&submp, MntFlags::empty()).unwrap();
 }
 
-/// It should not be possible to mount the same file system twice
-#[named]
-#[rstest]
-#[tokio::test]
-async fn ebusy(harness: Harness) {
-    require_fusefs!();
+// TODO: test with overridden mountpoint, once that is possible.
 
-    let mountpoint1 = harness.tempdir.path().join("mnt1");
-    fs::create_dir(&mountpoint1).unwrap();
-    let mountpoint2 = harness.tempdir.path().join("mnt2");
-    fs::create_dir(&mountpoint2).unwrap();
+// TODO: once the mountpoint can be overridden, check that it is not be possible
+// to mount the same file system twice, similar to the old ebusy test, from
+// before the mountpoint property was introduced.
 
-    bfffs()
-        .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("mount")
-        .arg("mypool")
-        .arg(&mountpoint1)
-        .assert()
-        .success();
-
-    bfffs()
-        .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("mount")
-        .arg("mypool")
-        .arg(&mountpoint2)
-        .assert()
-        .failure()
-        .stderr("Error: EBUSY\n");
-
-    unmount(&mountpoint1, MntFlags::empty()).unwrap();
-}
+// TODO: test with alternate mountpoint

@@ -12,7 +12,6 @@ use serde_derive::{Deserialize, Serialize};
 
 pub mod fs {
     use crate::property::Property;
-    use std::path::PathBuf;
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
 
@@ -45,16 +44,14 @@ pub mod fs {
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Mount {
-        pub mountpoint: PathBuf,
         /// Comma-separated mount options
         pub opts: String,
         /// File system name, including with the pool
         pub name: String,
     }
 
-    pub fn mount(mountpoint: PathBuf, name: String) -> Request {
+    pub fn mount(name: String) -> Request {
         Request::FsMount(Mount {
-            mountpoint,
             opts: String::new(),    // TODO
             name
         })

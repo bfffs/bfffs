@@ -212,17 +212,15 @@ mod fs {
             require_value_delimiter(true),
             value_delimiter(',')
         )]
-        pub(super) options:    Vec<String>,
+        pub(super) options: Vec<String>,
         /// File system name, including the pool.
-        pub(super) name:       String,
-        /// Mountpoint
-        pub(super) mountpoint: PathBuf,
+        pub(super) name:    String,
     }
 
     impl Mount {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            bfffs.fs_mount(self.name, self.mountpoint).await
+            bfffs.fs_mount(self.name).await
         }
     }
 
@@ -427,9 +425,8 @@ mod pool {
             let controller = Controller::new(db);
             // Create the root file system
             controller.create_fs(&self.name).await.unwrap();
-            let fs = controller.new_fs(&self.name).await.unwrap();
             for prop in self.properties.into_iter() {
-                fs.set_prop(prop).await.unwrap();
+                controller.set_prop(&self.name, prop).await.unwrap();
             }
             controller.sync_transaction().await.unwrap();
         }
@@ -500,7 +497,6 @@ mod t {
     #[case(vec!["bfffs", "debug", "dump"])]
     #[case(vec!["bfffs", "debug", "dump", "testpool"])]
     #[case(vec!["bfffs", "fs", "create"])]
-    #[case(vec!["bfffs", "fs", "mount", "testpool"])]
     #[case(vec!["bfffs", "pool"])]
     #[case(vec!["bfffs", "pool", "create"])]
     #[case(vec!["bfffs", "pool", "create", "testpool"])]
@@ -606,24 +602,22 @@ mod t {
 
             #[test]
             fn plain() {
-                let args = vec!["bfffs", "fs", "mount", "testpool", "/mnt"];
+                let args = vec!["bfffs", "fs", "mount", "testpool"];
                 let cli = Cli::try_parse_from(args).unwrap();
                 assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Mount(_))));
                 if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
                     assert_eq!(mount.name, "testpool");
-                    assert_eq!(mount.mountpoint, Path::new("/mnt"));
                     assert!(mount.options.is_empty());
                 }
             }
 
             #[test]
             fn subfs() {
-                let args = vec!["bfffs", "fs", "mount", "testpool/foo", "/mnt"];
+                let args = vec!["bfffs", "fs", "mount", "testpool/foo"];
                 let cli = Cli::try_parse_from(args).unwrap();
                 assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Mount(_))));
                 if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
                     assert_eq!(mount.name, "testpool/foo");
-                    assert_eq!(mount.mountpoint, Path::new("/mnt"));
                     assert!(mount.options.is_empty());
                 }
             }
