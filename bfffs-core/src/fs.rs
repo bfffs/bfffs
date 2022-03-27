@@ -1169,15 +1169,14 @@ impl Fs {
         Fs::get_prop_unmounted(tree, db2, propname)
     }
 
-    /// Get the current value of a property on a file system that is not
-    /// currently mounted
-    pub(crate) fn get_prop_unmounted(
+    /// Get the current value of a configurable property, one whose value is
+    /// strictly determined by the "bfffs fs set" operation.
+    fn get_prop_configurable(
         mut tree_id: TreeID,
         db: Arc<Database>,
         propname: PropertyName)
         -> impl Future<Output = Result<(Property, PropertySource)>> + Send + 'static
     {
-        // TODO: handle properties that have been overridden temporarily
         let key = FSKey::new(PROPERTY_OBJECT, ObjKey::Property(propname));
         async move {
             let mut prop = Property::default_value(propname);
@@ -1201,6 +1200,18 @@ impl Fs {
             let source = PropertySource(source_levels);
             Ok((prop, source))
         }
+    }
+
+    /// Get the current value of a property on a file system that is not
+    /// currently mounted
+    pub(crate) fn get_prop_unmounted(
+        tree_id: TreeID,
+        db: Arc<Database>,
+        propname: PropertyName)
+        -> impl Future<Output = Result<(Property, PropertySource)>> + Send + 'static
+    {
+        // TODO: handle properties that have been overridden temporarily
+        Fs::get_prop_configurable(tree_id, db, propname).boxed()
     }
 
     pub async fn getattr(&self, fd: &FileData) -> std::result::Result<GetAttr, i32> {
@@ -2321,7 +2332,8 @@ impl Fs {
             Property::Atime(atime) =>
                 self.atime.store(atime, Ordering::Relaxed),
             Property::RecordSize(exp) =>
-                self.record_size.store(exp, Ordering::Relaxed)
+                self.record_size.store(exp, Ordering::Relaxed),
+            _ => todo!(),
         }
 
         // Update on-disk properties
@@ -2335,6 +2347,17 @@ impl Fs {
         prop: Property)
         -> Result<()>
     {
+        match prop.name() {
+            PropertyName::Mountpoint =>
+                panic!("Property {:?} may not be set directly on a file system",
+                       prop.name()),
+            PropertyName::BaseMountpoint =>
+                if ! prop.as_str().starts_with('/') {
+                    // Mountpoint property must be absolute
+                    return Err(Error::EINVAL);
+                }
+            _ => ()
+        }
         let objkey = ObjKey::Property(prop.name());
         let key = FSKey::new(PROPERTY_OBJECT, objkey);
         let value = FSValue::Property(prop);

@@ -108,19 +108,47 @@ impl Controller {
     pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
+        let inheritable_propname = propname.inheritable();
         let dsname = self.strip_pool_name(dataset)?;
         let tree_id = match self.db.lookup_fs(dsname).await? {
             (_parent, Some(tree_id)) => tree_id,
             (_, None) => return Err(Error::ENOENT)
         };
         let guard = self.filesystems.read().await;
-        if let Some(weak) = guard.get(&tree_id) {
-            if let Some(fs) = weak.upgrade() {
-                return fs.get_prop(propname).await;
+        if let Some(fs) = guard.get(&tree_id).and_then(Weak::upgrade) {
+            fs.get_prop(inheritable_propname).await
+        } else {
+            let db2 = self.db.clone();
+            Fs::get_prop_unmounted(tree_id, db2, inheritable_propname).await
+        }.map(|(prop, source)| {
+            if let Property::BaseMountpoint(bmp) = prop {
+                if propname == PropertyName::Mountpoint {
+                    // To construct the Mountpoint property, we must combine the
+                    // inherited BaseMountpoint with 0 or more components of the
+                    // dataset name
+                    let mp = match source.0 {
+                        None => format!("/{}", dataset),
+                        Some(0) => bmp,
+                        Some(i) => {
+                            let nparts = dataset.chars()
+                                .filter(|c| *c == '/')
+                                .count();
+                            format!("{}/{}", bmp,
+                                dataset.splitn(nparts + 2 - usize::from(i), '/')
+                                    .last()
+                                    .unwrap()
+                            )
+                        }
+                    };
+                    (Property::Mountpoint(mp), source)
+                } else {
+                    assert_eq!(propname, PropertyName::BaseMountpoint);
+                    (Property::Mountpoint(bmp), source)
+                }
+            } else {
+                (prop, source)
             }
-        }
-        let db2 = self.db.clone();
-        Fs::get_prop_unmounted(tree_id, db2, propname).await
+        })
     }
 
     /// List a dataset and all of its immediate childen
@@ -266,6 +294,7 @@ impl Controller {
     // its child datasets.
     pub async fn set_prop(&self, dataset: &str, prop: Property) -> Result<()>
     {
+        let prop = prop.inheritable();
         let dsname = self.strip_pool_name(dataset)?;
         let tree_id = match self.db.lookup_fs(dsname).await? {
             (_parent, Some(tree_id)) => tree_id,

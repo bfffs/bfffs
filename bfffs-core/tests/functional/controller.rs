@@ -120,6 +120,9 @@ mod get_prop {
     fn get_nondefault_value(propname: PropertyName) -> Property {
         match propname {
             PropertyName::Atime => Property::Atime(false),
+            PropertyName::BaseMountpoint =>
+                Property::BaseMountpoint("/xxx".to_owned()),
+            PropertyName::Mountpoint => Property::Mountpoint("/xxx".to_owned()),
             PropertyName::RecordSize => Property::RecordSize(15),
             PropertyName::Invalid => unimplemented!()
         }
@@ -138,9 +141,17 @@ mod get_prop {
     #[template]
     #[rstest(propname,
         case(PropertyName::Atime),
-        case(PropertyName::RecordSize)
+        case(PropertyName::RecordSize),
+        case(PropertyName::Mountpoint)
     )]
     fn all_props(#[case] propname: PropertyName) {}
+
+    #[template]
+    #[rstest(propname,
+        case(PropertyName::Atime),
+        case(PropertyName::RecordSize)
+    )]
+    fn inheritable_props(#[case] propname: PropertyName) {}
 
     async fn test(
         harness: Harness,
@@ -159,7 +170,7 @@ mod get_prop {
         if source == PropertySource::DEFAULT {
             // do nothing
         } else if source == PropertySource::LOCAL {
-                harness.0.set_prop(&dsname, expected.clone()).await.unwrap();
+            harness.0.set_prop(&dsname, expected.clone()).await.unwrap();
         } else if source == PropertySource::FROM_PARENT {
                 harness.0.set_prop(POOLNAME, expected.clone()).await.unwrap();
         } else {
@@ -176,25 +187,25 @@ mod get_prop {
         );
     }
 
-    #[apply(all_props)]
+    #[apply(inheritable_props)]
     #[tokio::test]
     async fn default_mounted(harness: Harness, propname: PropertyName) {
         test(harness, PropertySource::DEFAULT, true, propname).await
     }
 
-    #[apply(all_props)]
+    #[apply(inheritable_props)]
     #[tokio::test]
     async fn default_unmounted(harness: Harness, propname: PropertyName) {
         test(harness, PropertySource::DEFAULT, false, propname).await
     }
 
-    #[apply(all_props)]
+    #[apply(inheritable_props)]
     #[tokio::test]
     async fn inherited_mounted(harness: Harness, propname: PropertyName) {
         test(harness, PropertySource::FROM_PARENT, true, propname).await
     }
 
-    #[apply(all_props)]
+    #[apply(inheritable_props)]
     #[tokio::test]
     async fn inherited_unmounted(harness: Harness, propname: PropertyName) {
         test(harness, PropertySource::FROM_PARENT, false, propname).await
@@ -210,6 +221,79 @@ mod get_prop {
     #[tokio::test]
     async fn local_unmounted(harness: Harness, propname: PropertyName) {
         test(harness, PropertySource::LOCAL, false, propname).await
+    }
+
+    mod mountpoint {
+        use super::*;
+
+        async fn test(
+            harness: Harness,
+            source: PropertySource,
+            mounted: bool)
+        {
+            let grandparentname = format!("{}/grandparent", POOLNAME);
+            let parentname = format!("{}/grandparent/parent", POOLNAME);
+            let childname = format!("{}/grandparent/parent/child", POOLNAME);
+            harness.0.create_fs(POOLNAME).await.unwrap();
+            harness.0.create_fs(&grandparentname).await.unwrap();
+            harness.0.create_fs(&parentname).await.unwrap();
+            harness.0.create_fs(&childname).await.unwrap();
+            let expected = if source == PropertySource::DEFAULT {
+                Property::mountpoint(format!("/{}/grandparent/parent/child",
+                    POOLNAME))
+            } else if source == PropertySource::FROM_PARENT {
+                harness.0.set_prop(&parentname, Property::mountpoint("/xxx"))
+                    .await
+                    .unwrap();
+                Property::mountpoint("/xxx/child")
+            } else if source == PropertySource::FROM_GRANDPARENT {
+                harness.0.set_prop(&grandparentname,
+                                   Property::mountpoint("/xxx"))
+                    .await
+                    .unwrap();
+                Property::mountpoint("/xxx/parent/child")
+            } else {
+                unimplemented!();
+            };
+            let _fs = if mounted {
+                Some(harness.0.new_fs(&childname).await)
+            } else {
+                None
+            };
+            assert_eq!(
+                (expected, source),
+                harness.0.get_prop(&childname, PropertyName::Mountpoint).await
+                    .unwrap()
+            );
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn default(harness: Harness, #[case] mounted: bool) {
+            test(harness, PropertySource::DEFAULT, mounted).await
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn inherited_from_parent(harness: Harness, #[case] mounted: bool)
+        {
+            test(harness, PropertySource::FROM_PARENT, mounted).await
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn inherited_from_grandparent(
+            harness: Harness,
+            #[case] mounted: bool)
+        {
+            test(harness, PropertySource::FROM_GRANDPARENT, mounted).await
+        }
     }
 }
 
@@ -363,5 +447,18 @@ mod set_prop {
     async fn unmounted(harness: Harness) {
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.set_prop(POOLNAME, Property::Atime(false)).await.unwrap();
+    }
+
+    mod mountpoint {
+        use super::*;
+
+        #[rstest]
+        #[tokio::test]
+        async fn relative(harness: Harness) {
+            harness.0.create_fs(POOLNAME).await.unwrap();
+            let prop = Property::mountpoint("relative_path");
+            let e = harness.0.set_prop(POOLNAME, prop).await;
+            assert_eq!(Err(Error::EINVAL), e);
+        }
     }
 }
