@@ -130,15 +130,23 @@ impl PropertyName {
 }
 
 /// Where did the property come from?
+// The inner value is the number of levels upward from which the property was
+// inherited:
+// Some(0)  -   Locally set property
+// Some(1)  -   Inherited from parent
+// Some(2)  -   Inherited from grandparent
+// ...
+// None     -   Default value
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum PropertySource {
+pub struct PropertySource(pub(crate) Option<u8>);
+impl PropertySource {
     /// No value has been set for this property on this dataset or any of its
     /// parents.
-    Default = 0,
+    pub const DEFAULT: PropertySource = PropertySource(None);
     /// The property's value is inherited from a parent dataset.
-    Inherited = 1,
+    pub const FROM_PARENT: PropertySource = PropertySource(Some(1));
     /// The property was explicitly set on this dataset
-    Local = 2,
+    pub const LOCAL: PropertySource = PropertySource(Some(0u8));
 }
 
 // LCOV_EXCL_START

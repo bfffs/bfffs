@@ -71,7 +71,7 @@ async fn atime(harness: Harness) {
     let fs = controller.new_fs(pool_name).await.unwrap();
     let (val, src) = fs.get_prop(PropertyName::Atime).await.unwrap();
     assert_eq!(val, Property::Atime(false));
-    assert_eq!(src, PropertySource::Local);
+    assert_eq!(src, PropertySource::LOCAL);
 }
 
 /// Try to create a pool backed by a nonexistent file
@@ -176,7 +176,7 @@ async fn recsize(harness: Harness) {
     let fs = controller.new_fs(pool_name).await.unwrap();
     let (val, src) = fs.get_prop(PropertyName::RecordSize).await.unwrap();
     assert_eq!(val, Property::RecordSize(16));
-    assert_eq!(src, PropertySource::Local);
+    assert_eq!(src, PropertySource::LOCAL);
 }
 
 // Stripe a pool across two disks

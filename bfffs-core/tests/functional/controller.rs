@@ -151,17 +151,19 @@ mod get_prop {
         let dsname = format!("{}/child", POOLNAME);
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&dsname).await.unwrap();
-        let expected = if let PropertySource::Default = source {
+        let expected = if PropertySource::DEFAULT == source {
             Property::default_value(propname)
         } else {
             get_nondefault_value(propname)
         };
-        match source {
-            PropertySource::Default => (),
-            PropertySource::Local =>
-                harness.0.set_prop(&dsname, expected.clone()).await.unwrap(),
-            PropertySource::Inherited =>
-                harness.0.set_prop(POOLNAME, expected.clone()).await.unwrap(),
+        if source == PropertySource::DEFAULT {
+            // do nothing
+        } else if source == PropertySource::LOCAL {
+                harness.0.set_prop(&dsname, expected.clone()).await.unwrap();
+        } else if source == PropertySource::FROM_PARENT {
+                harness.0.set_prop(POOLNAME, expected.clone()).await.unwrap();
+        } else {
+            unimplemented!();
         }
         let _fs = if mounted {
             Some(harness.0.new_fs(&dsname).await)
@@ -177,37 +179,37 @@ mod get_prop {
     #[apply(all_props)]
     #[tokio::test]
     async fn default_mounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Default, true, propname).await
+        test(harness, PropertySource::DEFAULT, true, propname).await
     }
 
     #[apply(all_props)]
     #[tokio::test]
     async fn default_unmounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Default, false, propname).await
+        test(harness, PropertySource::DEFAULT, false, propname).await
     }
 
     #[apply(all_props)]
     #[tokio::test]
     async fn inherited_mounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Inherited, true, propname).await
+        test(harness, PropertySource::FROM_PARENT, true, propname).await
     }
 
     #[apply(all_props)]
     #[tokio::test]
     async fn inherited_unmounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Inherited, false, propname).await
+        test(harness, PropertySource::FROM_PARENT, false, propname).await
     }
 
     #[apply(all_props)]
     #[tokio::test]
     async fn local_mounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Local, true, propname).await
+        test(harness, PropertySource::LOCAL, true, propname).await
     }
 
     #[apply(all_props)]
     #[tokio::test]
     async fn local_unmounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::Local, false, propname).await
+        test(harness, PropertySource::LOCAL, false, propname).await
     }
 }
 

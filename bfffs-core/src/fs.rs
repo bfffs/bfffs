@@ -1181,7 +1181,7 @@ impl Fs {
         let key = FSKey::new(PROPERTY_OBJECT, ObjKey::Property(propname));
         async move {
             let mut prop = Property::default_value(propname);
-            let mut source = PropertySource::Local;
+            let mut source_levels = Some(0);
             loop {
                 if let Some(Some(p)) = db.fsread(tree_id, move |dataset|{
                     dataset.get(key)
@@ -1191,13 +1191,14 @@ impl Fs {
                 }
                 let oparent = db.lookup_parent(tree_id).await?;
                 if let Some(parent) = oparent {
-                    source = PropertySource::Inherited;
+                    source_levels = Some(source_levels.unwrap() + 1);
                     tree_id = parent;
                 } else {
-                    source = PropertySource::Default;
+                    source_levels = None;
                     break;
                 }
             }
+            let source = PropertySource(source_levels);
             Ok((prop, source))
         }
     }
