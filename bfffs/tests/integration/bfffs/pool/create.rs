@@ -1,10 +1,9 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, path::PathBuf};
 
 use assert_cmd::prelude::*;
 use bfffs_core::{
-    database::{Database, TreeID},
+    controller::Controller,
     device_manager::DevManager,
-    fs::Fs,
     property::{Property, PropertyName, PropertySource},
     vdev::Vdev,
     vdev_file::VdevFile,
@@ -35,7 +34,7 @@ fn harness() -> Harness {
     (paths, tempdir)
 }
 
-async fn open(pool_name: &str, filenames: &[PathBuf]) -> Database {
+async fn open(pool_name: &str, filenames: &[PathBuf]) -> Controller {
     let dev_manager = DevManager::default();
     for pb in filenames {
         dev_manager.taste(pb.clone()).await.unwrap();
@@ -46,7 +45,8 @@ async fn open(pool_name: &str, filenames: &[PathBuf]) -> Database {
         .find(|(name, _uuid)| *name == pool_name)
         .unwrap()
         .1;
-    dev_manager.import_by_uuid(uuid).await.unwrap()
+    let db = dev_manager.import_by_uuid(uuid).await.unwrap();
+    Controller::new(db)
 }
 
 #[rstest]
@@ -67,9 +67,8 @@ async fn atime(harness: Harness) {
 
     // Check that we can actually open it.
     // Hard-code tree id until BFFFS supports multiple datasets
-    let db = Arc::new(open(pool_name, &filenames[0..1]).await);
-    let tree_id = TreeID(0);
-    let fs = Fs::new(db, tree_id).await;
+    let controller = open(pool_name, &filenames[0..1]).await;
+    let fs = controller.new_fs(pool_name).await.unwrap();
     let (val, src) = fs.get_prop(PropertyName::Atime).await.unwrap();
     assert_eq!(val, Property::Atime(false));
     assert_eq!(src, PropertySource::Local);
@@ -173,10 +172,8 @@ async fn recsize(harness: Harness) {
         .success();
 
     // Check that we can actually open it.
-    let db = Arc::new(open("mypool", &filenames[0..1]).await);
-    // Hard-code tree id until BFFFS supports multiple datasets
-    let tree_id = TreeID(0);
-    let fs = Fs::new(db, tree_id).await;
+    let controller = open(pool_name, &filenames[0..1]).await;
+    let fs = controller.new_fs(pool_name).await.unwrap();
     let (val, src) = fs.get_prop(PropertyName::RecordSize).await.unwrap();
     assert_eq!(val, Property::RecordSize(16));
     assert_eq!(src, PropertySource::Local);

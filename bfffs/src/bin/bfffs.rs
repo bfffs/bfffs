@@ -2,9 +2,9 @@ use std::{path::PathBuf, process::exit, sync::Arc};
 
 use bfffs::{Bfffs, Result};
 use bfffs_core::{
+    controller::Controller,
     database::TreeID,
     device_manager::DevManager,
-    fs::Fs,
     property::Property,
 };
 use clap::{crate_version, Parser};
@@ -419,21 +419,19 @@ mod pool {
         pub async fn format(mut self) {
             let name = self.name.clone();
             let clusters = self.clusters.drain(..).collect();
-            let db = {
-                let pool = Pool::create(name, clusters);
-                let cache =
-                    Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-                let ddml = Arc::new(DDML::new(pool, cache.clone()));
-                let idml = Arc::new(IDML::create(ddml, cache));
-                Arc::new(Database::create(idml))
-            };
+            let pool = Pool::create(name, clusters);
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            let db = Database::create(idml);
+            let controller = Controller::new(db);
             // Create the root file system
-            let tree_id = db.create_fs(None, "").await.unwrap();
-            let fs = Fs::new(db.clone(), tree_id).await;
+            controller.create_fs(&self.name).await.unwrap();
+            let fs = controller.new_fs(&self.name).await.unwrap();
             for prop in self.properties.into_iter() {
                 fs.set_prop(prop).await.unwrap();
             }
-            db.sync_transaction().await.unwrap();
+            controller.sync_transaction().await.unwrap();
         }
     }
 
