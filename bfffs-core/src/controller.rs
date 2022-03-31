@@ -287,4 +287,10 @@ impl Controller {
             None => Err(Error::ENOENT),
         }
     }
+
+    /// Finish the current transaction group and start a new one.
+    // TODO: specify one pool or all of them
+    pub async fn sync_transaction(&self) -> Result<()> {
+        self.db.sync_transaction().await
+    }
 }
