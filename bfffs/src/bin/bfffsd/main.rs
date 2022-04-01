@@ -113,7 +113,7 @@ impl Bfffsd {
         loop {
             let nread = peer.recv(&mut buf).await.unwrap();
             if nread == 0 {
-                warn!("Client did not send request");
+                // Client disconnected normally
                 break;
             } else if nread >= BUFSIZ {
                 warn!("Client sent unexpectedly large request");
