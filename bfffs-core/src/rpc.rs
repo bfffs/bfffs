@@ -12,7 +12,6 @@ use serde_derive::{Deserialize, Serialize};
 
 pub mod fs {
     use crate::property::Property;
-    use std::path::PathBuf;
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
 
@@ -45,20 +44,34 @@ pub mod fs {
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Mount {
-        pub mountpoint: PathBuf,
         /// Comma-separated mount options
         pub opts: String,
-        /// File system name, including with the pool
+        /// File system name, including the pool
         pub name: String,
     }
 
-    pub fn mount(mountpoint: PathBuf, name: String) -> Request {
+    pub fn mount(name: String) -> Request {
         Request::FsMount(Mount {
-            mountpoint,
             opts: String::new(),    // TODO
             name
         })
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Unmount {
+        /// Forcibly unmount, even if in-use
+        pub force: bool,
+        /// File system name, including the pool
+        pub name: String,
+    }
+
+    pub fn unmount(name: String, force: bool) -> Request {
+        Request::FsUnmount(Unmount {
+            name,
+            force
+        })
+    }
+
 }
 
 pub mod pool {
@@ -83,6 +96,7 @@ pub enum Request {
     FsCreate(fs::Create),
     FsList(fs::List),
     FsMount(fs::Mount),
+    FsUnmount(fs::Unmount),
     PoolClean(pool::Clean)
 }
 
@@ -91,6 +105,7 @@ pub enum Response {
     FsCreate(Result<TreeID>),
     FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>),
+    FsUnmount(Result<()>),
     PoolClean(Result<()>),
 }
 
@@ -119,6 +134,13 @@ impl Response {
     pub fn into_pool_clean(self) -> Result<()> {
         match self {
             Response::PoolClean(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_unmount(self) -> Result<()> {
+        match self {
+            Response::FsUnmount(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

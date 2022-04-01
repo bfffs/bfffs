@@ -11,6 +11,7 @@ use std::{
 use bfffs_core::{
     controller::Controller,
     device_manager::DevManager,
+    property::PropertyName,
     rpc,
     Error,
     Result,
@@ -21,9 +22,7 @@ use fuse3::{
     raw::{MountHandle, Session},
     MountOptions,
 };
-#[cfg(not(test))]
-use futures::FutureExt;
-use futures::{stream::FuturesUnordered, Future, TryFutureExt, TryStreamExt};
+use futures::{stream::FuturesUnordered, TryFutureExt, TryStreamExt};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -113,7 +112,7 @@ impl Bfffsd {
         loop {
             let nread = peer.recv(&mut buf).await.unwrap();
             if nread == 0 {
-                warn!("Client did not send request");
+                // Client disconnected normally
                 break;
             } else if nread >= BUFSIZ {
                 warn!("Client sent unexpectedly large request");
@@ -206,24 +205,26 @@ impl Bfffsd {
     }
 
     #[cfg_attr(test, allow(unused_variables))]
-    fn mount(
-        &self,
-        mountpoint: PathBuf,
-        name: String,
-    ) -> impl Future<Output = Result<MountHandle>> + Send {
+    async fn mount(&self, name: String) -> Result<MountHandle> {
         let mo2 = self.mount_opts.clone();
+        let mp = self
+            .controller
+            .get_prop(&name, PropertyName::Mountpoint)
+            .map_ok(|(prop, _source)| PathBuf::from(prop.as_str()))
+            .await?;
         cfg_if! {
             if #[cfg(test)] {
-                Session::new(mo2).mount(FuseFs::default(), mountpoint)
+                Session::new(mo2).mount(FuseFs::default(), mp)
                     .map_err(Error::from)
+                    .await
             } else {
                 self.controller.new_fs(&name)
                     .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);
-                        Session::new(mo2).mount(fusefs, mountpoint)
+                        Session::new(mo2).mount(fusefs, mp)
                             .map_err(Error::from)
                     })
-                .boxed()
+                .await
             }
         }
     }
@@ -289,11 +290,24 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsMount(Err(Error::EPERM))
                 } else {
-                    match self.mount(req.mountpoint, req.name).await {
+                    match self.mount(req.name).await {
                         Ok(_) => rpc::Response::FsMount(Ok(())),
                         Err(e) => {
                             error!("mount: {:?}", e);
                             rpc::Response::FsMount(Err(e))
+                        }
+                    }
+                }
+            }
+            rpc::Request::FsUnmount(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsUnmount(Err(Error::EPERM))
+                } else {
+                    match self.unmount(&req.name, req.force).await {
+                        Ok(_) => rpc::Response::FsUnmount(Ok(())),
+                        Err(e) => {
+                            error!("unmount: {:?}", e);
+                            rpc::Response::FsUnmount(Err(e))
                         }
                     }
                 }
@@ -314,6 +328,10 @@ impl Bfffsd {
             let peer = sock.listener.accept().await.unwrap();
             tokio::spawn(self.clone().handle_client(peer));
         }
+    }
+
+    async fn unmount(&self, name: &str, force: bool) -> Result<()> {
+        self.controller.unmount(name, force).await
     }
 }
 

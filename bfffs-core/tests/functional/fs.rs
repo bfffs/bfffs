@@ -683,7 +683,7 @@ root:
             .await
             .unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
-        assert_eq!(source, PropertySource::Default);
+        assert_eq!(source, PropertySource::DEFAULT);
     }
 
     /// getattr on the filesystem's root directory
@@ -2701,7 +2701,7 @@ root:
             .await
             .unwrap();
         assert_eq!(val, Property::Atime(false));
-        assert_eq!(source, PropertySource::Local);
+        assert_eq!(source, PropertySource::LOCAL);
 
         // Check that atime is truly disabled
         let root = fs.root();

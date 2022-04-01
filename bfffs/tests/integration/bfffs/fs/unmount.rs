@@ -8,7 +8,10 @@ use std::{
 
 use assert_cmd::{cargo::cargo_bin, prelude::*};
 use function_name::named;
-use nix::mount::{unmount, MntFlags};
+use nix::{
+    mount::{unmount, MntFlags},
+    sys::statfs::statfs,
+};
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 
@@ -16,15 +19,9 @@ use super::super::super::*;
 
 struct Harness {
     _bfffsd:        Bfffsd,
-    pub tempdir:    TempDir,
     pub mountpoint: PathBuf,
+    _tempdir:       TempDir,
     pub sockpath:   PathBuf,
-}
-
-impl Drop for Harness {
-    fn drop(&mut self) {
-        let _ignore_errors = unmount(&self.mountpoint, MntFlags::empty());
-    }
 }
 
 /// Create a pool for backing store
@@ -73,15 +70,15 @@ fn harness() -> Harness {
         _bfffsd: bfffsd,
         sockpath,
         mountpoint,
-        tempdir,
+        _tempdir: tempdir,
     }
 }
 
-// Unmount the file system and remount it in the same location
+/// Without -f, a busy file system should not be unmounted
 #[named]
 #[rstest]
 #[tokio::test]
-async fn mount_again(harness: Harness) {
+async fn ebusy(harness: Harness) {
     require_fusefs!();
 
     bfffs()
@@ -93,13 +90,76 @@ async fn mount_again(harness: Harness) {
         .assert()
         .success();
 
-    unmount(&harness.mountpoint, MntFlags::empty()).unwrap();
+    let fname = harness.mountpoint.join("foo");
+    let f = std::fs::File::create(fname);
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("unmount")
+        .arg("mypool")
+        .assert()
+        .failure()
+        .stderr("Error: EBUSY\n");
+
+    drop(f);
+    // the VOP_RECLAIM may happen asynchronously, so we may need to retry the
+    // unmount.
+    loop {
+        match unmount(&harness.mountpoint, MntFlags::empty()) {
+            Ok(()) => break,
+            Err(nix::Error::EBUSY) => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(e) => panic!("unmount: {}", e),
+        }
+    }
+}
+
+/// The file system isn't mounted
+#[named]
+#[rstest]
+#[tokio::test]
+async fn einval(harness: Harness) {
+    require_fusefs!();
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("unmount")
+        .arg("mypool")
+        .assert()
+        .failure()
+        .stderr("Error: EINVAL\n");
+}
+
+/// With -f, a busy file system should be unmounted
+#[named]
+#[rstest]
+#[tokio::test]
+async fn force(harness: Harness) {
+    require_fusefs!();
 
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("mount")
+        .arg("mypool")
+        .assert()
+        .success();
+
+    let fname = harness.mountpoint.join("foo");
+    let _f = std::fs::File::create(fname);
+
+    bfffs()
+        .arg("--sock")
+        .arg(harness.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("unmount")
+        .arg("-f")
         .arg("mypool")
         .assert()
         .success();
@@ -119,63 +179,23 @@ async fn ok(harness: Harness) {
         .arg("mypool")
         .assert()
         .success();
-}
 
-#[named]
-#[rstest]
-#[tokio::test]
-async fn options(harness: Harness) {
-    require_fusefs!();
+    assert_eq!(
+        "fusefs.bfffs",
+        statfs(&harness.mountpoint).unwrap().filesystem_type_name()
+    );
 
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.to_str().unwrap())
         .arg("fs")
-        .arg("mount")
-        .arg("-o")
-        .arg("atime=off")
+        .arg("unmount")
         .arg("mypool")
         .assert()
         .success();
 
-    // TODO: figure out how to check if atime is active.
+    assert_ne!(
+        "fusefs.bfffs",
+        statfs(&harness.mountpoint).unwrap().filesystem_type_name()
+    );
 }
-
-/// Mount a dataset other than the pool root
-#[named]
-#[rstest]
-#[tokio::test]
-async fn subfs(harness: Harness) {
-    require_fusefs!();
-
-    let submp = harness.tempdir.path().join("mnt").join("foo");
-    fs::create_dir(&submp).unwrap();
-
-    bfffs()
-        .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
-        .assert()
-        .success();
-
-    bfffs()
-        .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("mount")
-        .arg("mypool/foo")
-        .assert()
-        .success();
-
-    unmount(&submp, MntFlags::empty()).unwrap();
-}
-
-// TODO: test with overridden mountpoint, once that is possible.
-
-// TODO: once the mountpoint can be overridden, check that it is not be possible
-// to mount the same file system twice, similar to the old ebusy test, from
-// before the mountpoint property was introduced.
-
-// TODO: test with alternate mountpoint

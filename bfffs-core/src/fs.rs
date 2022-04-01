@@ -1060,10 +1060,10 @@ impl Fs {
         let (last_key, (atimep, _), (recsizep, _), _) =
         db4.fsread(tree_id, move |dataset| {
             let last_key_fut = dataset.last_key();
-            let atime_fut = Fs::get_prop_locked(tree_id, db3.clone(),
-                                                PropertyName::Atime);
-            let recsize_fut = Fs::get_prop_locked(tree_id, db3.clone(),
-                                                  PropertyName::RecordSize);
+            let atime_fut = Fs::get_prop_unmounted(tree_id, db3.clone(),
+                                                   PropertyName::Atime);
+            let recsize_fut = Fs::get_prop_unmounted(tree_id, db3.clone(),
+                                                     PropertyName::RecordSize);
             let di_fut = db3.fswrite(tree_id, 0, 1, 0, 0,
             move |dataset| async move {
                 // Delete all dying inodes.  If there are any, it means that
@@ -1166,21 +1166,21 @@ impl Fs {
     {
         let db2 = self.db.clone();
         let tree = self.tree;
-        Fs::get_prop_locked(tree, db2, propname)
+        Fs::get_prop_unmounted(tree, db2, propname)
     }
 
-    /// Get the current value of the property `propname`
-    pub(crate) fn get_prop_locked(
+    /// Get the current value of a configurable property, one whose value is
+    /// strictly determined by the "bfffs fs set" operation.
+    fn get_prop_configurable(
         mut tree_id: TreeID,
         db: Arc<Database>,
         propname: PropertyName)
         -> impl Future<Output = Result<(Property, PropertySource)>> + Send + 'static
     {
-        // TODO: handle properties that have been overridden temporarily
         let key = FSKey::new(PROPERTY_OBJECT, ObjKey::Property(propname));
         async move {
             let mut prop = Property::default_value(propname);
-            let mut source = PropertySource::Local;
+            let mut source_levels = Some(0);
             loop {
                 if let Some(Some(p)) = db.fsread(tree_id, move |dataset|{
                     dataset.get(key)
@@ -1190,15 +1190,28 @@ impl Fs {
                 }
                 let oparent = db.lookup_parent(tree_id).await?;
                 if let Some(parent) = oparent {
-                    source = PropertySource::Inherited;
+                    source_levels = Some(source_levels.unwrap() + 1);
                     tree_id = parent;
                 } else {
-                    source = PropertySource::Default;
+                    source_levels = None;
                     break;
                 }
             }
+            let source = PropertySource(source_levels);
             Ok((prop, source))
         }
+    }
+
+    /// Get the current value of a property on a file system that is not
+    /// currently mounted
+    pub(crate) fn get_prop_unmounted(
+        tree_id: TreeID,
+        db: Arc<Database>,
+        propname: PropertyName)
+        -> impl Future<Output = Result<(Property, PropertySource)>> + Send + 'static
+    {
+        // TODO: handle properties that have been overridden temporarily
+        Fs::get_prop_configurable(tree_id, db, propname).boxed()
     }
 
     pub async fn getattr(&self, fd: &FileData) -> std::result::Result<GetAttr, i32> {
@@ -2319,7 +2332,8 @@ impl Fs {
             Property::Atime(atime) =>
                 self.atime.store(atime, Ordering::Relaxed),
             Property::RecordSize(exp) =>
-                self.record_size.store(exp, Ordering::Relaxed)
+                self.record_size.store(exp, Ordering::Relaxed),
+            _ => todo!(),
         }
 
         // Update on-disk properties
@@ -2327,12 +2341,23 @@ impl Fs {
     }
 
     /// Set a property on a file system that is not currently mounted
-    pub(crate) async fn set_prop_unmounted(
+    pub async fn set_prop_unmounted(
         tree_id: TreeID,
         db: &Database,
         prop: Property)
         -> Result<()>
     {
+        match prop.name() {
+            PropertyName::Mountpoint =>
+                panic!("Property {:?} may not be set directly on a file system",
+                       prop.name()),
+            PropertyName::BaseMountpoint =>
+                if ! prop.as_str().starts_with('/') {
+                    // Mountpoint property must be absolute
+                    return Err(Error::EINVAL);
+                }
+            _ => ()
+        }
         let objkey = ObjKey::Property(prop.name());
         let key = FSKey::new(PROPERTY_OBJECT, objkey);
         let value = FSValue::Property(prop);
