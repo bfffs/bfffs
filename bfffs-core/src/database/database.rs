@@ -41,8 +41,8 @@ use tokio::{
     time::{Duration, Instant, sleep_until},
 };
 
-pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue<RID>>;
-pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue<RID>>;
+pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
+pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
 
 #[derive(Debug)]
 enum SyncerMsg {
@@ -140,7 +140,7 @@ struct Inner {
     dirty: AtomicBool,
     // Owner for the file system trees.  They must be owned by the Database
     // rather than the Fs so that the Database may flush and sync them all.
-    fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue<RID>>>>>,
+    fs_trees: RwLock<BTreeMap<TreeID, Arc<ITree<FSKey, FSValue>>>>,
     /// Stores the Tree of Trees on disk.
     /// * keys are of type ForestKey
     /// * Values are of two types:
@@ -164,10 +164,10 @@ impl Inner {
         inner: &Arc<Inner>,
         tree_id: TreeID,
         tod: TreeOnDisk<RID>)
-    -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>>> + Send
+    -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue>>>> + Send
     {
         let idml2 = inner.idml.clone();
-        let tree = ITree::<FSKey, FSValue<RID>>::open(idml2, false, tod);
+        let tree = ITree::<FSKey, FSValue>::open(idml2, false, tod);
         let atree = Arc::new(tree);
         let atree2 = atree.clone();
         inner.fs_trees.with_write(move |mut wguard| {
@@ -180,7 +180,7 @@ impl Inner {
 
     // Must be called from within a Tokio executor context
     fn open_filesystem(inner: &Arc<Inner>, tree_id: TreeID)
-        -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue<RID>>>>> + Send
+        -> impl Future<Output=Result<Arc<ITree<FSKey, FSValue>>>> + Send
     {
         let inner2 = inner.clone();
         async move {
@@ -414,7 +414,7 @@ impl Database {
         // lower value for random access.  We'll use that rather than the
         // upper value, to keep cache usage lower.
         let fs = Arc::new(
-            ITree::<FSKey, FSValue<RID>>::create(idml2, false, 9.00, 1.61)
+            ITree::<FSKey, FSValue>::create(idml2, false, 9.00, 1.61)
         );
         let txg_guard = idml3.txg().await;
         fs.clone().flush(*txg_guard).await?;
@@ -523,7 +523,7 @@ impl Database {
     #[cfg(test)]
     #[doc(hidden)]
     pub fn fsread_inner(&self, tree_id: TreeID)
-        -> ReadOnlyDataset<FSKey, FSValue<RID>>
+        -> ReadOnlyDataset<FSKey, FSValue>
     {
         unimplemented!()
     }
@@ -694,7 +694,7 @@ impl Database {
     #[cfg(test)]
     #[doc(hidden)]
     pub fn fswrite_inner(&self, tree_id: TreeID)
-        -> ReadWriteDataset<FSKey, FSValue<RID>>
+        -> ReadWriteDataset<FSKey, FSValue>
     {
         unimplemented!()
     }
@@ -769,7 +769,7 @@ mod database {
         let mut fs_tree = Tree::default();
         fs_tree.expect_check()
             .returning(|| Ok(true));
-        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        let ctx = ITree::<FSKey, FSValue>::open_context();
         ctx.expect()
             .once()
             .return_once(|_, _, _| fs_tree);
@@ -814,7 +814,7 @@ mod database {
         let mut fs_tree = Tree::default();
         fs_tree.expect_check()
             .returning(|| Ok(true));
-        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        let ctx = ITree::<FSKey, FSValue>::open_context();
         ctx.expect()
             .once()
             .return_once(|_, _, _| fs_tree);
@@ -859,7 +859,7 @@ mod database {
         let mut fs_tree = Tree::default();
         fs_tree.expect_check()
             .returning(|| Ok(false));
-        let ctx = ITree::<FSKey, FSValue<RID>>::open_context();
+        let ctx = ITree::<FSKey, FSValue>::open_context();
         ctx.expect()
             .once()
             .return_once(|_, _, _| fs_tree);

@@ -343,8 +343,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let idml3 = idml.clone();
     let idml4 = idml.clone();
     let tree = Arc::new(
-        Tree::<RID, FakeIDML, FSKey, FSValue<RID>>::create(idml2, false, 9.00,
-                                                           1.61)
+        Tree::<RID, FakeIDML, FSKey, FSValue>::create(idml2, false, 9.00, 1.61)
     );
     let tree2 = tree.clone();
     let txg = TxgT::from(0);

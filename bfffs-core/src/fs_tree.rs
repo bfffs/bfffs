@@ -6,7 +6,7 @@ use bitfield::bitfield;
 use crate::{
     dml::{Compression, DML},
     property::*,
-    tree::{Addr, Key, MinValue, Value},
+    tree::{Key, MinValue, Value},
     types::*,
     util::*
 };
@@ -22,10 +22,7 @@ use futures::{
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
 use serde_derive::{Deserialize, Serialize};
-use serde::{
-    ser::{Serialize, Serializer, SerializeStruct},
-    de::DeserializeOwned
-};
+use serde::ser::{Serialize, Serializer, SerializeStruct};
 use std::{
     convert::TryFrom,
     ffi::{OsString, OsStr},
@@ -290,7 +287,7 @@ impl Serialize for FSKey {
 }
 
 /// `FSValue`s that are stored in in-BTree hash tables
-pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'static {
+pub trait HTItem: TryFrom<FSValue, Error=()> + Clone + Send + Sized + 'static {
     /// Some other type that may be used by the `same` method
     type Aux: Clone + Copy + Send;
 
@@ -302,15 +299,15 @@ pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'stat
 
     /// Create an `HTItem` from an `FSValue` whose contents are unknown.  It
     /// could be a single item, a bucket, or even a totally different item type.
-    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self>;
+    fn from_table(fsvalue: Option<FSValue>) -> HTValue<Self>;
 
     /// Create a bucket of `HTItem`s from a vector of `Self`.  Used for putting
     /// the bucket back into the Tree.
     #[allow(clippy::wrong_self_convention)]
-    fn into_bucket(selves: Vec<Self>) -> FSValue<RID>;
+    fn into_bucket(selves: Vec<Self>) -> FSValue;
 
     /// Turn self into a regular `FSValue`, suitable for inserting into the Tree
-    fn into_fsvalue(self) -> FSValue<RID>;
+    fn into_fsvalue(self) -> FSValue;
 
     /// Do these values represent the same item, even if their values aren't
     /// identical?
@@ -322,7 +319,7 @@ pub trait HTItem: TryFrom<FSValue<RID>, Error=()> + Clone + Send + Sized + 'stat
 pub enum HTValue<T: HTItem> {
     Single(T),
     Bucket(Vec<T>),
-    Other(FSValue<RID>),
+    Other(FSValue),
     None
 }
 
@@ -363,7 +360,7 @@ impl HTItem for Dirent {
         self.ino
     }
 
-    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
+    fn from_table(fsvalue: Option<FSValue>) -> HTValue<Self> {
         match fsvalue {
             Some(FSValue::DirEntry(x)) => HTValue::Single(x),
             Some(FSValue::DirEntries(x)) => HTValue::Bucket(x),
@@ -372,11 +369,11 @@ impl HTItem for Dirent {
         }
     }
 
-    fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
+    fn into_bucket(selves: Vec<Self>) -> FSValue {
         FSValue::DirEntries(selves)
     }
 
-    fn into_fsvalue(self) -> FSValue<RID> {
+    fn into_fsvalue(self) -> FSValue {
         FSValue::DirEntry(self)
     }
 
@@ -387,10 +384,10 @@ impl HTItem for Dirent {
     }
 }
 
-impl TryFrom<FSValue<RID>> for Dirent {
+impl TryFrom<FSValue> for Dirent {
     type Error = ();
 
-    fn try_from(fsvalue: FSValue<RID>) -> std::result::Result<Self, ()> {
+    fn try_from(fsvalue: FSValue) -> std::result::Result<Self, ()> {
         if let FSValue::DirEntry(dirent) = fsvalue {
             Ok(dirent)
         } else {
@@ -423,8 +420,8 @@ pub struct InlineExtAttr {
 }
 
 impl InlineExtAttr {
-    fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>>> + Send>>
+    fn flush<D>(self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr>> + Send>>
         where D: DML, D::Addr: 'static
     {
         let lsize = self.len();
@@ -435,11 +432,11 @@ impl InlineExtAttr {
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
                 debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<A>());
-                // Safe because D::Addr should always equal A.  If you ever
-                // call this function with any other type for A, then you're
+                                 mem::size_of::<RID>());
+                // Safe because D::Addr should always equal RID.  If you ever
+                // call this function with any other type for RID, then you're
                 // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
                 let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 let bea = BlobExtAttr { namespace, name, extent };
                 ExtAttr::Blob(bea)
@@ -457,28 +454,26 @@ impl InlineExtAttr {
 
 /// In-memory representation of a large extended attribute
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "A: DeserializeOwned"))]
-pub struct BlobExtAttr<A: Addr> {
+pub struct BlobExtAttr {
     pub namespace: ExtAttrNamespace,
     pub name:   OsString,
-    pub extent: BlobExtent<A>
+    pub extent: BlobExtent
 }
 
-impl<A: Addr> BlobExtAttr<A> {
-    fn flush(self) -> ExtAttr<A>
+impl BlobExtAttr {
+    fn flush(self) -> ExtAttr
     {
         ExtAttr::Blob(self)
     }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "A: DeserializeOwned"))]
-pub enum ExtAttr<A: Addr> {
+pub enum ExtAttr {
     Inline(InlineExtAttr),
-    Blob(BlobExtAttr<A>)
+    Blob(BlobExtAttr)
 }
 
-impl<'a, A: Addr> ExtAttr<A> {
+impl<'a> ExtAttr {
     pub fn allocated_space(&self) -> usize {
         const FUDGE: usize = 64;    // Experimentally determined
 
@@ -500,7 +495,7 @@ impl<'a, A: Addr> ExtAttr<A> {
     }
 
     fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr<A>>>
+        -> Pin<Box<dyn Future<Output=Result<ExtAttr>>
             + Send + 'static>>
         where D: DML + 'static, D::Addr: 'static
     {
@@ -525,7 +520,7 @@ impl<'a, A: Addr> ExtAttr<A> {
     }
 }
 
-impl HTItem for ExtAttr<RID> {
+impl HTItem for ExtAttr {
     type Aux = ExtAttrNamespace;
     const ENOTFOUND: Error = Error::ENOATTR;
 
@@ -533,7 +528,7 @@ impl HTItem for ExtAttr<RID> {
         self.namespace()
     }
 
-    fn from_table(fsvalue: Option<FSValue<RID>>) -> HTValue<Self> {
+    fn from_table(fsvalue: Option<FSValue>) -> HTValue<Self> {
         match fsvalue {
             Some(FSValue::ExtAttr(x)) => HTValue::Single(x),
             Some(FSValue::ExtAttrs(x)) => HTValue::Bucket(x),
@@ -542,11 +537,11 @@ impl HTItem for ExtAttr<RID> {
         }
     }
 
-    fn into_bucket(selves: Vec<Self>) -> FSValue<RID> {
+    fn into_bucket(selves: Vec<Self>) -> FSValue {
         FSValue::ExtAttrs(selves)
     }
 
-    fn into_fsvalue(self) -> FSValue<RID> {
+    fn into_fsvalue(self) -> FSValue {
         FSValue::ExtAttr(self)
     }
 
@@ -555,10 +550,10 @@ impl HTItem for ExtAttr<RID> {
     }
 }
 
-impl TryFrom<FSValue<RID>> for ExtAttr<RID> {
+impl TryFrom<FSValue> for ExtAttr {
     type Error = ();
 
-    fn try_from(fsvalue: FSValue<RID>) -> std::result::Result<Self, ()> {
+    fn try_from(fsvalue: FSValue) -> std::result::Result<Self, ()> {
         if let FSValue::ExtAttr(extent) = fsvalue {
             Ok(extent)
         } else {
@@ -772,8 +767,8 @@ impl InlineExtent {
         self.buf.len() + Self::FUDGE
     }
 
-    fn flush<A: Addr, D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<FSValue<A>>>
+    fn flush<D>(self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<FSValue>>
             + Send + 'static>>
         where D: DML, D::Addr: 'static
     {
@@ -783,11 +778,11 @@ impl InlineExtent {
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
                 debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<A>());
-                // Safe because D::Addr should always equal A.  If you ever
-                // call this function with any other type for A, then you're
+                                 mem::size_of::<RID>());
+                // Safe because D::Addr should always equal RID.  If you ever
+                // call this function with any other type for RID, then you're
                 // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const A)};
+                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
                 let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 FSValue::BlobExtent(be)
             });
@@ -820,19 +815,18 @@ impl PartialEq for InlineExtent {
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "A: DeserializeOwned"))]
-pub struct BlobExtent<A: Addr> {
+pub struct BlobExtent {
     pub lsize: u32,
-    pub rid: A,
+    pub rid: RID,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Extent<'a, A: Addr> {
+pub enum Extent<'a> {
     Inline(&'a InlineExtent),
-    Blob(&'a BlobExtent<A>)
+    Blob(&'a BlobExtent)
 }
 
-impl<'a, A: Addr> Extent<'a, A> {
+impl<'a> Extent<'a> {
     /// The length of this Extent, in bytes
     // An extent can never be empty, so there's no point to is_empty()
     #[allow(clippy::len_without_is_empty)]
@@ -849,17 +843,16 @@ impl<'a, A: Addr> Extent<'a, A> {
 // making FSValue generic, or using generics specialization.  And generics
 // specialization isn't stable yet.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(bound(deserialize = "A: DeserializeOwned"))]
-pub enum FSValue<A: Addr> {
+pub enum FSValue {
     DirEntry(Dirent),
     Inode(Inode),
     InlineExtent(InlineExtent),
-    BlobExtent(BlobExtent<A>),
+    BlobExtent(BlobExtent),
     /// An Extended Attribute, for inodes >= 1.  Or a dataset User Property, for
     /// inode 0.
-    ExtAttr(ExtAttr<A>),
+    ExtAttr(ExtAttr),
     /// A whole Bucket of `ExtAttr`s, used in case of hash collisions
-    ExtAttrs(Vec<ExtAttr<A>>),
+    ExtAttrs(Vec<ExtAttr>),
     /// A whole Bucket of `Dirent`s, used in case of hash collisions
     DirEntries(Vec<Dirent>),
     /// A native dataset property.
@@ -874,7 +867,7 @@ pub enum FSValue<A: Addr> {
     Invalid,
 }
 
-impl<A: Addr> FSValue<A> {
+impl FSValue {
     pub fn as_direntries(&self) -> Option<&Vec<Dirent>> {
         if let FSValue::DirEntries(direntries) = self {
             Some(direntries)
@@ -899,7 +892,7 @@ impl<A: Addr> FSValue<A> {
         }
     }
 
-    pub fn as_extattr(&self) -> Option<&ExtAttr<A>> {
+    pub fn as_extattr(&self) -> Option<&ExtAttr> {
         if let FSValue::ExtAttr(extent) = self {
             Some(extent)
         } else {
@@ -909,7 +902,7 @@ impl<A: Addr> FSValue<A> {
 
 // LCOV_EXCL_START
     #[cfg(test)]
-    pub fn as_extattrs(&self) -> Option<&Vec<ExtAttr<A>>> {
+    pub fn as_extattrs(&self) -> Option<&Vec<ExtAttr>> {
         if let FSValue::ExtAttrs(extents) = self {
             Some(extents)
         } else {
@@ -918,7 +911,7 @@ impl<A: Addr> FSValue<A> {
     }
 // LCOV_EXCL_STOP
 
-    pub fn as_extent(&self) -> Option<Extent<A>> {
+    pub fn as_extent(&self) -> Option<Extent> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))
         } else if let FSValue::BlobExtent(extent) = self {
@@ -978,19 +971,19 @@ impl<A: Addr> FSValue<A> {
 }
 
 #[cfg(test)]
-impl Default for FSValue<RID> {
+impl Default for FSValue {
     fn default() -> Self {
         FSValue::Invalid
     }
 }
 
-impl<A: Addr> TypicalSize for FSValue<A> {
+impl TypicalSize for FSValue {
     // FSValue can have variable size.  But the most common variant is likely to
     // be FSValue::BlobExtent, which has size 16.
     const TYPICAL_SIZE: usize = 16;
 }
 
-impl<A: Addr> Value for FSValue<A> {
+impl Value for FSValue {
 
     fn allocated_space(&self) -> usize {
         match self {
@@ -998,7 +991,7 @@ impl<A: Addr> Value for FSValue<A> {
             FSValue::InlineExtent(extent) => extent.allocated_space(),
             FSValue::ExtAttr(extattr) => extattr.allocated_space(),
             FSValue::ExtAttrs(extattrs) =>
-                extattrs.capacity() * mem::size_of::<ExtAttr<A>>() +
+                extattrs.capacity() * mem::size_of::<ExtAttr>() +
                 extattrs.iter()
                 .map(|extattr| extattr.allocated_space())
                 .sum::<usize>(),
@@ -1071,12 +1064,12 @@ fn fskey_typical_size() {
 
 #[test]
 fn fsvalue_typical_size() {
-    let fsv: FSValue<RID> = FSValue::BlobExtent(BlobExtent{
+    let fsv = FSValue::BlobExtent(BlobExtent{
         lsize: 0xdead_beef,
         rid: RID(0x0001_0203_0405_0607)
     });
     let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
-    assert_eq!(FSValue::<RID>::TYPICAL_SIZE, v.len());
+    assert_eq!(FSValue::TYPICAL_SIZE, v.len());
 }
 
 /// Long InlineExtAttrs should be converted to BlobExtAttrs during flush
@@ -1096,7 +1089,7 @@ fn fsvalue_flush_inline_extattr_long() {
     let dbs = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
     let extent = InlineExtent::new(dbs);
     let iea = InlineExtAttr{namespace, name, extent};
-    let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
+    let unflushed = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
     let flushed = unflushed.flush(&idml, txg)
         .now_or_never().unwrap()
@@ -1118,7 +1111,7 @@ fn fsvalue_flush_inline_extattr_short() {
     let dbs = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
     let extent = InlineExtent::new(dbs);
     let iea = InlineExtAttr{namespace, name, extent};
-    let unflushed: FSValue<RID> = FSValue::ExtAttr(ExtAttr::Inline(iea));
+    let unflushed = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
     let flushed = unflushed.flush(&idml, txg)
         .now_or_never().unwrap()
@@ -1143,7 +1136,7 @@ fn fsvalue_flush_inline_extent_long() {
 
     let data = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
     let ile = InlineExtent::new(data);
-    let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
+    let unflushed = FSValue::InlineExtent(ile);
     let flushed = unflushed.flush(&idml, txg)
         .now_or_never().unwrap()
         .unwrap();
@@ -1161,7 +1154,7 @@ fn fsvalue_flush_inline_extent_short() {
 
     let data = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
     let ile = InlineExtent::new(data);
-    let unflushed: FSValue<RID> = FSValue::InlineExtent(ile);
+    let unflushed = FSValue::InlineExtent(ile);
     let flushed = unflushed.flush(&idml, txg)
         .now_or_never().unwrap()
         .unwrap();

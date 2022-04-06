@@ -38,7 +38,7 @@ use std::{
 
 #[cfg(test)] mod tests;
 
-pub type ExtAttr = crate::fs_tree::ExtAttr<RID>;
+pub type ExtAttr = crate::fs_tree::ExtAttr;
 pub type ExtAttrNamespace = crate::fs_tree::ExtAttrNamespace;
 pub type Timespec = crate::fs_tree::Timespec;
 
@@ -72,7 +72,7 @@ mod htable {
 
     impl ReadFilesystem<'_> {
         fn get(&self, k: FSKey)
-            -> Pin<Box<dyn Future<Output=Result<Option<FSValue<RID>>>> + Send>>
+            -> Pin<Box<dyn Future<Output=Result<Option<FSValue>>> + Send>>
         {
             match self {
                 ReadFilesystem::ReadOnly(ds) => Box::pin(ds.get(k)),
@@ -682,7 +682,7 @@ impl Fs {
     fn do_read<DS>(dataset: DS, ino: u64, fsize: u64, rs: u64, offset: u64,
                    size: usize)
         -> impl Future<Output=Result<SGList>>
-        where DS: ReadDataset<FSKey, FSValue<RID>>
+        where DS: ReadDataset<FSKey, FSValue>
     {
         // Populate a hole region in an sglist.
         let fill_hole = |sglist: &mut SGList, p: &mut u64, l: usize| {
@@ -1913,7 +1913,7 @@ impl Fs {
         struct ReaddirStream {
             /// Number of entries to skip from the first bucket
             bucket_idx: u8,
-            rq: RangeQuery<FSKey, FSKey, FSValue<RID>>,
+            rq: RangeQuery<FSKey, FSKey, FSValue>,
             /// If the stream is currently positioned in the middle of a bucket,
             /// store that bucket
             bucketing: Option<Bucketing>
@@ -2482,7 +2482,7 @@ impl Fs {
         // this point, we don't know if any of the records we're writing to are
         // already dirty.
         let nrecs = uio.nrecs(offset0, rs);
-        let bb = FSValue::<RID>::extent_space(rs, nrecs);
+        let bb = FSValue::extent_space(rs, nrecs);
 
         self.db.fswrite(self.tree, 1 + nrecs, 0, nrecs, bb,
         move |ds| async move {
