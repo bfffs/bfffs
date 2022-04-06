@@ -38,6 +38,16 @@ impl Bfffs {
         self.call(req).await.unwrap().into_fs_create()
     }
 
+    /// Destroy a file system
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   Name of the file system, including the pool
+    pub async fn fs_destroy(&self, fsname: String) -> Result<()> {
+        let req = rpc::fs::destroy(fsname);
+        self.call(req).await.unwrap().into_fs_destroy()
+    }
+
     /// List the given dataset and all of its children
     ///
     /// # Arguments

@@ -153,6 +153,41 @@ struct Inner {
 }
 
 impl Inner {
+    async fn destroy_fs(
+        inner: Arc<Self>,
+        parent: Option<TreeID>,
+        tree_id: TreeID,
+        name: &str
+        ) -> Result<()>
+    {
+        // First, remove the tree from the forest.  If this succeeds, delete it
+        // from disk.  Ensure that it does not remain in the cache, too.  Do
+        // this all in a single transaction.
+        let tname = name.split('/').last().unwrap();
+        inner.dirty.store(true, Ordering::Relaxed);
+
+        // First check that the tree exists ane ensure it is cached.
+        Inner::open_filesystem(&inner, tree_id).await?;
+
+        let txg = inner.idml.txg().await;
+        // Delete it from the forest while locking fs_trees
+        let itree = {
+            let mut wg = inner.fs_trees.write().await;
+            inner.forest.unlink(parent, tree_id, tname, *txg).await?;
+            wg.remove(&tree_id).unwrap()
+        };
+
+        // Finally delete its contents
+        let cr = itree.credit_requirements();
+        let credit = inner.idml.borrow_credit(cr.range_delete).await;
+        // XXX range_delete is effective, but it prevents any transactions from
+        // syncing, and it holds all of the affected metadata in RAM at the same
+        // time.  TODO: for better efficiency, create a restartable
+        // Tree::destroy method that partially destroys a tree, iterating like
+        // Tree::flush.
+        itree.range_delete(.., *txg, credit).await
+    }
+
     fn new(idml: Arc<IDML>, forest: Forest) -> Self
     {
         let dirty = AtomicBool::new(true);
@@ -504,6 +539,25 @@ impl Database {
         Ok(tree_id)
     }
 
+    /// Destroy an unmounted file system
+    // Outline:
+    // 1) Move its entry in the Forest to a "destroying" area.
+    // 2) Wakeup the Reaper task
+    //
+    // TODO: create a Reaper task that destroys file systems in the background.
+    // On startup, it should check the destroying area.  It should check it
+    // again whenever it gets woken.  For each dataset to destroy, it should get
+    // credit and tell the Tree layer to destroy it.
+    pub async fn destroy_fs(
+        &self,
+        parent: Option<TreeID>,
+        tree_id: TreeID,
+        name: &str
+        ) -> Result<()>
+    {
+        Inner::destroy_fs(self.inner.clone(), parent, tree_id, name).await
+    }
+
     fn fsread_real<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
@@ -782,9 +836,11 @@ mod database {
         format!("{:?}", label);
     }
 
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn check_ok() {
-        let _guard = OPEN_MTX.lock().unwrap();
+        let guard = OPEN_MTX.lock().unwrap();
 
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
@@ -820,10 +876,13 @@ mod database {
             .return_once(|_: RangeFull| rq);
 
         let db = Database::new(Arc::new(idml), forest.into());
+        drop(guard);
         let r = db.check().await.unwrap();
         assert!(r);
     }
 
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn check_idml_fails() {
         let _guard = OPEN_MTX.lock().unwrap();
@@ -866,6 +925,8 @@ mod database {
         assert!(!r);
     }
 
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn check_tree_fails() {
         let _guard = OPEN_MTX.lock().unwrap();

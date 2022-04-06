@@ -16,6 +16,7 @@ use futures::{
     Future,
     FutureExt,
     Stream,
+    StreamExt,
     TryFutureExt,
     TryStream,
     TryStreamExt,
@@ -345,6 +346,33 @@ impl Forest {
                 }
             )
         })
+    }
+
+    /// Remove a Tree from the Forest
+    pub async fn unlink(
+        &self,
+        parent: Option<TreeID>,
+        tree_id: TreeID,
+        name: &str,
+        txg: TxgT
+        ) -> Result <()>
+    {
+        assert!(!name.contains('/'), "name must be terminal component only");
+        assert!(parent.is_some() ^ name.is_empty());
+        let tree_key = ForestKey::tree(tree_id);
+        let tree_fut = self.0.clone().remove(tree_key, txg, Credit::null());
+        let child_range = ForestKey::tree_ent_range(tree_id, 0);
+        if self.0.clone().range(child_range).next().await.is_some() {
+            return Err(Error::EBUSY);
+        }
+        if let Some(p) = parent {
+            let te_key = ForestKey::tree_ent(p, name);
+            let te_fut = self.0.clone().remove(te_key, txg, Credit::null());
+            future::try_join(tree_fut, te_fut).await?;
+        } else {
+            tree_fut.await?;
+        }
+        Ok(())
     }
 
     /// Write out a tree root for an already-existing Tree

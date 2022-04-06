@@ -173,6 +173,20 @@ mod fs {
         }
     }
 
+    /// Destroy a file system
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Destroy {
+        /// File system name
+        pub(super) name: String,
+    }
+
+    impl Destroy {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            bfffs.fs_destroy(self.name).await
+        }
+    }
+
     /// List file systems
     #[derive(Parser, Clone, Debug)]
     pub(super) struct List {
@@ -245,6 +259,7 @@ mod fs {
     /// Create, destroy, and modify file systems
     pub(super) enum FsCmd {
         Create(Create),
+        Destroy(Destroy),
         List(List),
         Mount(Mount),
         Unmount(Unmount),
@@ -487,6 +502,9 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Create(create)) => {
             create.main(&cli.sock).await
         }
+        SubCommand::Fs(fs::FsCmd::Destroy(destroy)) => {
+            destroy.main(&cli.sock).await
+        }
         SubCommand::Fs(fs::FsCmd::List(list)) => list.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Unmount(unmount)) => {
@@ -614,6 +632,20 @@ mod t {
                         create.properties,
                         vec!["atime=off", "recsize=65536"]
                     );
+                }
+            }
+        }
+
+        mod destroy {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "destroy", "testpool/foo"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Destroy(_))));
+                if let SubCommand::Fs(FsCmd::Destroy(destroy)) = cli.cmd {
+                    assert_eq!(destroy.name, "testpool/foo");
                 }
             }
         }

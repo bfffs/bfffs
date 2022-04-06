@@ -256,6 +256,14 @@ impl Bfffsd {
                     rpc::Response::FsCreate(r)
                 }
             }
+            rpc::Request::FsDestroy(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsMount(Err(Error::EPERM))
+                } else {
+                    let r = self.controller.destroy_fs(&req.name).await;
+                    rpc::Response::FsDestroy(r)
+                }
+            }
             rpc::Request::FsList(req) => {
                 // this value of chunkqty is a guess, not well-calculated
                 const CHUNKQTY: usize = 64;

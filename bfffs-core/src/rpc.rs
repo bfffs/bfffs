@@ -26,6 +26,15 @@ pub mod fs {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
+    pub struct Destroy {
+        pub name: String,
+    }
+
+    pub fn destroy(name: String) -> Request {
+        Request::FsDestroy(Destroy{name})
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
     pub struct DsInfo {
         pub name:   String,
         pub props:  Vec<Property>,
@@ -94,6 +103,7 @@ pub mod pool {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Request {
     FsCreate(fs::Create),
+    FsDestroy(fs::Destroy),
     FsList(fs::List),
     FsMount(fs::Mount),
     FsUnmount(fs::Unmount),
@@ -103,6 +113,7 @@ pub enum Request {
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
     FsCreate(Result<TreeID>),
+    FsDestroy(Result<()>),
     FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>),
     FsUnmount(Result<()>),
@@ -113,6 +124,13 @@ impl Response {
     pub fn into_fs_create(self) -> Result<TreeID> {
         match self {
             Response::FsCreate(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_destroy(self) -> Result<()> {
+        match self {
+            Response::FsDestroy(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

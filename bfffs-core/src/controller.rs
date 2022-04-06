@@ -41,6 +41,7 @@ pub struct Dirent {
 
 pub struct Controller {
     db: Arc<Database>,
+    /// Collection of all currently-mounted file systems
     filesystems: RwLock<BTreeMap<TreeID, Weak<Fs>>>,
 }
 
@@ -90,6 +91,29 @@ impl Controller {
             // Creating a child of the root file system
             self.db.create_fs(Some(database::TreeID(0)), fsname.to_owned())
         }.await
+    }
+
+    /// Destroy a filesystem
+    ///
+    ///
+    /// # Arguments
+    ///
+    /// - `name`    -   Name of the file system to destroy, including pool name
+    pub async fn destroy_fs(&self, name: &str) -> Result<()>
+    {
+        let dsname = self.strip_pool_name(name)?;
+        let guard = self.filesystems.read().await;
+        let (parent, tree_id) = self.db.lookup_fs(dsname).await?;
+        match tree_id {
+            Some(id) => {
+                if let Some(_fs) = guard.get(&id) {
+                    Err(Error::EBUSY)
+                } else {
+                    self.db.destroy_fs(parent, id, dsname).await
+                }
+            }
+            None => Err(Error::ENOENT)
+        }
     }
 
     /// Dump a YAMLized representation of the Forest in text format.
