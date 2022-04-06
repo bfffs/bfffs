@@ -1766,7 +1766,7 @@ root:
 fn serialize_forest() {
     let mock = IDML::default();
     let idml = Arc::new(mock);
-    let typical_tree: Tree<RID, IDML, FSKey, FSValue<RID>> =
+    let typical_tree: Tree<RID, IDML, FSKey, FSValue> =
         Tree::from_str(idml, false, r#"
 ---
 limits:
