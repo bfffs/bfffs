@@ -15,11 +15,10 @@ use futures::{
     Future,
     FutureExt,
     Stream,
-    StreamExt,
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::{self, FuturesUnordered},
+    stream::FuturesUnordered,
     task::{Context, Poll}
 };
 use std::{
@@ -677,25 +676,7 @@ impl Fs {
     fn do_delete_inode(ds: Arc<ReadWriteFilesystem>, ino: u64)
         -> impl Future<Output=Result<()>>
     {
-        let ds2 = ds.clone();
-        // delete its blob extents and blob extended attributes
-        let extent_stream = ds.range(FSKey::extent_range(ino, ..))
-        .try_filter_map(move |(_k, v)| {
-            if let Extent::Blob(be) = v.as_extent().unwrap()
-            {
-                future::ok(Some(be.rid))
-            } else {
-                future::ok(None)
-            }
-        });
-        let extattr_stream = Fs::list_extattr_rids(&*ds, ino);
-        extent_stream.chain(extattr_stream)
-        .try_for_each_concurrent(None, move |rid| ds2.delete_blob(rid))
-        .and_then(move |_| async move {
-            // Finally, range_delete its key range, including inode,
-            // inline extents, and inline extattrs
-            ds.range_delete(FSKey::obj_range(ino)).await
-        })
+        ds.range_delete(FSKey::obj_range(ino))
     }
 
     /// Remove the inode if this was its last reference
@@ -796,13 +777,7 @@ impl Fs {
 
         // 1) range_delete its key range
         let dataset2 = dataset.clone();
-        let dataset3 = dataset.clone();
-        let ino_fut = Fs::list_extattr_rids(&*dataset, ino)
-        .try_for_each_concurrent(None, move |rid| {
-            dataset2.delete_blob(rid)
-        }).and_then(move |_|
-            dataset3.range_delete(FSKey::obj_range(ino))
-        );
+        let ino_fut = dataset2.range_delete(FSKey::obj_range(ino));
 
         // 2) Update the parent dir's link count and timestamps
         let parent_ino_key = FSKey::new(parent, ObjKey::Inode);
@@ -957,20 +932,16 @@ impl Fs {
 
         // Deallocate all whole records in the range
         let full_fut = dataset2.range(full_range)
-       .try_fold((FuturesUnordered::new(), 0u64), |(futs, mut s), (_k, v)| {
+       .try_fold(0u64, |mut s, (_k, v)| {
             match v.as_extent().unwrap() {
                 Extent::Blob(be) => {
                     s += u64::from(be.lsize);
-                    futs.push(dataset2.delete_blob(be.rid));
                 },
                 Extent::Inline(ile) => {
                     s += ile.len() as u64;
                 }
             }
-            future::ok((futs, s))
-        }).and_then(move |(futs, old_len)| {
-            futs.try_collect::<Vec<_>>()
-            .map_ok(move |_| old_len)
+            future::ok(s)
         }).and_then(move |old_len| {
             dataset3.range_delete(full_range2)
             .map_ok(move |_| old_len)
@@ -1495,34 +1466,6 @@ impl Fs {
             Ok(())
         }).map_err(Error::into)
         .await
-    }
-
-    /// List the RID of every blob extattr for a file
-    fn list_extattr_rids(dataset: &ReadWriteFilesystem, ino: u64)
-        -> impl Stream<Item=Result<RID>>
-    {
-        dataset.range(FSKey::extattr_range(ino))
-        .try_filter_map(move |(k, v)| {
-            match v {
-                FSValue::ExtAttr(ExtAttr::Inline(_)) => future::ok(None),
-                FSValue::ExtAttr(ExtAttr::Blob(be)) => {
-                    let s = stream::once(future::ok(be.extent.rid)).boxed();
-                    future::ok(Some(s))
-                },
-                FSValue::ExtAttrs(r) => {
-                    let rids = r.iter().filter_map(|v| {
-                        if let ExtAttr::Blob(be) = v {
-                            Some(Ok(be.extent.rid))
-                        } else {
-                            None
-                        }
-                    }).collect::<Vec<_>>();
-                    let s = stream::iter(rids).boxed();
-                    future::ok(Some(s))
-                }
-                x => panic!("Unexpected value {:?} for key {:?}", x, k)
-            }
-        }).try_flatten()
     }
 
     /// Lookup a file by its file name.

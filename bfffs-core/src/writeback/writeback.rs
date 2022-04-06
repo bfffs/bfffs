@@ -113,6 +113,9 @@ impl Drop for Credit {
         if *self.0.get_mut() != 0 && !std::thread::panicking() {
             // Dropping Credit amounts to leaking it.  To continue the monetary
             // analogy, this is like destroying currency.
+            // XXX Even though we skip the check during panicking(), this
+            // assertion can still fire in various error paths, which is
+            // confusing.
             panic!("Can't drop credit! ({:?})", self.0);
         }
     }

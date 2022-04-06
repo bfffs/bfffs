@@ -98,7 +98,7 @@ impl Default for Compression {
 /// compression and checksumming.
 #[cfg_attr(test, automock(type Addr=u32;))]
 pub trait DML: Send + Sync {
-    type Addr;
+    type Addr: Copy;
 
     /// Delete the record from the cache, and free its storage space.
     fn delete(&self, addr: &Self::Addr, txg: TxgT)

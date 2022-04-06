@@ -4,6 +4,7 @@
 #[cfg(test)] mod txg;
 
 use crate::dml::MockDML;
+use mockall::mock;
 use super::*;
 use super::super::LeafData;
 
@@ -14,6 +15,35 @@ fn mock_dml() -> MockDML {
         .returning(mem::forget);
     mock
 }
+
+mock! {
+    Future<N: 'static> {}
+    impl<N> Future for Future<N> {
+        type Output = Result<Box<N>>;
+        fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
+            -> Poll<Result<Box<N>>>;
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+struct NeedsDcloneV(u32);
+
+impl TypicalSize for NeedsDcloneV {
+    const TYPICAL_SIZE: usize = mem::size_of::<u32>();
+}
+
+impl Value for NeedsDcloneV {
+    const NEEDS_DCLONE: bool = true;
+
+    fn ddrop<D>(&self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        dml.delete(&checked_transmute(self.0), txg)
+    }
+}
+
+type NeedsDcloneNode = Arc<Node<u32, u32, NeedsDcloneV>>;
 
 #[allow(clippy::reversed_empty_ranges)]
 #[test]

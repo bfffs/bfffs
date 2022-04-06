@@ -17,7 +17,7 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::FuturesOrdered
+    stream::{FuturesOrdered, FuturesUnordered}
 };
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
@@ -974,6 +974,7 @@ impl TypicalSize for FSValue {
 }
 
 impl Value for FSValue {
+    const NEEDS_DCLONE: bool = true;
     const NEEDS_FLUSH: bool = true;
 
     fn allocated_space(&self) -> usize {
@@ -992,6 +993,31 @@ impl Value for FSValue {
                 .map(|de| de.allocated_space())
                 .sum::<usize>(),
             _ => 0
+        }
+    }
+
+    fn ddrop<D>(&self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        match self {
+            FSValue::BlobExtent(be) => {
+                dml.delete(&checked_transmute(be.rid), txg).boxed()
+            },
+            FSValue::ExtAttr(ExtAttr::Blob(xattr)) => {
+                dml.delete(&checked_transmute(xattr.extent.rid), txg).boxed()
+            },
+            FSValue::ExtAttrs(v) => {
+                let futs = FuturesUnordered::new();
+                for xattr in v {
+                    if let ExtAttr::Blob(be) = xattr {
+                        let rid = checked_transmute(be.extent.rid);
+                        futs.push(dml.delete(&rid, txg));
+                    }
+                }
+                futs.try_fold((), |_, _| future::ok(())).boxed()
+            },
+            _ => future::ok(()).boxed()
         }
     }
 

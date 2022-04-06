@@ -11,11 +11,10 @@ use crate::{
 use futures::{
     future,
     stream::{StreamExt, TryStreamExt},
-    task::{Context, Poll}
+    task::Poll
 };
 use mockall::{
     Sequence,
-    mock,
     predicate::{always, eq}
 };
 use pretty_assertions::assert_eq;
@@ -26,16 +25,8 @@ use std::{
 };
 use super::*;
 
-mock! {
-    Future {}
-    impl Future for Future {
-        type Output = Result<Box<NodeT>>;
-        fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
-            -> Poll<Result<Box<NodeT>>>;
-    }
-}
-
 type NodeT = Arc<Node<u32, u32, f32>>;
+
 /// Helper method for setting MockDML::get expectations
 fn expect_get(mock: &mut MockDML, addr: u32, node: NodeT)
 {
@@ -971,6 +962,73 @@ root:
                         ptr:
                           Addr: 33
 "#);
+}
+
+/// range_delete with a value type that needs dclone
+#[test]
+fn range_delete_dclone() {
+    let mut mock = mock_dml();
+    let txg = TxgT::from(42);
+
+    let addr = 1u32;
+    let mut ld = LeafData::default();
+    ld.items.insert(11, NeedsDcloneV(11));
+    ld.items.insert(12, NeedsDcloneV(12));
+    ld.items.insert(13, NeedsDcloneV(13));
+    let node1 = Arc::new(Node::new(NodeData::Leaf(ld)));
+
+    for v in [11, 12, 13]{
+        mock.expect_delete()
+            .with(eq(v), eq(txg))
+            .times(1)
+            .returning(|_, _| future::ok(()).boxed());
+    }
+    mock.expect_pop::<NeedsDcloneNode, NeedsDcloneNode>()
+        .once()
+        .with(eq(addr), always())
+        .return_once(move |_, _| future::ok(Box::new(node1)).boxed());
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 1
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 0
+            - key: 11
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 1
+            - key: 21
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Addr: 2
+  "#));
+    let r = tree.range_delete(11..21, txg, Credit::forge(64))
+        .now_or_never().unwrap();
+    assert!(r.is_ok());
 }
 
 /// Regression test for bug 2d045899e991a7cf977303abb565c09cf8c34b2f
