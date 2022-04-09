@@ -367,69 +367,101 @@ fn measure(name: &str, pos: &str, n: usize, verbose: bool,
 
 #[derive(Parser, Clone, Debug)]
 struct Cli {
+    /// Must be present when specifying a test case name
+    #[clap(long = "exact")]
+    exact: bool,
+    /// Ignored.  For compatibility purposes only
+    #[clap(long = "format")]
+    format: Option<String>,
+    /// Run only ignored tests
+    #[clap(long = "ignored")]
+    ignored: bool,
+    /// List all tests and benchmarks
+    #[clap(long = "list")]
+    list: bool,
+    /// Print detailed test output
     #[clap(long = "nocapture")]
-    verbose: bool
+    verbose: bool,
+    testcase: Option<String>
 }
 
-fn main() {
-    let cli = Cli::parse();
+fn cacheable_space(verbose: bool) {
+
     let mut pass = true;
 
-    if cli.verbose {
+    if verbose {
         println!("{:>8}{:>22}{:>8}{:>12}{:>12}{:>12}", "Table", "Position", "N",
                  "Actual size", "Calculated", "Error");
     }
     for n in logrange(109, 433) {
-        pass &= measure("AllocT", "Int", n, cli.verbose, alloct_int);
+        pass &= measure("AllocT", "Int", n, verbose, alloct_int);
     }
     for n in logrange(134, 535) {
-        pass &= measure("AllocT", "Leaf", n, cli.verbose, alloct_leaf);
+        pass &= measure("AllocT", "Leaf", n, verbose, alloct_leaf);
     }
     for n in logrange(98, 389) {
-        pass &= measure("RIDT", "Int", n, cli.verbose, ridt_int);
+        pass &= measure("RIDT", "Int", n, verbose, ridt_int);
     }
     for n in logrange(114, 454) {
-        pass &= measure("RIDT", "Leaf", n, cli.verbose, ridt_leaf);
+        pass &= measure("RIDT", "Leaf", n, verbose, ridt_leaf);
     }
     for n in logrange(91, 364) {
-        pass &= measure("FS", "Int", n, cli.verbose, fs_int);
+        pass &= measure("FS", "Int", n, verbose, fs_int);
     }
     for n in logrange(576, 2302) {
-        measure("FS", "Leaf (Blob Extent)", n, cli.verbose, fs_leaf_blob_extent);
+        measure("FS", "Leaf (Blob Extent)", n, verbose, fs_leaf_blob_extent);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (DirEntry)", n, cli.verbose, fs_leaf_direntry);
+        pass &= measure("FS", "Leaf (DirEntry)", n, verbose, fs_leaf_direntry);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (DirEntries)", n, cli.verbose,
+        pass &= measure("FS", "Leaf (DirEntries)", n, verbose,
             fs_leaf_direntries);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Dying Inode)", n, cli.verbose,
+        pass &= measure("FS", "Leaf (Dying Inode)", n, verbose,
             fs_leaf_dyinginode);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Blob Extattr)", n, cli.verbose,
+        pass &= measure("FS", "Leaf (Blob Extattr)", n, verbose,
             fs_leaf_extattr_blob);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inline Extattr)", n, cli.verbose,
+        pass &= measure("FS", "Leaf (Inline Extattr)", n, verbose,
             fs_leaf_extattr_inline);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Extattrs)", n, cli.verbose, fs_leaf_extattrs);
+        pass &= measure("FS", "Leaf (Extattrs)", n, verbose, fs_leaf_extattrs);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inline Extent)", n, cli.verbose,
+        pass &= measure("FS", "Leaf (Inline Extent)", n, verbose,
             fs_leaf_inline_extent);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inode)", n, cli.verbose, fs_leaf_inode);
+        pass &= measure("FS", "Leaf (Inode)", n, verbose, fs_leaf_inode);
     }
     for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Property)", n, cli.verbose, fs_leaf_property);
+        pass &= measure("FS", "Leaf (Property)", n, verbose, fs_leaf_property);
     }
     if !pass {
         panic!("Calculated size out of tolerance in at least one case");
     }
+}
+
+fn main() {
+    const TCNAME: &str = "cacheable_space::cacheable_space";
+
+    let cli = Cli::parse();
+    if cli.list {
+        if !cli.ignored{
+            println!("{}: test", TCNAME);
+        }
+        return;
+    }
+    if let Some(tc) = cli.testcase {
+        if cli.exact && tc != TCNAME || !TCNAME.contains(&tc) {
+            return;
+        }
+    }
+    cacheable_space(cli.verbose);
 }
