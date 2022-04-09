@@ -431,12 +431,7 @@ impl InlineExtAttr {
             let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
-                debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<RID>());
-                // Safe because D::Addr should always equal RID.  If you ever
-                // call this function with any other type for RID, then you're
-                // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
+                let rid_a = checked_transmute(rid);
                 let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 let bea = BlobExtAttr { namespace, name, extent };
                 ExtAttr::Blob(bea)
@@ -777,12 +772,7 @@ impl InlineExtent {
             let dbs = Arc::try_unwrap(self.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
-                debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<RID>());
-                // Safe because D::Addr should always equal RID.  If you ever
-                // call this function with any other type for RID, then you're
-                // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
+                let rid_a = checked_transmute(rid);
                 let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 FSValue::BlobExtent(be)
             });
