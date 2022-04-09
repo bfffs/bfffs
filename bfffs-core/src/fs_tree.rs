@@ -984,6 +984,7 @@ impl TypicalSize for FSValue {
 }
 
 impl Value for FSValue {
+    const NEEDS_FLUSH: bool = true;
 
     fn allocated_space(&self) -> usize {
         match self {
@@ -1025,10 +1026,6 @@ impl Value for FSValue {
             },
             _ => future::ok(self).boxed()
         }
-    }
-
-    fn needs_flush() -> bool {
-        true
     }
 }
 

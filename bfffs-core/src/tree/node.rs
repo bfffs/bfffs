@@ -102,6 +102,9 @@ impl Key for u32 {}
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     Serialize + TypicalSize + 'static
 {
+    /// Does this Value type require flushing?
+    const NEEDS_FLUSH: bool = false;
+
     /// How much allocated space does this object own, excluding the object
     /// itself?
     fn allocated_space(&self) -> usize {
@@ -120,12 +123,6 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         unreachable!()
     }
     // LCOV_EXCL_STOP
-
-    /// Does this Value type require flushing?
-    // This method will go away once generic specialization is stable
-    fn needs_flush() -> bool {
-        false
-    }
 }
 
 impl Value for RID {}
@@ -284,7 +281,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         where D: DML<Addr=A> + 'static, A: 'static
     {
         let credit = self.credit.take();
-        if V::needs_flush() {
+        if V::NEEDS_FLUSH {
             self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
