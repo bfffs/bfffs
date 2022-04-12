@@ -432,12 +432,12 @@ impl<'a> IDML {
 }
 
 /// Private helper function for several IDML methods
-fn unwrap_or_enoent(r: Option<RidtEntry>)
-    -> impl Future<Output=Result<RidtEntry>>
+fn unwrap_or_enoent(r: Result<Option<RidtEntry>>) -> Result<RidtEntry>
 {
     match r {
-        None => future::err(Error::ENOENT),
-        Some(entry) => future::ok(entry)
+        Ok(None) => Err(Error::ENOENT),
+        Ok(Some(entry)) => Ok(entry),
+        Err(e) => Err(e)
     }
 }
 
@@ -453,7 +453,7 @@ impl DML for IDML {
         let ridt2 = self.ridt.clone();
         let rid = *ridp;
         let fut = self.ridt.get(rid)
-            .and_then(unwrap_or_enoent)
+            .map(unwrap_or_enoent)
             .and_then(move |mut entry| {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
@@ -492,7 +492,7 @@ impl DML for IDML {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
             let fut = self.ridt.get(rid)
-                .and_then(unwrap_or_enoent)
+                .map(unwrap_or_enoent)
                 .and_then(move |entry| {
                     ddml2.get_direct(&entry.drp)
                 }).map_ok(move |cacheable: Box<T>| {
