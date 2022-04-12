@@ -2865,6 +2865,27 @@ root:
                    libc::ENOATTR);
     }
 
+    /// Remove a directory with a blob extended attribute
+    #[tokio::test]
+    async fn rmdir_blob_extattr() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let dirname = OsString::from("x");
+        let xname = OsString::from("foo");
+        let xvalue = vec![42u8; 4096];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.mkdir(&root, &dirname, 0o755, 0, 0).await
+        .unwrap();
+        fs.setextattr(&fd, ns, &xname, &xvalue[..]).await.unwrap();
+        fs.sync().await;
+        fs.rmdir(&root, &dirname).await.unwrap();
+
+        // Make sure the xattr is gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(fs.getextattr(&fd, ns, &xname).await.unwrap_err(),
+                   libc::ENOATTR);
+    }
+
     /// Removing a directory should update its parent's timestamps
     #[tokio::test]
     async fn rmdir_timestamps() {
@@ -3603,6 +3624,29 @@ root:
             dirent.d_name[0] == 'x' as i8
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
+    }
+
+    /// Unlink a file with blob extended attributes on disk
+    #[tokio::test]
+    async fn unlink_with_blob_extattr() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let filename = OsString::from("x");
+        let ns = ExtAttrNamespace::User;
+        let xname = OsString::from("foo");
+        let xvalue = vec![42u8; 4096];
+        let fd = fs.create(&root, &filename, 0o644, 0, 0).await.unwrap();
+        fs.setextattr(&fd, ns, &xname, &xvalue[..]).await.unwrap();
+
+        fs.sync().await;
+
+        let r = fs.unlink(&root, Some(&fd), &filename).await;
+        assert_eq!(Ok(()), r);
+
+        // Make sure the xattr is gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(fs.getextattr(&fd, ns, &xname).await.unwrap_err(),
+                   libc::ENOATTR);
     }
 
     // A very simple single record write to an empty file
