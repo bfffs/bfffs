@@ -155,7 +155,8 @@ async fn create() {
         .return_once(move |_| ds);
 
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
+    let fd = fs.create(&fs.root().handle(), &filename, 0o644, 123, 456).await
+        .unwrap();
     assert_eq!(ino, fd.ino);
 }
 
@@ -264,7 +265,8 @@ async fn create_hash_collision() {
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
 
-    let fd = fs.create(&fs.root(), &filename, 0o644, 123, 456).await.unwrap();
+    let fd = fs.create(&fs.root().handle(), &filename, 0o644, 123, 456).await
+        .unwrap();
     assert_eq!(ino, fd.ino);
 }
 
@@ -389,8 +391,8 @@ async fn deleteextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = FileData::new(Some(1), ino);
-    let r = fs.deleteextattr(&fd, namespace, &name2).await;
+    let fd = FileDataMut::new(Some(1), ino);
+    let r = fs.deleteextattr(&fd.handle(), namespace, &name2).await;
     assert_eq!(Ok(()), r);
 }
 
@@ -445,8 +447,8 @@ async fn deleteextattr_3way_collision_enoattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = FileData::new(Some(1), ino);
-    let r = fs.deleteextattr(&fd, namespace, &name2).await;
+    let fd = FileDataMut::new(Some(1), ino);
+    let r = fs.deleteextattr(&fd.handle(), namespace, &name2).await;
     assert_eq!(Err(libc::ENOATTR), r);
 }
 
@@ -460,8 +462,8 @@ async fn fsync() {
         .returning(|| future::ok(()).boxed());
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
 
-    let fd = FileData::new(Some(1), ino);
-    assert!(fs.fsync(&fd).await.is_ok());
+    let fd = FileDataMut::new(Some(1), ino);
+    assert!(fs.fsync(&fd.handle()).await.is_ok());
 }
 
 /// Reading the source returns EIO.  Don't delete the dest
@@ -499,8 +501,10 @@ async fn rename_eio() {
 
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
     let root = fs.root();
-    let fd = FileData::new_for_tests(Some(root.ino), src_ino);
-    let r = fs.rename(&root, &fd, &srcname, &root, Some(dst_ino), &dstname).await;
+    let fd = FileDataMut::new_for_tests(Some(root.ino), src_ino);
+    let r = fs.rename(&root.handle(), &fd.handle(), &srcname, &root.handle(),
+        Some(dst_ino), &dstname)
+        .await;
     assert_eq!(Err(libc::EIO), r);
 }
 
@@ -684,7 +688,7 @@ async fn rmdir_with_blob_extattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let r = fs.rmdir(&fs.root(), &filename).await;
+    let r = fs.rmdir(&fs.root().handle(), &filename).await;
     assert_eq!(Ok(()), r);
 }
 
@@ -720,7 +724,9 @@ async fn setextattr() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let r = fs.setextattr(&fs.root(), namespace, &name, value.as_bytes()).await;
+    let r = fs.setextattr(&fs.root().handle(), namespace, &name,
+        value.as_bytes())
+        .await;
     assert_eq!(Ok(()), r);
 }
 
@@ -812,7 +818,9 @@ async fn setextattr_3way_collision() {
         .once()
         .return_once(move |_| ds);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let r = fs.setextattr(&fs.root(), namespace, &name2, value2.as_bytes()).await;
+    let r = fs.setextattr(&fs.root().handle(), namespace, &name2,
+        value2.as_bytes())
+        .await;
     assert_eq!(Ok(()), r);
 }
 
@@ -993,8 +1001,8 @@ async fn unlink() {
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    let fd = FileDataMut::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root().handle(), Some(&fd.handle()), &filename).await;
     assert_eq!(Ok(()), r);
     fs.inactive(fd).await;
 }
@@ -1165,8 +1173,8 @@ async fn unlink_with_blob_extattr() {
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    let fd = FileDataMut::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root().handle(), Some(&fd.handle()), &filename).await;
     assert_eq!(Ok(()), r);
     fs.inactive(fd).await;
 }
@@ -1328,8 +1336,8 @@ async fn unlink_with_extattr_hash_collision() {
         .in_sequence(&mut seq)
         .return_once(move |_| ds1);
     let fs = Fs::new(Arc::new(db), TreeID(0)).await;
-    let fd = FileData::new(Some(parent_ino), ino);
-    let r = fs.unlink(&fs.root(), Some(&fd), &filename).await;
+    let fd = FileDataMut::new(Some(parent_ino), ino);
+    let r = fs.unlink(&fs.root().handle(), Some(&fd.handle()), &filename).await;
     assert_eq!(Ok(()), r);
     fs.inactive(fd).await;
 }

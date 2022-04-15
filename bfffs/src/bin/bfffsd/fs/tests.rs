@@ -33,7 +33,7 @@ where
     let mut mock_fs = Fs::default();
     mock_fs
         .expect_root()
-        .returning(|| FileData::new_for_tests(None, 1));
+        .returning(|| FileDataMut::new_for_tests(None, 1));
     f(&mut mock_fs);
     FuseFs::from(Arc::new(mock_fs))
 }
@@ -75,7 +75,7 @@ mod create {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .create(request, parent, name, mode.into(), FLAGS)
             .now_or_never()
@@ -112,7 +112,7 @@ mod create {
                     predicate::always(),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -129,7 +129,7 @@ mod create {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
 
         let reply = fusefs
             .create(request, parent, name, mode.into(), FLAGS)
@@ -168,7 +168,7 @@ mod create {
                     predicate::always(),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -195,7 +195,7 @@ mod create {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .create(request, parent, name, mode.into(), FLAGS)
             .now_or_never()
@@ -242,7 +242,7 @@ mod removexattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .removexattr(request, ino, packed_name)
             .now_or_never()
@@ -277,7 +277,7 @@ mod removexattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .removexattr(request, ino, packed_name)
             .now_or_never()
@@ -313,7 +313,7 @@ mod forget {
                     predicate::eq(name),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -346,7 +346,7 @@ mod forget {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .lookup(request, parent, name)
             .now_or_never()
@@ -381,7 +381,7 @@ mod fsync {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .fsync(request, ino, fh, false)
             .now_or_never()
@@ -408,7 +408,7 @@ mod fsync {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .fsync(request, ino, fh, false)
             .now_or_never()
@@ -438,7 +438,7 @@ mod getattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getattr(request, ino, None, 0)
             .now_or_never()
@@ -483,7 +483,7 @@ mod getattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getattr(request, ino, None, 0)
             .now_or_never()
@@ -534,7 +534,7 @@ mod getxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getxattr(request, ino, packed_name, wantsize)
             .now_or_never()
@@ -571,7 +571,7 @@ mod getxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getxattr(request, ino, packed_name, wantsize)
             .now_or_never()
@@ -608,7 +608,7 @@ mod getxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getxattr(request, ino, packed_name, wantsize)
             .now_or_never()
@@ -654,7 +654,7 @@ mod getxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getxattr(request, ino, packed_name, wantsize)
             .now_or_never()
@@ -694,7 +694,7 @@ mod getxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .getxattr(request, ino, packed_name, wantsize)
             .now_or_never()
@@ -735,12 +735,12 @@ mod link {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .link(request, ino, parent, name)
             .now_or_never()
@@ -784,12 +784,12 @@ mod link {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .link(request, ino, parent, name)
             .now_or_never()
@@ -851,12 +851,12 @@ mod link {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .link(request, ino, parent, name)
             .now_or_never()
@@ -901,7 +901,7 @@ mod listxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .listxattr(request, ino, wantsize)
             .now_or_never()
@@ -941,7 +941,7 @@ mod listxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .listxattr(request, ino, wantsize)
             .now_or_never()
@@ -973,7 +973,7 @@ mod listxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .listxattr(request, ino, wantsize)
             .now_or_never()
@@ -1022,7 +1022,7 @@ mod listxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .listxattr(request, ino, wantsize)
             .now_or_never()
@@ -1069,7 +1069,7 @@ mod listxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .listxattr(request, ino, wantsize)
             .now_or_never()
@@ -1121,12 +1121,12 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(None, parent));
+            .insert(parent, FileDataMut::new_for_tests(None, parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(1), ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(1), ino));
         fusefs
             .names
             .lock()
@@ -1191,7 +1191,7 @@ mod lookup {
                     predicate::eq(dot),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(Some(1), ino))
+                    Ok(FileDataMut::new_for_tests(Some(1), ino))
                 });
         });
 
@@ -1199,12 +1199,12 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(None, parent));
+            .insert(parent, FileDataMut::new_for_tests(None, parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(1), ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(1), ino));
         fusefs
             .names
             .lock()
@@ -1262,14 +1262,16 @@ mod lookup {
                 .expect_ilookup()
                 .times(1)
                 .with(predicate::eq(ino))
-                .returning(move |_| Ok(FileData::new_for_tests(Some(1), ino)));
+                .returning(move |_| {
+                    Ok(FileDataMut::new_for_tests(Some(1), ino))
+                });
         });
 
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(None, parent));
+            .insert(parent, FileDataMut::new_for_tests(None, parent));
 
         let reply = fusefs
             .lookup(request, ino, dot)
@@ -1328,7 +1330,7 @@ mod lookup {
                         name == dotdot
                 })
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(Some(1), parent))
+                    Ok(FileDataMut::new_for_tests(Some(1), parent))
                 });
         });
 
@@ -1336,12 +1338,12 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(None, parent));
+            .insert(parent, FileDataMut::new_for_tests(None, parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(parent), ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(parent), ino));
         fusefs
             .names
             .lock()
@@ -1390,7 +1392,7 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(None, parent));
+            .insert(parent, FileDataMut::new_for_tests(None, parent));
         let reply =
             fusefs.lookup(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::ENOENT.into()));
@@ -1423,7 +1425,7 @@ mod lookup {
                     predicate::eq(name0),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_lookup()
@@ -1436,7 +1438,7 @@ mod lookup {
                     predicate::eq(name1),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1464,7 +1466,7 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
 
         let reply0 = fusefs
             .lookup(request, parent, name0)
@@ -1509,7 +1511,7 @@ mod lookup {
                     predicate::eq(name),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1537,7 +1539,7 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .names
             .lock()
@@ -1582,7 +1584,7 @@ mod lookup {
                     predicate::eq(name),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1599,7 +1601,7 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .names
             .lock()
@@ -1635,7 +1637,7 @@ mod lookup {
                     predicate::eq(name),
                 )
                 .returning(move |_, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1663,7 +1665,7 @@ mod lookup {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .lookup(request, parent, name)
             .now_or_never()
@@ -1709,7 +1711,7 @@ mod lseek {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let whence = libc::SEEK_HOLE as u32;
         let reply = fusefs
             .lseek(request, ino, fh, ofs, whence)
@@ -1733,7 +1735,7 @@ mod lseek {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let whence = libc::SEEK_CUR as u32;
         let reply = fusefs
             .lseek(request, ino, fh, ofs, whence)
@@ -1780,7 +1782,7 @@ mod mkdir {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
             .now_or_never()
@@ -1819,7 +1821,7 @@ mod mkdir {
                     predicate::eq(gid),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(Some(parent), ino))
+                    Ok(FileDataMut::new_for_tests(Some(parent), ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1836,7 +1838,7 @@ mod mkdir {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
             .now_or_never()
@@ -1874,7 +1876,7 @@ mod mkdir {
                     predicate::eq(gid),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(Some(parent), ino))
+                    Ok(FileDataMut::new_for_tests(Some(parent), ino))
                 });
             mock_fs.expect_getattr().times(1).return_const(Ok(GetAttr {
                 ino,
@@ -1898,7 +1900,7 @@ mod mkdir {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mkdir(request, parent, name, (libc::S_IFDIR | mode).into(), 0)
             .now_or_never()
@@ -1953,7 +1955,7 @@ mod mknod {
                     predicate::eq(rdev),
                 )
                 .returning(move |_, _, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -1981,7 +1983,7 @@ mod mknod {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mknod(request, parent, name, (libc::S_IFBLK | mode).into(), rdev)
             .now_or_never()
@@ -2031,7 +2033,7 @@ mod mknod {
                     predicate::eq(rdev),
                 )
                 .returning(move |_, _, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -2059,7 +2061,7 @@ mod mknod {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mknod(request, parent, name, (libc::S_IFCHR | mode).into(), rdev)
             .now_or_never()
@@ -2110,7 +2112,7 @@ mod mknod {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mknod(request, parent, name, (libc::S_IFIFO | mode).into(), 0)
             .now_or_never()
@@ -2150,7 +2152,7 @@ mod mknod {
                     predicate::eq(gid),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -2178,7 +2180,7 @@ mod mknod {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mknod(request, parent, name, (libc::S_IFIFO | mode).into(), 0)
             .now_or_never()
@@ -2225,7 +2227,7 @@ mod mknod {
                     predicate::eq(gid),
                 )
                 .returning(move |_, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -2253,7 +2255,7 @@ mod mknod {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .mknod(request, parent, name, (libc::S_IFSOCK | mode).into(), 0)
             .now_or_never()
@@ -2301,7 +2303,7 @@ mod read {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .read(request, ino, fh, ofs, len)
             .now_or_never()
@@ -2337,7 +2339,7 @@ mod read {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .read(request, ino, fh, ofs, len)
             .now_or_never()
@@ -2377,7 +2379,7 @@ mod read {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .read(request, ino, fh, ofs, len)
             .now_or_never()
@@ -2420,7 +2422,7 @@ mod read {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .read(request, ino, fh, ofs, len)
             .now_or_never()
@@ -2570,7 +2572,7 @@ mod readdir {
 
         fusefs.files.lock().unwrap().insert(
             dot_ino.into(),
-            FileData::new_for_tests(Some(1), dot_ino.into()),
+            FileDataMut::new_for_tests(Some(1), dot_ino.into()),
         );
         #[rustfmt::skip]
         let reply = fusefs
@@ -2633,7 +2635,7 @@ mod readdir {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(1), ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(1), ino));
         #[rustfmt::skip]
         let reply = fusefs
             .readdir(request, ino, fh, ofs)
@@ -2703,11 +2705,10 @@ mod readdir {
                 });
         });
 
-        fusefs
-            .files
-            .lock()
-            .unwrap()
-            .insert(ino.into(), FileData::new_for_tests(Some(1), ino.into()));
+        fusefs.files.lock().unwrap().insert(
+            ino.into(),
+            FileDataMut::new_for_tests(Some(1), ino.into()),
+        );
         #[rustfmt::skip]
         let reply = fusefs
             .readdir(request, ino.into(), fh, ofs)
@@ -2785,11 +2786,10 @@ mod readdir {
                 });
         });
 
-        fusefs
-            .files
-            .lock()
-            .unwrap()
-            .insert(ino.into(), FileData::new_for_tests(Some(1), ino.into()));
+        fusefs.files.lock().unwrap().insert(
+            ino.into(),
+            FileDataMut::new_for_tests(Some(1), ino.into()),
+        );
         let mut entries = fusefs
             .readdir(request, ino.into(), fh, ofs)
             .now_or_never()
@@ -2826,7 +2826,7 @@ mod readlink {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .readlink(request, ino)
             .now_or_never()
@@ -2855,7 +2855,7 @@ mod readlink {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .readlink(request, ino)
             .now_or_never()
@@ -2902,12 +2902,12 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(newparent, FileData::new_for_tests(Some(1), newparent));
+            .insert(newparent, FileDataMut::new_for_tests(Some(1), newparent));
         fusefs
             .names
             .lock()
@@ -2917,7 +2917,7 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(parent), ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(parent), ino));
         let reply = fusefs
             .rename(request, parent, name, newparent, newname)
             .now_or_never()
@@ -2965,12 +2965,12 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(newparent, FileData::new_for_tests(None, newparent));
+            .insert(newparent, FileDataMut::new_for_tests(None, newparent));
         fusefs
             .names
             .lock()
@@ -2980,12 +2980,11 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(Some(parent), ino));
-        fusefs
-            .files
-            .lock()
-            .unwrap()
-            .insert(dst_ino, FileData::new_for_tests(Some(newparent), dst_ino));
+            .insert(ino, FileDataMut::new_for_tests(Some(parent), ino));
+        fusefs.files.lock().unwrap().insert(
+            dst_ino,
+            FileDataMut::new_for_tests(Some(newparent), dst_ino),
+        );
         fusefs
             .names
             .lock()
@@ -3015,12 +3014,12 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(child, FileData::new_for_tests(Some(parent), child));
+            .insert(child, FileDataMut::new_for_tests(Some(parent), child));
         fusefs
             .names
             .lock()
@@ -3051,21 +3050,19 @@ mod rename {
 
         let fusefs = make_mock_fs(|_| ());
 
+        fusefs.files.lock().unwrap().insert(
+            grandparent,
+            FileDataMut::new_for_tests(Some(1), grandparent),
+        );
+        fusefs.files.lock().unwrap().insert(
+            parent,
+            FileDataMut::new_for_tests(Some(grandparent), parent),
+        );
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(grandparent, FileData::new_for_tests(Some(1), grandparent));
-        fusefs
-            .files
-            .lock()
-            .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(grandparent), parent));
-        fusefs
-            .files
-            .lock()
-            .unwrap()
-            .insert(child, FileData::new_for_tests(Some(parent), child));
+            .insert(child, FileDataMut::new_for_tests(Some(parent), child));
         fusefs
             .names
             .lock()
@@ -3124,12 +3121,12 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         fusefs
             .files
             .lock()
             .unwrap()
-            .insert(newparent, FileData::new_for_tests(Some(1), newparent));
+            .insert(newparent, FileDataMut::new_for_tests(Some(1), newparent));
         fusefs
             .names
             .lock()
@@ -3139,7 +3136,7 @@ mod rename {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .rename(request, parent, name, newparent, newname)
             .now_or_never()
@@ -3180,7 +3177,7 @@ mod rmdir {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs.rmdir(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::ENOTDIR.into()));
     }
@@ -3209,7 +3206,7 @@ mod rmdir {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs.rmdir(request, parent, name).now_or_never().unwrap();
         assert!(reply.is_ok());
         assert_not_cached(&fusefs, parent, name, None);
@@ -3253,7 +3250,7 @@ mod setattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .setattr(request, ino, None, attr)
             .now_or_never()
@@ -3320,7 +3317,7 @@ mod setattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .setattr(request, ino, None, attr)
             .now_or_never()
@@ -3365,7 +3362,7 @@ mod setxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .setxattr(request, ino, packed_name, v, 0, 0)
             .now_or_never()
@@ -3398,7 +3395,7 @@ mod setxattr {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .setxattr(request, ino, packed_name, v, 0, 0)
             .now_or_never()
@@ -3501,7 +3498,7 @@ mod symlink {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .symlink(request, parent, name, name)
             .now_or_never()
@@ -3540,7 +3537,7 @@ mod symlink {
                     predicate::eq(name),
                 )
                 .returning(move |_, _, _, _, _, _| {
-                    Ok(FileData::new_for_tests(None, ino))
+                    Ok(FileDataMut::new_for_tests(None, ino))
                 });
             mock_fs
                 .expect_getattr()
@@ -3567,7 +3564,7 @@ mod symlink {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply = fusefs
             .symlink(request, parent, name, name)
             .now_or_never()
@@ -3611,7 +3608,7 @@ mod unlink {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply =
             fusefs.unlink(request, parent, name).now_or_never().unwrap();
         assert_eq!(reply, Err(libc::EISDIR.into()));
@@ -3642,7 +3639,7 @@ mod unlink {
             .files
             .lock()
             .unwrap()
-            .insert(parent, FileData::new_for_tests(Some(1), parent));
+            .insert(parent, FileDataMut::new_for_tests(Some(1), parent));
         let reply =
             fusefs.unlink(request, parent, name).now_or_never().unwrap();
         assert!(reply.is_ok());
@@ -3679,7 +3676,7 @@ mod write {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .write(request, ino, fh, ofs, DATA, 0)
             .now_or_never()
@@ -3714,7 +3711,7 @@ mod write {
             .files
             .lock()
             .unwrap()
-            .insert(ino, FileData::new_for_tests(None, ino));
+            .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
             .write(request, ino, fh, ofs, DATA, 0)
             .now_or_never()

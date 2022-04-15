@@ -326,8 +326,8 @@ impl<'a> From<&'a [u8]> for Uio {
 /// Information about an in-use file
 ///
 /// Basically, this is the stuff that would go in a vnode's v_data field
-#[derive(Clone, Copy, Debug)]
-pub struct FileData {
+#[derive(Debug)]
+pub struct FileDataMut {
     ino: u64,
     pub lookup_count: u64,
     /// This file's parent's inode number.  Only valid for directories that
@@ -335,20 +335,34 @@ pub struct FileData {
     parent: Option<u64>
 }
 
-impl FileData {
+impl FileDataMut {
+    /// Get an immutable handle.
+    ///
+    /// Notably, this does not maintain any reference to the original
+    /// `FileDataMut`, either at compile time or runtime.  The caller must
+    /// ensure that it does not outlive its parent `FileDataMut`.
+    pub fn handle(&self) -> FileData {
+        assert!(self.lookup_count > 0,
+                "Fs::unlink depends upon this assumption");
+        FileData {
+            ino: self.ino,
+            parent: self.parent
+        }
+    }
+
     pub fn ino(&self) -> u64
     {
         self.ino
     }
 
-    /// Create a new `FileData`
-    fn new(parent: Option<u64>, ino: u64) -> FileData {
-        FileData{ino, lookup_count: 1, parent}
+    /// Create a new `FileDataMut`
+    fn new(parent: Option<u64>, ino: u64) -> Self {
+        Self{ino, lookup_count: 1, parent}
     }
 
-    /// Create a new `FileData` for use in tests outside of this module
+    /// Create a new `FileDataMut` for use in tests outside of this module
     pub fn new_for_tests(parent: Option<u64>, ino: u64) -> Self {
-        FileData::new(parent, ino)
+        Self::new(parent, ino)
     }
 
     pub fn parent(&self) -> Option<u64> {
@@ -363,6 +377,27 @@ impl FileData {
         }
     }
 }
+
+/// An immutable handle to a [`FileDataMut`].
+#[derive(Clone, Copy, Debug)]
+pub struct FileData{
+    ino: u64,
+    /// This file's parent's inode number.  Only valid for directories that
+    /// aren't the root directory.
+    parent: Option<u64>
+}
+
+impl FileData {
+    pub fn ino(&self) -> u64
+    {
+        self.ino
+    }
+
+    pub fn parent(&self) -> Option<u64> {
+        self.parent
+    }
+}
+
 
 /// Generic Filesystem layer.
 ///
@@ -577,7 +612,7 @@ impl Fs {
     }
 
     fn do_create<'a>(&'a self, args: CreateArgs<'a>) ->
-        impl Future<Output = std::result::Result<FileData, i32>>
+        impl Future<Output = std::result::Result<FileDataMut, i32>>
     {
         let ino = self.next_object();
         let inode_key = FSKey::new(ino, ObjKey::Inode);
@@ -634,7 +669,7 @@ impl Fs {
             "Create of an existing file.  The VFS should prevent this");
             assert!(inode_r.is_none(),
             "Inode double-create detected, ino={}", ino);
-            Ok(FileData::new(fd_parent, ino))
+            Ok(FileDataMut::new(fd_parent, ino))
         }).map_err(Error::into)
     }
 
@@ -992,7 +1027,7 @@ impl Fs {
     /// Unlink a file whose inode number is known and whose directory entry is
     /// already deleted.
     fn do_unlink(dataset: Arc<ReadWriteFilesystem>,
-                 lookup_count: u64,
+                 active: bool,
                  ino: u64)
         -> impl Future<Output=Result<()>> + Send
     {
@@ -1014,7 +1049,7 @@ impl Fs {
             let nlink = iv.nlink;
             iv.ctime = Timespec::now();
             // 2b) Update Inode, if we aren't immediately deleting it
-            if nlink > 0 || lookup_count > 0 {
+            if nlink > 0 || active {
                 let fut = if nlink == 0 {
                     // 2c) Record imminent death of inode
                     let dikey = FSKey::new(0, ObjKey::dying_inode(ino));
@@ -1108,7 +1143,7 @@ impl Fs {
     }
 
     pub async fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> std::result::Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileDataMut, i32>
     {
         let recsize = self.record_size.load(Ordering::Relaxed);
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -1141,7 +1176,7 @@ impl Fs {
     /// Tell the file system that the given file is no longer needed by the
     /// client.  Its resources may be freed.
     // Fs::inactive consumes fd because the client should not longer need it.
-    pub async fn inactive(&self, fd: FileData) {
+    pub async fn inactive(&self, fd: FileDataMut) {
         let ino = fd.ino();
 
         self.db.fswrite(self.tree, 0, 1, 1, 0, move |dataset| {
@@ -1380,7 +1415,7 @@ impl Fs {
     /// In general such an interface is racy, because the file system might
     /// delete the file in question, then recreate a different file with the
     /// same inode number.  But BFFFS never reuses inode numbers.
-    pub async fn ilookup(&self, ino: u64) -> std::result::Result<FileData, i32>
+    pub async fn ilookup(&self, ino: u64) -> std::result::Result<FileDataMut, i32>
     {
         let name = OsString::from(r"..");
         let objkey = ObjKey::dir_entry(&name);
@@ -1394,12 +1429,12 @@ impl Fs {
                 match r {
                     (Ok(_), Ok(de)) => {
                         // The file is a directory
-                        let fd = FileData::new(Some(de.ino), ino);
+                        let fd = FileDataMut::new(Some(de.ino), ino);
                         Ok(fd)
                     },
                     (Ok(_), Err(Error::ENOENT)) => {
                         // It's a regular file
-                        let fd = FileData::new(None, ino);
+                        let fd = FileDataMut::new(None, ino);
                         Ok(fd)
                     },
                     (Ok(_), Err(e)) => Err(e),
@@ -1493,10 +1528,11 @@ impl Fs {
     /// Lookup a file by its file name.
     ///
     /// NB: The client is responsible for managing the lifetime of the returned
-    /// `FileData` object.  In particular, the client must ensure that there are
-    /// never two `FileData`s for the same directory entry at the same time.
+    /// `FileDataMut` object.  In particular, the client must ensure that there
+    /// are never two `FileDataMut`s for the same directory entry at the same
+    /// time.
     pub async fn lookup(&self, grandparent: Option<&FileData>, parent: &FileData,
-        name: &OsStr) -> std::result::Result<FileData, i32>
+        name: &OsStr) -> std::result::Result<FileDataMut, i32>
     {
         let dot = name == OsStr::from_bytes(b".");
         let dotdot = name == OsStr::from_bytes(b"..");
@@ -1522,7 +1558,7 @@ impl Fs {
                         } else {
                             None
                         };
-                        let fd = FileData::new(fd_parent, de.ino);
+                        let fd = FileDataMut::new(fd_parent, de.ino);
                         Ok(fd)
                     },
                     Err(e) => Err(e)
@@ -1673,7 +1709,7 @@ impl Fs {
     }
 
     pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                 gid: u32) -> std::result::Result<FileData, i32>
+                 gid: u32) -> std::result::Result<FileDataMut, i32>
     {
         let nlink = 2;  // One for the parent dir, and one for "."
 
@@ -1737,7 +1773,7 @@ impl Fs {
 
     /// Make a block device
     pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> std::result::Result<FileData, i32>
+                   gid: u32, rdev: u32) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Block(rdev));
@@ -1746,7 +1782,7 @@ impl Fs {
 
     /// Make a character device
     pub async fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> std::result::Result<FileData, i32>
+                  gid: u32, rdev: u32) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Char(rdev));
@@ -1754,7 +1790,7 @@ impl Fs {
     }
 
     pub async fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> std::result::Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Fifo);
@@ -1762,7 +1798,7 @@ impl Fs {
     }
 
     pub async fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32) -> std::result::Result<FileData, i32>
+                  gid: u32) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Socket);
@@ -2207,7 +2243,7 @@ impl Fs {
                                                );
                         fut.boxed()
                     } else {
-                        let fut = Fs::do_unlink(ds.clone(), 0, v)
+                        let fut = Fs::do_unlink(ds.clone(), false, v)
                         .map_ok(drop);
                         fut.boxed()
                     }
@@ -2275,8 +2311,8 @@ impl Fs {
     }
 
     /// Lookup the root directory
-    pub fn root(&self) -> FileData {
-        FileData{ ino: 1 , lookup_count: 1, parent: None}
+    pub fn root(&self) -> FileDataMut {
+        FileDataMut{ ino: 1 , lookup_count: 1, parent: None}
     }
 
     pub async fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> std::result::Result<(), i32> {
@@ -2393,7 +2429,7 @@ impl Fs {
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
     pub async fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, link: &OsStr) -> std::result::Result<FileData, i32>
+                   gid: u32, link: &OsStr) -> std::result::Result<FileDataMut, i32>
     {
         let file_type = FileType::Link(link.to_os_string());
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
@@ -2422,7 +2458,7 @@ impl Fs {
         // 2a) Unlink the Inode
         // 2b) Update parent's mtime and ctime
         let ino = fd.map(|fd| fd.ino);
-        let lookup_count = fd.map_or(0, |fd_| fd_.lookup_count);
+        let lookup_count = fd.is_some();
         let parent_ino = parent_fd.ino;
         let owned_name = name.to_os_string();
         let dekey = ObjKey::dir_entry(&owned_name);
