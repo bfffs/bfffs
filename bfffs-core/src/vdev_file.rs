@@ -414,8 +414,7 @@ impl VdevFile {
             f.read_at(&mut rbuf[..], offset).unwrap().await
         };
         match r {
-            Ok(aio_result) => {
-                drop(aio_result);   // release reference on dbs
+            Ok(_aio_result) => {
                 match LabelReader::new(rbuf) {
                     Ok(lr) => Ok((lr, f)),
                     Err(e) => Err((e, f))
