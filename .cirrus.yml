@@ -16,9 +16,7 @@ task:
     # Use bleeding edge features: Rust nightly and FreeBSD fspacectl
     - name: cargo test (nightly)
       env:
-        # Pin nightly compiler to workaround
-        # https://github.com/rust-lang/rust/issues/93209
-        VERSION: nightly-2022-01-20
+        VERSION: nightly
         CARGO_ARGS: --all-features
       freebsd_instance:
         image_family: freebsd-14-0-snap
@@ -57,9 +55,7 @@ task:
 lint_task:
   name: lint
   env:
-    # Pin nightly compiler to workaround
-    # https://github.com/rust-lang/rust/issues/93209
-    VERSION: nightly-2022-01-20
+    VERSION: nightly
     CARGO_ARGS: --all-features
   freebsd_instance:
     image: freebsd-12-3-release-amd64
