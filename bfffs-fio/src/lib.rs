@@ -17,7 +17,7 @@ use std::{
 
 use bfffs_core::{
     device_manager::DevManager,
-    fs::{FileData, Fs},
+    fs::{FileDataMut, Fs},
     IoVec,
 };
 use futures::{
@@ -173,8 +173,8 @@ lazy_static! {
             .unwrap()
     );
     static ref FS: RwLock<Option<Arc<Fs>>> = RwLock::default();
-    static ref ROOT: RwLock<Option<FileData>> = RwLock::default();
-    static ref FILES: RwLock<HashMap<libc::c_int, FileData>> =
+    static ref ROOT: RwLock<Option<FileDataMut>> = RwLock::default();
+    static ref FILES: RwLock<HashMap<libc::c_int, FileDataMut>> =
         RwLock::default();
 }
 
@@ -365,11 +365,11 @@ pub unsafe extern "C" fn fio_bfffs_open(
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let root_opt = ROOT.read().unwrap();
-    let root = root_opt.as_ref().unwrap();
+    let root = root_opt.as_ref().unwrap().handle();
     rt.block_on(async {
         let r = fs
-            .lookup(None, root, file_name)
-            .or_else(|_| fs.create(root, file_name, 0o600, 0, 0))
+            .lookup(None, &root, file_name)
+            .or_else(|_| fs.create(&root, file_name, 0o600, 0, 0))
             .await;
         match r {
             Ok(fd) => {
@@ -410,7 +410,7 @@ pub unsafe extern "C" fn fio_bfffs_queue(
             (*io_u).xfer_buflen as usize,
         );
         let filedesc = (*(*io_u).file).fd;
-        let fd = *files.get(&filedesc).unwrap();
+        let fd = files.get(&filedesc).unwrap().handle();
         ((*io_u).ddir, fd, (*io_u).offset, data)
     };
 

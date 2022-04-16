@@ -67,23 +67,25 @@ async fn sleep_sync_sync(#[case] devsize: u64, #[case] zone_size: u64) {
 async fn clean_zone(#[case] devsize: u64, #[case] zone_size: u64) {
     let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
+    let rooth = root.handle();
     let small_filename = OsString::from("small");
-    let small_fd = fs.create(&root, &small_filename, 0o644, 0, 0).await
+    let small_fd = fs.create(&rooth, &small_filename, 0o644, 0, 0).await
         .unwrap();
     let buf = vec![42u8; 4096];
-    fs.write(&small_fd, 0, &buf[..], 0).await
+    fs.write(&small_fd.handle(), 0, &buf[..], 0).await
         .unwrap();
 
     let big_filename = OsString::from("big");
-    let big_fd = fs.create(&root, &big_filename, 0o644, 0, 0).await
+    let big_fd = fs.create(&rooth, &big_filename, 0o644, 0, 0).await
         .unwrap();
+    let big_fdh = big_fd.handle();
     for i in 0..18 {
-        fs.write(&big_fd, i * 4096, &buf[..], 0).await
+        fs.write(&big_fdh, i * 4096, &buf[..], 0).await
             .unwrap();
     }
     fs.sync().await;
 
-    fs.unlink(&root, Some(&big_fd), &big_filename).await.unwrap();
+    fs.unlink(&rooth, Some(&big_fdh), &big_filename).await.unwrap();
     fs.sync().await;
 
     db.clean().await.unwrap();
@@ -97,14 +99,15 @@ async fn clean_zone(#[case] devsize: u64, #[case] zone_size: u64) {
 async fn clean_zone_leak(#[case] devsize: u64, #[case] zone_size: u64) {
     let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
+    let rooth = root.handle();
     for i in 0..16384 {
         let fname = format!("f.{}", i);
-        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
+        fs.mkdir(&rooth, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
     fs.sync().await;
     for i in 0..8000 {
         let fname = format!("f.{}", i);
-        fs.rmdir(&root, &OsString::from(fname)).await.unwrap();
+        fs.rmdir(&rooth, &OsString::from(fname)).await.unwrap();
     }
     fs.sync().await;
     let mut statvfs = fs.statvfs().await.unwrap();
@@ -133,14 +136,15 @@ async fn clean_zone_leak(#[case] devsize: u64, #[case] zone_size: u64) {
 async fn get_mut(#[case] devsize: u64, #[case] zone_size: u64) {
     let (db, fs) = harness(devsize, zone_size).await;
     let root = fs.root();
+    let rooth = root.handle();
     for i in 0..16384 {
         let fname = format!("f.{}", i);
-        fs.mkdir(&root, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
+        fs.mkdir(&rooth, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
     fs.sync().await;
     for i in 0..8192 {
         let fname = format!("f.{}", 2 * i);
-        fs.rmdir(&root, &OsString::from(fname)).await.unwrap();
+        fs.rmdir(&rooth, &OsString::from(fname)).await.unwrap();
     }
     fs.sync().await;
     let mut statvfs = fs.statvfs().await.unwrap();
