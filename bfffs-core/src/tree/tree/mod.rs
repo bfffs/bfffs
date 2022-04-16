@@ -1958,7 +1958,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         if height == 0 {
             debug_assert!(guard.is_leaf());
-            if V::NEEDS_DCLONE {
+            if V::NEEDS_FLUSH {
                 guard.as_leaf_mut()
                     .range_delete(dml.as_ref(), txg, ..)
                     .map_ok(move |credit| {
@@ -1977,7 +1977,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 match elem.ptr {
                     TreePtr::Addr(addr) => {
                         // Delete on-disk leaves
-                        if V::NEEDS_DCLONE {
+                        if V::NEEDS_FLUSH {
                             dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>
                                 (&addr, txg)
                             .and_then(move |anode| {
@@ -1999,7 +1999,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     TreePtr::Mem(node) => {
                         let child_guard = node.0.try_unwrap().unwrap();
                         let mut leaf = child_guard.into_leaf();
-                        if V::NEEDS_DCLONE {
+                        if V::NEEDS_FLUSH {
                             // Must recurse into the leaves.
                             leaf.range_delete(dml.as_ref(), txg, ..).boxed()
                         } else {

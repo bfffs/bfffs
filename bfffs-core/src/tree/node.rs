@@ -102,9 +102,6 @@ impl Key for u32 {}
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     Serialize + TypicalSize + 'static
 {
-    /// Does this Value type require dclone/ddrop ?
-    const NEEDS_DCLONE: bool = false;
-
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
 
@@ -122,7 +119,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // should never be called since NEEDS_FLUSH is false.  Ideally, this
         // entire function should go away once generic specialization is stable
         // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
@@ -133,7 +130,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // should never be called since NEEDS_FLUSH is false.  Ideally, this
         // entire function should go away once generic specialization is stable
         // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
@@ -415,7 +412,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         for k in keys.into_iter() {
             let v = self.items.remove(k.borrow()).unwrap();
             allocated_space += v.allocated_space();
-            if V::NEEDS_DCLONE {
+            if V::NEEDS_FLUSH {
                 fut.push(v.ddrop::<D>(dml, txg));
             }
         }

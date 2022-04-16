@@ -974,7 +974,6 @@ impl TypicalSize for FSValue {
 }
 
 impl Value for FSValue {
-    const NEEDS_DCLONE: bool = true;
     const NEEDS_FLUSH: bool = true;
 
     fn allocated_space(&self) -> usize {

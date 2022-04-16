@@ -33,7 +33,7 @@ impl TypicalSize for NeedsDcloneV {
 }
 
 impl Value for NeedsDcloneV {
-    const NEEDS_DCLONE: bool = true;
+    const NEEDS_FLUSH: bool = true;
 
     fn ddrop<D>(&self, dml: &D, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
