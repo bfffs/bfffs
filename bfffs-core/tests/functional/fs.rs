@@ -2865,6 +2865,29 @@ root:
                    libc::ENOATTR);
     }
 
+    /// Remove a directory with a blob extended attribute
+    #[tokio::test]
+    async fn rmdir_blob_extattr() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let dirname = OsString::from("x");
+        let xname = OsString::from("foo");
+        let xvalue = vec![42u8; 4096];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.mkdir(&rooth, &dirname, 0o755, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &xname, &xvalue[..]).await.unwrap();
+        fs.sync().await;
+        fs.rmdir(&rooth, &dirname).await.unwrap();
+
+        // Make sure the xattr is gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(fs.getextattr(&fdh, ns, &xname).await.unwrap_err(),
+                   libc::ENOATTR);
+    }
+
     /// Removing a directory should update its parent's timestamps
     #[tokio::test]
     async fn rmdir_timestamps() {
@@ -3568,6 +3591,7 @@ root:
     /// Unlink a file with blobs on disk
     #[tokio::test]
     async fn unlink_with_blobs() {
+        const NBLOCKS: usize = 1024;
         let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let rooth = root.handle();
@@ -3576,11 +3600,13 @@ root:
         let fdh = fd.handle();
         #[cfg(debug_assertions)] let ino = fd.ino();
         let buf = vec![42u8; 4096];
-        for i in 0..1024 {
-            assert_eq!(Ok(4096), fs.write(&fdh, 4096 * i, &buf[..], 0).await);
+        for i in 0..NBLOCKS {
+            assert_eq!(Ok(4096), fs.write(&fdh, 4096 * i as u64, &buf[..], 0)
+                       .await);
         }
 
         fs.sync().await;
+        let stat1 = fs.statvfs().await.unwrap();
 
         let r = fs.unlink(&rooth, Some(&fdh), &filename).await;
         assert_eq!(Ok(()), r);
@@ -3603,6 +3629,73 @@ root:
             dirent.d_name[0] == 'x' as i8
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
+
+        // The blobs' storage should have been freed
+        let stat2 = fs.statvfs().await.unwrap();
+        let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
+        let expected = NBLOCKS * buf.len();
+        assert!(9 * expected / 10 < freed_bytes &&
+                freed_bytes < 11 * expected / 10);
+    }
+
+    /// Unlink a file with blob extended attributes on disk
+    #[tokio::test]
+    async fn unlink_with_blob_extattr() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let ns = ExtAttrNamespace::User;
+        let xname = OsString::from("foo");
+        let xvalue = vec![42u8; 4096];
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &xname, &xvalue[..]).await.unwrap();
+
+        fs.sync().await;
+
+        let r = fs.unlink(&rooth, Some(&fdh), &filename).await;
+        assert_eq!(Ok(()), r);
+        fs.inactive(fd).await;
+
+        // Make sure the xattr is gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(fs.getextattr(&fdh, ns, &xname).await.unwrap_err(),
+                   libc::ENOATTR);
+    }
+
+    /// Unlink a file with multiple hash-colliding blob extended attributess on
+    /// disk.
+    #[tokio::test]
+    async fn unlink_with_blob_extattr_collision() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let ns0 = ExtAttrNamespace::User;
+        let ns1 = ExtAttrNamespace::System;
+        let name0 = OsString::from("BWCdLQkApB");
+        let name1 = OsString::from("D6tLLI4mys");
+        assert_extattrs_collide(ns0, &name0, ns1, &name1);
+        let value0 = [1u8; 4096];
+        let value1 = [2u8; 4096];
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+
+        fs.setextattr(&fdh, ns0, &name0, &value0[..]).await.unwrap();
+        fs.setextattr(&fdh, ns1, &name1, &value1[..]).await.unwrap();
+        fs.sync().await;
+
+        let r = fs.unlink(&rooth, Some(&fdh), &filename).await;
+        assert_eq!(Ok(()), r);
+        fs.inactive(fd).await;
+
+        // Make sure the xattrs are gone.  As I read things, POSIX allows us to
+        // return either ENOATTR or ENOENT in this case.
+        assert_eq!(fs.getextattr(&fdh, ns0, &name0).await.unwrap_err(),
+                   libc::ENOATTR);
+        assert_eq!(fs.getextattr(&fdh, ns1, &name1).await.unwrap_err(),
+                   libc::ENOATTR);
     }
 
     // A very simple single record write to an empty file

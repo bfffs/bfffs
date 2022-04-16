@@ -14,7 +14,7 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::FuturesOrdered
+    stream::{FuturesOrdered, FuturesUnordered}
 };
 use futures_locks::*;
 use serde::{
@@ -102,6 +102,9 @@ impl Key for u32 {}
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     Serialize + TypicalSize + 'static
 {
+    /// Does this Value type require dclone/ddrop ?
+    const NEEDS_DCLONE: bool = false;
+
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
 
@@ -109,6 +112,31 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     /// itself?
     fn allocated_space(&self) -> usize {
         0
+    }
+
+    /// Clone this Value on disk.
+    ///
+    /// `Clone::clone` merely clones the value in RAM.  This method clones it on
+    /// disk.  That is, it adds a reference to the on-disk structure.
+    fn dclone<D>(&self, _dml: &D, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // entire function should go away once generic specialization is stable
+        // https://github.com/rust-lang/rust/issues/31844
+        unreachable!()
+    }
+
+    /// Drop a reference to the on-disk data.
+    fn ddrop<D>(&self, _dml: &D, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // entire function should go away once generic specialization is stable
+        // https://github.com/rust-lang/rust/issues/31844
+        unreachable!()
     }
 
     /// Prepare this `Value` to be written to disk
@@ -365,29 +393,50 @@ impl<K: Key, V: Value> LeafData<K, V> {
         }
     }
 
-    /// Delete all keys within the given range, possibly leaving an empty
-    /// LeafNode.
-    pub fn range_delete<R, T>(&mut self, range: R) -> Credit
-        where K: Borrow<T>,
+    /// Like [`range_delete`], but for nodes that may be dirty yet unaccredited.
+    pub fn range_delete_unaccredited<D, R, T>(
+        &mut self,
+        dml: &D,
+        txg: TxgT,
+        range: R) -> impl Future<Output=Result<Credit>> + Send
+        where D: DML + 'static,
+              K: Borrow<T>,
               R: RangeBounds<T>,
               T: Ord + Clone
     {
-        self.assert_accredited();
         // TODO: use BTreeMap::drain_filter, when that feature stabilizes.
         // https://github.com/rust-lang/rust/issues/70530
         let keys = self.items.range(range)
             .map(|(k, _)| *k)
             .collect::<Vec<K>>();
         let l = keys.len();
-        let allocated_space: usize = keys.into_iter()
-            .map(|k| {
-                let v = self.items.remove(k.borrow()).unwrap();
-                v.allocated_space()
-            }).sum();
+        let fut = FuturesUnordered::new();
+        let mut allocated_space = 0;
+        for k in keys.into_iter() {
+            let v = self.items.remove(k.borrow()).unwrap();
+            allocated_space += v.allocated_space();
+            if V::NEEDS_DCLONE {
+                fut.push(v.ddrop::<D>(dml, txg));
+            }
+        }
         let kvs = mem::size_of::<(K, V)>();
         let credit = self.credit.split(allocated_space + l * kvs);
         self.assert_accredited();
-        credit
+        fut.try_fold((), |_, _| future::ok(()))
+            .map_ok(move |_| credit)
+    }
+
+    /// Delete all keys within the given range, possibly leaving an empty
+    /// LeafNode.
+    pub fn range_delete<D, R, T>(&mut self, dml: &D, txg: TxgT, range: R) ->
+        impl Future<Output=Result<Credit>> + Send
+        where D: DML + 'static,
+              K: Borrow<T>,
+              R: RangeBounds<T>,
+              T: Ord + Clone
+    {
+        self.assert_accredited();
+        self.range_delete_unaccredited(dml, txg, range)
     }
 
     pub fn remove<Q>(&mut self, k: &Q) -> (Option<V>, Credit)

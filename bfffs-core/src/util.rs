@@ -5,7 +5,9 @@ use crate::types::*;
 use divbuf::DivBufShared;
 use lazy_static::lazy_static;
 use std::{
+    any::TypeId,
     hash::Hasher,
+    mem,
     ops::{Add, Bound, Div, RangeBounds, Sub},
 };
 
@@ -25,6 +27,18 @@ lazy_static! {
     /// manipulating sglists.
     pub static ref ZERO_REGION: DivBufShared =
         DivBufShared::from(vec![0u8; ZERO_REGION_LEN]);
+}
+
+/// Transmute one type into another, if they're really the same type.
+///
+/// Useful for implementing generic functions where two different types should
+/// be identical in every valid instantiation, but this can't be checked at
+/// compile-time.
+pub(crate) fn checked_transmute<T: 'static, Q: Copy + 'static>(t: T) -> Q {
+    debug_assert_eq!(mem::size_of::<T>(), mem::size_of::<Q>());
+    debug_assert_eq!(TypeId::of::<T>(), TypeId::of::<Q>());
+    // Safe because we checked type id
+    unsafe{ *(&t as *const T as *const Q) }
 }
 
 /// Checksum an `IoVec`

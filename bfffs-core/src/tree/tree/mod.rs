@@ -1560,14 +1560,19 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
         if height == 0 {
             debug_assert!(guard.is_leaf());
-            let deleted_credit = guard.as_leaf_mut().range_delete(range);
-            // The caller should've provided sufficient credit for the entire
-            // operation, so we can repay this credit rather than extend it.
-            // Repaying might help catch insufficient credit bugs in the caller.
-            dml.repay(deleted_credit);
-            let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
-            let danger = guard.underflow(&limits);
-            return future::ok((map, danger, guard.len(), credit)).boxed()
+            let fut = guard.as_leaf_mut()
+            .range_delete(dml.as_ref(), txg, range)
+            .map_ok(move |deleted_credit| {
+                // The caller should've provided sufficient credit for the
+                // entire operation, so we can repay this credit rather than
+                // extend it.  Repaying might help catch insufficient credit
+                // bugs in the caller.
+                dml.repay(deleted_credit);
+                let map = HashSet::<usize>::with_capacity(HASHSET_CAPACITY);
+                let danger = guard.underflow(&limits);
+                (map, danger, guard.len(), credit)
+            }).boxed();
+            return fut;
         } else {
             debug_assert!(!guard.is_leaf());
         }
@@ -1952,26 +1957,58 @@ impl<A, D, K, V> Tree<A, D, K, V>
         -> impl Future<Output=Result<TreeWriteGuard<A, K, V>>> + Send
     {
         if height == 0 {
-            // Simply delete the leaves
             debug_assert!(guard.is_leaf());
-            future::ok(guard).boxed()
+            if V::NEEDS_DCLONE {
+                guard.as_leaf_mut()
+                    .range_delete(dml.as_ref(), txg, ..)
+                    .map_ok(move |credit| {
+                        dml.repay(credit);
+                        guard
+                    }).boxed()
+            } else {
+                // Simply delete the leaves
+                future::ok(guard).boxed()
+            }
         } else if height == 1 {
             debug_assert!(!guard.is_leaf());
-            // If the child elements point to leaves, just delete them.
             guard.as_int_mut().children.drain(range)
             .map(move |elem| {
+                let dml2 = dml.clone();
                 match elem.ptr {
                     TreePtr::Addr(addr) => {
                         // Delete on-disk leaves
-                        dml.delete(&addr, txg).boxed()
+                        if V::NEEDS_DCLONE {
+                            dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>
+                                (&addr, txg)
+                            .and_then(move |anode| {
+                                Arc::try_unwrap(*anode)
+                                    .unwrap()
+                                    .0.try_unwrap()
+                                    .unwrap()
+                                    .into_leaf()
+                                    .range_delete_unaccredited(dml2.as_ref(),
+                                        txg, ..)
+                                    // There shouldn't be any Credit, so we
+                                    // can just drop it.
+                                    .map_ok(drop)
+                            }).boxed()
+                        } else {
+                            dml.delete(&addr, txg).boxed()
+                        }
                     },
                     TreePtr::Mem(node) => {
-                        // Simply repay credit and drop in-memory leaves
                         let child_guard = node.0.try_unwrap().unwrap();
-                        let leaf = child_guard.into_leaf();
-                        let credit = leaf.forget();
-                        dml.repay(credit);
-                        future::ok(()).boxed()
+                        let mut leaf = child_guard.into_leaf();
+                        if V::NEEDS_DCLONE {
+                            // Must recurse into the leaves.
+                            leaf.range_delete(dml.as_ref(), txg, ..).boxed()
+                        } else {
+                            // Simply repay credit and drop in-memory leaves
+                            future::ok(Credit::null()).boxed()
+                        }.map_ok(move |mut credit| {
+                            credit.extend(leaf.forget());
+                            dml2.repay(credit);
+                        }).boxed()
                     },
                     TreePtr::None => unreachable!()// LCOV_EXCL_LINE unreachable
                 }

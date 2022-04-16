@@ -431,16 +431,6 @@ impl<'a> IDML {
     }
 }
 
-/// Private helper function for several IDML methods
-fn unwrap_or_enoent(r: Result<Option<RidtEntry>>) -> Result<RidtEntry>
-{
-    match r {
-        Ok(None) => Err(Error::ENOENT),
-        Ok(Some(entry)) => Ok(entry),
-        Err(e) => Err(e)
-    }
-}
-
 impl DML for IDML {
     type Addr = RID;
 
@@ -453,8 +443,11 @@ impl DML for IDML {
         let ridt2 = self.ridt.clone();
         let rid = *ridp;
         let fut = self.ridt.get(rid)
-            .map(unwrap_or_enoent)
-            .and_then(move |mut entry| {
+            .and_then(move |oentry| {
+                let mut entry = match oentry {
+                    Some(e) => e,
+                    None => panic!("Double delete detected for {:?}.", rid)
+                };
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
@@ -492,8 +485,11 @@ impl DML for IDML {
             let cache2 = self.cache.clone();
             let ddml2 = self.ddml.clone();
             let fut = self.ridt.get(rid)
-                .map(unwrap_or_enoent)
-                .and_then(move |entry| {
+                .map(|r| match r {
+                    Ok(None) => Err(Error::ENOENT),
+                    Ok(Some(entry)) => Ok(entry),
+                    Err(e) => Err(e)
+                }).and_then(move |entry| {
                     ddml2.get_direct(&entry.drp)
                 }).map_ok(move |cacheable: Box<T>| {
                     let r = cacheable.make_ref();
@@ -801,6 +797,21 @@ mod t {
         assert!(!idml.check_ridt()
                 .now_or_never().unwrap()
                 .unwrap());
+    }
+
+    /// Delete a record that does not exist.  This typically indicate a
+    /// double-free, and it is a fatal error.
+    #[test]
+    #[should_panic(expected = "Double delete")]
+    fn delete_double() {
+        let rid = RID(42);
+        let cache = Cache::default();
+        let ddml = mock_ddml();
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+
+        let _r = idml.delete(&rid, TxgT::from(42))
+            .now_or_never().unwrap();
     }
 
     #[test]

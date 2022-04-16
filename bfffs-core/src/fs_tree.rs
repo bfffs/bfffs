@@ -17,7 +17,7 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::FuturesOrdered
+    stream::{FuturesOrdered, FuturesUnordered}
 };
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
@@ -431,12 +431,7 @@ impl InlineExtAttr {
             let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
-                debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<RID>());
-                // Safe because D::Addr should always equal RID.  If you ever
-                // call this function with any other type for RID, then you're
-                // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
+                let rid_a = checked_transmute(rid);
                 let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 let bea = BlobExtAttr { namespace, name, extent };
                 ExtAttr::Blob(bea)
@@ -777,12 +772,7 @@ impl InlineExtent {
             let dbs = Arc::try_unwrap(self.buf).unwrap();
             let fut = dml.put(dbs, Compression::None, txg)
             .map_ok(move |rid: D::Addr| {
-                debug_assert_eq!(mem::size_of::<D::Addr>(),
-                                 mem::size_of::<RID>());
-                // Safe because D::Addr should always equal RID.  If you ever
-                // call this function with any other type for RID, then you're
-                // doing something wrong.
-                let rid_a = unsafe{*(&rid as *const D::Addr as *const RID)};
+                let rid_a = checked_transmute(rid);
                 let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
                 FSValue::BlobExtent(be)
             });
@@ -984,6 +974,7 @@ impl TypicalSize for FSValue {
 }
 
 impl Value for FSValue {
+    const NEEDS_DCLONE: bool = true;
     const NEEDS_FLUSH: bool = true;
 
     fn allocated_space(&self) -> usize {
@@ -1002,6 +993,31 @@ impl Value for FSValue {
                 .map(|de| de.allocated_space())
                 .sum::<usize>(),
             _ => 0
+        }
+    }
+
+    fn ddrop<D>(&self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        match self {
+            FSValue::BlobExtent(be) => {
+                dml.delete(&checked_transmute(be.rid), txg).boxed()
+            },
+            FSValue::ExtAttr(ExtAttr::Blob(xattr)) => {
+                dml.delete(&checked_transmute(xattr.extent.rid), txg).boxed()
+            },
+            FSValue::ExtAttrs(v) => {
+                let futs = FuturesUnordered::new();
+                for xattr in v {
+                    if let ExtAttr::Blob(be) = xattr {
+                        let rid = checked_transmute(be.extent.rid);
+                        futs.push(dml.delete(&rid, txg));
+                    }
+                }
+                futs.try_fold((), |_, _| future::ok(())).boxed()
+            },
+            _ => future::ok(()).boxed()
         }
     }
 

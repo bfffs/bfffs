@@ -10,6 +10,7 @@ use futures::{
     TryStreamExt,
     stream::FuturesUnordered
 };
+use mockall::predicate::eq;
 use pretty_assertions::assert_eq;
 use super::*;
 
@@ -2010,6 +2011,122 @@ root:
                                 37: 37.0
                                 40: 40.0
 "#);
+}
+
+// range_delete of a single node with a value type that needs dclone
+#[test]
+fn range_delete_dclone() {
+    let mut mock = mock_dml();
+    let txg = TxgT::from(42);
+    mock.expect_delete()
+        .with(eq(5), eq(txg))
+        .times(1)
+        .returning(|_, _| future::ok(()).boxed());
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Leaf:
+          credit: 80
+          items:
+            4: 4
+            5: 5
+            6: 6
+            7: 7
+            8: 8
+  "#));
+    let r = tree.range_delete(5..6, txg, Credit::forge(80))
+        .now_or_never().unwrap();
+    assert!(r.is_ok());
+}
+
+// range_delete of a taller tree, with dclone
+#[test]
+fn range_delete_dclone_height2() {
+    let mut mock = mock_dml();
+    let txg = TxgT::from(42);
+    for v in [4, 11, 12, 13, 21]{
+        mock.expect_delete()
+            .with(eq(v), eq(txg))
+            .times(1)
+            .returning(|_, _| future::ok(()).boxed());
+    }
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 1
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 64
+                    items:
+                      1: 1
+                      2: 2
+                      3: 3
+                      4: 4
+            - key: 11
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 48
+                    items:
+                      11: 11
+                      12: 12
+                      13: 13
+            - key: 21
+              txgs:
+                start: 41
+                end: 42
+              ptr:
+                Mem:
+                  Leaf:
+                    credit: 64
+                    items:
+                      21: 21
+                      22: 22
+                      23: 23
+                      24: 24
+  "#));
+    let r = tree.range_delete(4..22, txg, Credit::forge(240))
+        .now_or_never().unwrap();
+    assert!(r.is_ok());
 }
 
 // range_delete of an empty range does nothing bad
