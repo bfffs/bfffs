@@ -545,6 +545,36 @@ mod fs {
             libc::ENOATTR);
     }
 
+    /// Delete a blob extattr
+    #[tokio::test]
+    async fn deleteextattr_blob() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = vec![42u8; 131072];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &name, &value[..]).await.unwrap();
+        fs.sync().await;
+        let stat1 = fs.statvfs().await.unwrap();
+
+        fs.deleteextattr(&fdh, ns, &name).await.unwrap();
+
+        // The extattr should be gone
+        assert_eq!(fs.getextattr(&fdh, ns, &name).await.unwrap_err(),
+            libc::ENOATTR);
+
+        // And its storage should be freed
+        let stat2 = fs.statvfs().await.unwrap();
+        let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
+        let expected = value.len();
+        assert!(9 * expected / 10 < freed_bytes &&
+                freed_bytes < 11 * expected / 10);
+    }
+
     /// deleteextattr with a hash collision.
     #[tokio::test]
     async fn deleteextattr_collision() {
@@ -3270,7 +3300,7 @@ root:
     /// The file already has a blob extattr.  Set another extattr and flush them
     /// both.
     #[tokio::test]
-    async fn setextattr_overwrite_blob() {
+    async fn setextattr_with_blob() {
         let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let rooth = root.handle();
@@ -3284,11 +3314,45 @@ root:
         let fdh = fd.handle();
         fs.setextattr(&fdh, ns, &name1, &value1[..]).await.unwrap();
         fs.sync().await; // Create a blob ExtAttr
+
         fs.setextattr(&fdh, ns, &name2, &value2[..]).await.unwrap();
         fs.sync().await; // Achieve coverage of BlobExtAttr::flush
 
-        let v = fs.getextattr(&fdh, ns, &name1).await.unwrap();
-        assert_eq!(&v[..], &value1[..]);
+        // Both attributes should be present
+        let v1 = fs.getextattr(&fdh, ns, &name1).await.unwrap();
+        assert_eq!(&v1[..], &value1[..]);
+        let v2 = fs.getextattr(&fdh, ns, &name2).await.unwrap();
+        assert_eq!(&v2[..], &value2[..]);
+    }
+
+    /// The file already has a blob extattr.  Overwrite it with a new one.
+    #[tokio::test]
+    async fn setextattr_overwrite_blob() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value1 = vec![42u8; 65536];
+        let value2 = [43u8; 65536];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &name, &value1[..]).await.unwrap();
+        fs.sync().await; // Create a blob ExtAttr
+        let stat1 = fs.statvfs().await.unwrap();
+
+        fs.setextattr(&fdh, ns, &name, &value2[..]).await.unwrap();
+        fs.sync().await; // Flush the new blob ExtAttr
+
+        // Only the new attribute should be present
+        let v = fs.getextattr(&fdh, ns, &name).await.unwrap();
+        assert_eq!(&v[..], &value2[..]);
+
+        // The overall amount of storage used should change but little
+        let stat2 = fs.statvfs().await.unwrap();
+        assert!(stat1.f_bfree - 1 <= stat2.f_bfree &&
+                stat2.f_bfree <= stat1.f_bfree + 1);
     }
 
     #[tokio::test]

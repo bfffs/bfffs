@@ -602,11 +602,18 @@ impl Fs {
         let objkey = ObjKey::extattr(ns, name);
         let name = name.to_owned();
         let key = FSKey::new(fd.ino, objkey);
-        self.db.fswrite(self.tree, 1, 0, 1, 0, move |dataset| async move {
-            htable::remove::<ReadWriteFilesystem, ExtAttr>(dataset,
-                key, ns, name).await
-        }).map_ok(drop)
-        .map_err(Error::into)
+        self.db.fswrite(self.tree, 1, 0, 1, 0, move |dataset| {
+            let ads = Arc::new(dataset);
+            htable::remove::<_, ExtAttr>(ads.clone(), key, ns, name)
+            .and_then(move |attr| {
+                match attr {
+                    ExtAttr::Inline(_) => future::ok(()).boxed(),
+                    ExtAttr::Blob(bea) => ads.remove_blob(bea.extent.rid)
+                        .map_ok(drop)
+                        .boxed(),
+                }
+            })
+        }).map_err(Error::into)
         .await
     }
 
@@ -2297,10 +2304,17 @@ impl Fs {
             extent
         });
         let bb = extattr.allocated_space();
-        self.db.fswrite(self.tree, 2, 0, 0, bb, move |dataset| async move {
-            htable::insert(dataset, key, extattr, owned_name)
-                .await?;
-            Ok(())
+        self.db.fswrite(self.tree, 2, 0, 0, bb, move |dataset| {
+            let ads = Arc::new(dataset);
+            htable::insert(ads.clone(), key, extattr, owned_name)
+            .and_then(move |oattr| {
+                match oattr {
+                    Some(ExtAttr::Blob(bea)) => ads.remove_blob(bea.extent.rid)
+                        .map_ok(drop)
+                        .boxed(),
+                    _ => future::ok(()).boxed()
+                }
+            })
         }).map_err(Error::into)
         .await
     }
