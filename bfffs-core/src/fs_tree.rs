@@ -10,7 +10,7 @@ use crate::{
     types::*,
     util::*
 };
-use divbuf::DivBufShared;
+use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
     FutureExt,
@@ -486,6 +486,27 @@ impl<'a> ExtAttr {
             Some(x)
         } else {
             None
+        }
+    }
+
+    fn dpop<D>(self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<Self>>
+            + Send + 'static>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        match self {
+            ExtAttr::Blob(bea) => {
+                let rid = checked_transmute(bea.extent.rid);
+                dml.pop::<DivBufShared, DivBuf>(&rid, txg)
+                .map_ok(move |dbs|
+                    ExtAttr::Inline(InlineExtAttr {
+                        namespace: bea.namespace,
+                        name: bea.name,
+                        extent: InlineExtent::new(Arc::new(*dbs))
+                    })
+                ).boxed()
+            }
+            iea => future::ok(iea).boxed(),
         }
     }
 
@@ -1017,6 +1038,34 @@ impl Value for FSValue {
                 futs.try_fold((), |_, _| future::ok(())).boxed()
             },
             _ => future::ok(()).boxed()
+        }
+    }
+
+    fn dpop<D>(self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        match self {
+            FSValue::BlobExtent(be) => {
+                dml.pop::<DivBufShared, DivBuf>(&checked_transmute(be.rid), txg)
+                .map_ok(move |dbs|
+                    FSValue::InlineExtent(InlineExtent::new(Arc::new(*dbs)))
+                ).boxed()
+            }
+            FSValue::ExtAttr(ea) => {
+                ea.dpop(dml, txg).map_ok(FSValue::ExtAttr).boxed()
+            },
+            FSValue::ExtAttrs(v) => {
+                v.into_iter()
+                .map(|extattr| {
+                    extattr.dpop(dml, txg)
+                })
+                .collect::<FuturesOrdered<_>>()
+                .try_collect::<Vec<_>>()
+                .map_ok(FSValue::ExtAttrs)
+                .boxed()
+            }
+            _ => future::ok(self).boxed()
         }
     }
 

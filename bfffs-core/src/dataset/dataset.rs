@@ -96,12 +96,6 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.clone().remove(k, txg, credit)
     }
 
-    fn remove_blob(&self, rid: RID, txg: TxgT)
-        -> impl Future<Output=Result<Box<DivBufShared>>> + Send
-    {
-        self.idml.pop::<DivBufShared, DivBuf>(&rid, txg)
-    }
-
     fn size(&self) -> LbaT {
         self.idml.size()
     }
@@ -207,12 +201,6 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
     {
         let credit = self.credit.atomic_split(self.cr.remove);
         self.dataset.remove(k, self.txg, credit)
-    }
-
-    pub fn remove_blob(&self, rid: RID)
-        -> impl Future<Output=Result<Box<DivBufShared>>> + Send
-    {
-        self.dataset.remove_blob(rid, self.txg)
     }
 }
 

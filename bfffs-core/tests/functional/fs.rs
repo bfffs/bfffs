@@ -201,7 +201,10 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_whole_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db) = harness4k().await;
+        // Need atime off to fs.read() doesn't dirty the tree and change the
+        // f_bfree value.
+        let props = vec![Property::RecordSize(12), Property::Atime(false)];
+        let (fs, _cache, _db) = harness(props).await;
         let root = fs.root();
         let rooth = root.handle();
         let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
@@ -218,6 +221,7 @@ mod fs {
         if blobs {
             fs.sync().await;        // Flush it to a BlobExtent
         }
+        let stat1 = fs.statvfs().await.unwrap();
 
         assert!(fs.deallocate(&fdh, 0, 4096).await.is_ok());
 
@@ -231,6 +235,15 @@ mod fs {
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
+
+        // And its storage should be freed, if it has been synced to disk
+        if blobs {
+            fs.sync().await;
+            let stat2 = fs.statvfs().await.unwrap();
+            let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
+            let expected = 4096;
+            assert_eq!(expected, freed_bytes);
+        }
     }
 
     /// Deallocating a hole is a no-op
@@ -568,11 +581,11 @@ mod fs {
             libc::ENOATTR);
 
         // And its storage should be freed
+        fs.sync().await;
         let stat2 = fs.statvfs().await.unwrap();
         let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
         let expected = value.len();
-        assert!(9 * expected / 10 < freed_bytes &&
-                freed_bytes < 11 * expected / 10);
+        assert_eq!(expected, freed_bytes);
     }
 
     /// deleteextattr with a hash collision.
@@ -3350,9 +3363,9 @@ root:
         assert_eq!(&v[..], &value2[..]);
 
         // The overall amount of storage used should change but little
+        fs.sync().await;
         let stat2 = fs.statvfs().await.unwrap();
-        assert!(stat1.f_bfree - 1 <= stat2.f_bfree &&
-                stat2.f_bfree <= stat1.f_bfree + 1);
+        assert_eq!(stat1.f_bfree, stat2.f_bfree);
     }
 
     #[tokio::test]
@@ -3698,8 +3711,8 @@ root:
         let stat2 = fs.statvfs().await.unwrap();
         let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
         let expected = NBLOCKS * buf.len();
-        assert!(9 * expected / 10 < freed_bytes &&
-                freed_bytes < 11 * expected / 10);
+        // <= because space for Tree nodes got deleted too
+        assert!(expected <= freed_bytes);
     }
 
     /// Unlink a file with blob extended attributes on disk
@@ -3790,6 +3803,52 @@ root:
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
     }
+
+    // Overwrite a single record in an otherwise empty file
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn write_overwrite(#[case] blobs: bool) {
+        const BSIZE: usize = 4096;
+        // Need atime off to fs.read() doesn't dirty the tree and change the
+        // f_bfree value.
+        let props = vec![Property::RecordSize(12), Property::Atime(false)];
+        let (fs, _cache, _db) = harness(props).await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        let buf1 = vec![42u8; BSIZE];
+        let buf2 = vec![43u8; BSIZE];
+
+        let r = fs.write(&fdh, 0, &buf1[..], 0).await;
+        assert_eq!(Ok(BSIZE as u32), r);
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
+        let stat1 = fs.statvfs().await.unwrap();
+
+        let r = fs.write(&fdh, 0, &buf2[..], 0).await;
+        assert_eq!(Ok(BSIZE as u32), r);
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
+
+        // Check the file attributes
+        let attr = fs.getattr(&fdh).await.unwrap();
+        assert_eq!(attr.size, BSIZE as u64);
+        assert_eq!(attr.bytes, BSIZE as u64);
+
+        let sglist = fs.read(&fdh, 0, BSIZE).await.unwrap();
+        assert_eq!(&sglist[0][..], &buf2[..]);
+
+        // The overall amount of storage used should be unchanged
+        let stat2 = fs.statvfs().await.unwrap();
+        assert_eq!(stat1.f_bfree, stat2.f_bfree);
+    }
+
 
     // A partial single record write appended to the file's end
     #[tokio::test]

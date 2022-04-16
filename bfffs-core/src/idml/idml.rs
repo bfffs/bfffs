@@ -571,9 +571,10 @@ impl DML for IDML {
                 let alloct_fut = alloct2.remove(entry.drp.pba(), txg,
                     Credit::null());
                 let ridt_fut = ridt2.remove(rid, txg, Credit::null());
-                let (cacheable, old_rid, _old_ridt_entry) =
+                let (cacheable, old_rid, old_ridt_entry) =
                     future::try_join3(bfut, alloct_fut, ridt_fut).await?;
                 assert!(old_rid.is_some());
+                assert!(old_ridt_entry.is_some());
                 Ok(cacheable)
             } else {
                 let cacheval = cache2.lock().unwrap()
@@ -585,7 +586,8 @@ impl DML for IDML {
                     ddml2.get_direct::<T>(&entry.drp).boxed()
                 });
                 let ridt_fut = ridt2.insert(rid, entry, txg, Credit::null());
-                let (cacheable, _) = future::try_join(bfut, ridt_fut).await?;
+                let (cacheable, oldr) = future::try_join(bfut, ridt_fut).await?;
+                assert!(oldr.is_some());
                 Ok(cacheable)
             }
         }.boxed()

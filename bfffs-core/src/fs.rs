@@ -604,15 +604,8 @@ impl Fs {
         let key = FSKey::new(fd.ino, objkey);
         self.db.fswrite(self.tree, 1, 0, 1, 0, move |dataset| {
             let ads = Arc::new(dataset);
-            htable::remove::<_, ExtAttr>(ads.clone(), key, ns, name)
-            .and_then(move |attr| {
-                match attr {
-                    ExtAttr::Inline(_) => future::ok(()).boxed(),
-                    ExtAttr::Blob(bea) => ads.remove_blob(bea.extent.rid)
-                        .map_ok(drop)
-                        .boxed(),
-                }
-            })
+            htable::remove::<_, ExtAttr>(ads, key, ns, name)
+            .map_ok(drop)
         }).map_err(Error::into)
         .await
     }
@@ -908,29 +901,8 @@ impl Fs {
                     dataset.insert(k, v).await?;
                     Ok(r)
                 }.boxed(),
-                Some(FSValue::BlobExtent(be)) => async move {
-                    let dbs: Box<DivBufShared> = dataset.remove_blob(be.rid)
-                        .await?;
-                    let mut b = dbs.try_mut()
-                        .expect("DivBufShared wasn't uniquely owned");
-                    let r = if len >= b.len() - recofs as usize {
-                        // truncate the record, making it sparse
-                        let old_len = b.len();
-                        b.try_truncate(recofs as usize).unwrap();
-                        old_len as u64 - recofs
-                    } else {
-                        // zero the deallocated portion of the record
-                        for i in 0..len {
-                            b[recofs as usize + i] = 0;
-                        }
-                        0
-                    };
-                    let adbs = Arc::from(dbs);
-                    let extent = InlineExtent::new(adbs);
-                    let v = FSValue::InlineExtent(extent);
-                    dataset.insert(k, v).await?;
-                    Ok(r)
-                }.boxed(),
+                // Some(FSValue::BlobExtent(be)) should never happen, because
+                // FSValue::dpop will change it to an inline extent.
                 x => panic!("Unexpected value {:?} for key {:?}", x, k)
             }
         } else {
@@ -978,20 +950,8 @@ impl Fs {
                         dataset4.insert(k, v).await?;
                         Ok(0)
                     }.boxed(),
-                    Some(FSValue::BlobExtent(be)) => async move {
-                        let dbs = dataset4.remove_blob(be.rid)
-                            .await?;
-                        let mut dbm = dbs.try_mut()
-                            .expect("DivBufShared wasn't uniquely owned");
-                        for i in 0..len {
-                            dbm[i as usize] = 0;
-                        }
-                        let adbs = Arc::from(dbs);
-                        let extent = InlineExtent::new(adbs);
-                        let v = FSValue::InlineExtent(extent);
-                        dataset4.insert(k, v).await?;
-                        Ok(0)
-                    }.boxed(),
+                    // Some(FSValue::BlobExtent(be)) should never happen,
+                    // because FSValue::dpop will change it to an inline extent.
                     x => panic!("Unexpected value {:?} for key {:?}", x, k)
                 }
             },
@@ -2306,15 +2266,9 @@ impl Fs {
         let bb = extattr.allocated_space();
         self.db.fswrite(self.tree, 2, 0, 0, bb, move |dataset| {
             let ads = Arc::new(dataset);
-            htable::insert(ads.clone(), key, extattr, owned_name)
-            .and_then(move |oattr| {
-                match oattr {
-                    Some(ExtAttr::Blob(bea)) => ads.remove_blob(bea.extent.rid)
-                        .map_ok(drop)
-                        .boxed(),
-                    _ => future::ok(()).boxed()
-                }
-            })
+            htable::insert(ads, key, extattr, owned_name)
+                .map_ok(drop)
+                .boxed()
         }).map_err(Error::into)
         .await
     }
@@ -2557,12 +2511,8 @@ impl Fs {
                     let old_len = ile.len() as i64;
                     (ile.buf, old_len)
                 },
-                Some(FSValue::BlobExtent(be)) => {
-                    (
-                        Arc::from(dataset.remove_blob(be.rid).await?),
-                        be.lsize.into()
-                    )
-                },
+                // Some(FSValue::BlobExtent(be)) should never happen, because
+                // FSValue::dpop will change it to an inline extent.
                 x => panic!("Unexpected value {:?} for key {:?}", x, k)
             };
             let mut base = dbs.try_mut().unwrap();
