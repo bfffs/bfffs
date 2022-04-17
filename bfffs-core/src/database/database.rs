@@ -351,6 +351,16 @@ impl Database {
         }
     }
 
+    pub async fn dump_alloct(&self, f: &mut dyn io::Write) -> Result<()>
+    {
+        self.inner.idml.dump_alloct(f).await
+    }
+
+    pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
+    {
+        self.inner.idml.dump_ridt(f).await
+    }
+
     /// Flush the database's dirty data to disk.
     ///
     /// Does not sync a transaction.  Does not rewrite the labels.
