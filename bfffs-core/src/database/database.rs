@@ -256,6 +256,15 @@ pub struct Dirent {
     pub offs: u64
 }
 
+/// Information about the overall properties of a bfffs pool.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Stat {
+    /// Number of blocks have been allocated across the entire pool.
+    pub allocated: LbaT,
+    /// The approximate usable size of the Pool in blocks.
+    pub size: LbaT,
+}
+
 pub struct Database {
     cleaner: Cleaner,
     inner: Arc<Inner>,
@@ -597,6 +606,14 @@ impl Database {
         future::join(self.syncer.shutdown(),
                      self.cleaner.shutdown())
         .await;
+    }
+
+    /// Retrieve information about a pool's space usage
+    pub fn stat(&self) -> Stat {
+        Stat {
+            allocated: self.inner.idml.allocated(),
+            size: self.inner.idml.size(),
+        }
     }
 
     /// Finish the current transaction group and start a new one.
