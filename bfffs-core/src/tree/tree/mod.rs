@@ -1221,7 +1221,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
         if cg.is_leaf() {
             Tree::<A, D, K, V>::insert_leaf_no_split(&mut rg.elem, cg, k, v,
-                txg, &self.dml, credit).await
+                txg, self.dml.clone(), credit).await
         } else {
             drop(rg);
             self.insert_int_no_split(cg, k, v, txg, credit).await
@@ -1251,7 +1251,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         } else if child.is_leaf() {
             let elem = &mut parent.as_int_mut().children[child_idx];
             Box::pin(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
-                child, k, v, txg, &self.dml, credit))
+                child, k, v, txg, self.dml.clone(), credit))
         } else {
             drop(parent);
             Box::pin(Tree::insert_int_no_split(self, child, k, v, txg, credit))
@@ -1285,14 +1285,17 @@ impl<A, D, K, V> Tree<A, D, K, V>
         k: K,
         v: V,
         txg: TxgT,
-        dml: &D,
+        dml: Arc<D>,
         credit: Credit)
-        -> impl Future<Output=Result<Option<V>>>
+        -> impl Future<Output = Result<Option<V>>> + Send
     {
-        let (old_v, excess) = child.as_leaf_mut().insert(k, v, credit);
         elem.txgs = txg..txg + 1;
-        dml.repay(excess);
-        future::ok(old_v)
+        child.as_leaf_mut()
+        .insert(k, v, txg, dml.as_ref(), credit)
+        .map_ok(move |(old_v, excess)| {
+            dml.repay(excess);
+            old_v
+        })
     }
 
     /// Has the Tree been modified since the last time it was flushed to disk?
@@ -1958,7 +1961,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
         if height == 0 {
             debug_assert!(guard.is_leaf());
-            if V::NEEDS_DCLONE {
+            if V::NEEDS_FLUSH {
                 guard.as_leaf_mut()
                     .range_delete(dml.as_ref(), txg, ..)
                     .map_ok(move |credit| {
@@ -1977,7 +1980,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 match elem.ptr {
                     TreePtr::Addr(addr) => {
                         // Delete on-disk leaves
-                        if V::NEEDS_DCLONE {
+                        if V::NEEDS_FLUSH {
                             dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>
                                 (&addr, txg)
                             .and_then(move |anode| {
@@ -1999,7 +2002,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     TreePtr::Mem(node) => {
                         let child_guard = node.0.try_unwrap().unwrap();
                         let mut leaf = child_guard.into_leaf();
-                        if V::NEEDS_DCLONE {
+                        if V::NEEDS_FLUSH {
                             // Must recurse into the leaves.
                             leaf.range_delete(dml.as_ref(), txg, ..).boxed()
                         } else {
@@ -2083,7 +2086,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     {
 
         if node.is_leaf() {
-            let (old_v, leaf_credit) = node.as_leaf_mut().remove(&k);
+            let (old_v, leaf_credit) = node.as_leaf_mut()
+                .remove(self.dml.as_ref(), txg, &k).await?;
             credit.extend(leaf_credit);
             self.dml.repay(credit);
             Ok(old_v)

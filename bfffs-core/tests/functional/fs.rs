@@ -201,7 +201,10 @@ mod fs {
     #[case(true)]
     #[tokio::test]
     async fn deallocate_whole_extent(#[case] blobs: bool) {
-        let (fs, _cache, _db) = harness4k().await;
+        // Need atime off to fs.read() doesn't dirty the tree and change the
+        // f_bfree value.
+        let props = vec![Property::RecordSize(12), Property::Atime(false)];
+        let (fs, _cache, _db) = harness(props).await;
         let root = fs.root();
         let rooth = root.handle();
         let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
@@ -218,6 +221,7 @@ mod fs {
         if blobs {
             fs.sync().await;        // Flush it to a BlobExtent
         }
+        let stat1 = fs.statvfs().await.unwrap();
 
         assert!(fs.deallocate(&fdh, 0, 4096).await.is_ok());
 
@@ -231,6 +235,15 @@ mod fs {
         let db = &sglist[0];
         let expected = [0u8; 4096];
         assert_eq!(&db[..], &expected[..]);
+
+        // And its storage should be freed, if it has been synced to disk
+        if blobs {
+            fs.sync().await;
+            let stat2 = fs.statvfs().await.unwrap();
+            let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
+            let expected = 4096;
+            assert_eq!(expected, freed_bytes);
+        }
     }
 
     /// Deallocating a hole is a no-op
@@ -543,6 +556,36 @@ mod fs {
         fs.deleteextattr(&fdh, ns, &name).await.unwrap();
         assert_eq!(fs.getextattr(&fdh, ns, &name).await.unwrap_err(),
             libc::ENOATTR);
+    }
+
+    /// Delete a blob extattr
+    #[tokio::test]
+    async fn deleteextattr_blob() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value = vec![42u8; 131072];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &name, &value[..]).await.unwrap();
+        fs.sync().await;
+        let stat1 = fs.statvfs().await.unwrap();
+
+        fs.deleteextattr(&fdh, ns, &name).await.unwrap();
+
+        // The extattr should be gone
+        assert_eq!(fs.getextattr(&fdh, ns, &name).await.unwrap_err(),
+            libc::ENOATTR);
+
+        // And its storage should be freed
+        fs.sync().await;
+        let stat2 = fs.statvfs().await.unwrap();
+        let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
+        let expected = value.len();
+        assert_eq!(expected, freed_bytes);
     }
 
     /// deleteextattr with a hash collision.
@@ -3270,7 +3313,7 @@ root:
     /// The file already has a blob extattr.  Set another extattr and flush them
     /// both.
     #[tokio::test]
-    async fn setextattr_overwrite_blob() {
+    async fn setextattr_with_blob() {
         let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();
         let rooth = root.handle();
@@ -3284,11 +3327,45 @@ root:
         let fdh = fd.handle();
         fs.setextattr(&fdh, ns, &name1, &value1[..]).await.unwrap();
         fs.sync().await; // Create a blob ExtAttr
+
         fs.setextattr(&fdh, ns, &name2, &value2[..]).await.unwrap();
         fs.sync().await; // Achieve coverage of BlobExtAttr::flush
 
-        let v = fs.getextattr(&fdh, ns, &name1).await.unwrap();
-        assert_eq!(&v[..], &value1[..]);
+        // Both attributes should be present
+        let v1 = fs.getextattr(&fdh, ns, &name1).await.unwrap();
+        assert_eq!(&v1[..], &value1[..]);
+        let v2 = fs.getextattr(&fdh, ns, &name2).await.unwrap();
+        assert_eq!(&v2[..], &value2[..]);
+    }
+
+    /// The file already has a blob extattr.  Overwrite it with a new one.
+    #[tokio::test]
+    async fn setextattr_overwrite_blob() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let name = OsString::from("foo");
+        let value1 = vec![42u8; 65536];
+        let value2 = [43u8; 65536];
+        let ns = ExtAttrNamespace::User;
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        fs.setextattr(&fdh, ns, &name, &value1[..]).await.unwrap();
+        fs.sync().await; // Create a blob ExtAttr
+        let stat1 = fs.statvfs().await.unwrap();
+
+        fs.setextattr(&fdh, ns, &name, &value2[..]).await.unwrap();
+        fs.sync().await; // Flush the new blob ExtAttr
+
+        // Only the new attribute should be present
+        let v = fs.getextattr(&fdh, ns, &name).await.unwrap();
+        assert_eq!(&v[..], &value2[..]);
+
+        // The overall amount of storage used should change but little
+        fs.sync().await;
+        let stat2 = fs.statvfs().await.unwrap();
+        assert_eq!(stat1.f_bfree, stat2.f_bfree);
     }
 
     #[tokio::test]
@@ -3634,8 +3711,8 @@ root:
         let stat2 = fs.statvfs().await.unwrap();
         let freed_bytes = ((stat2.f_bfree - stat1.f_bfree) * 4096) as usize;
         let expected = NBLOCKS * buf.len();
-        assert!(9 * expected / 10 < freed_bytes &&
-                freed_bytes < 11 * expected / 10);
+        // <= because space for Tree nodes got deleted too
+        assert!(expected <= freed_bytes);
     }
 
     /// Unlink a file with blob extended attributes on disk
@@ -3726,6 +3803,52 @@ root:
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[..]);
     }
+
+    // Overwrite a single record in an otherwise empty file
+    #[rstest]
+    #[case(false)]
+    #[case(true)]
+    #[tokio::test]
+    async fn write_overwrite(#[case] blobs: bool) {
+        const BSIZE: usize = 4096;
+        // Need atime off to fs.read() doesn't dirty the tree and change the
+        // f_bfree value.
+        let props = vec![Property::RecordSize(12), Property::Atime(false)];
+        let (fs, _cache, _db) = harness(props).await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        let buf1 = vec![42u8; BSIZE];
+        let buf2 = vec![43u8; BSIZE];
+
+        let r = fs.write(&fdh, 0, &buf1[..], 0).await;
+        assert_eq!(Ok(BSIZE as u32), r);
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
+        let stat1 = fs.statvfs().await.unwrap();
+
+        let r = fs.write(&fdh, 0, &buf2[..], 0).await;
+        assert_eq!(Ok(BSIZE as u32), r);
+        if blobs {
+            fs.sync().await;        // Flush it to a BlobExtent
+        }
+
+        // Check the file attributes
+        let attr = fs.getattr(&fdh).await.unwrap();
+        assert_eq!(attr.size, BSIZE as u64);
+        assert_eq!(attr.bytes, BSIZE as u64);
+
+        let sglist = fs.read(&fdh, 0, BSIZE).await.unwrap();
+        assert_eq!(&sglist[0][..], &buf2[..]);
+
+        // The overall amount of storage used should be unchanged
+        let stat2 = fs.statvfs().await.unwrap();
+        assert_eq!(stat1.f_bfree, stat2.f_bfree);
+    }
+
 
     // A partial single record write appended to the file's end
     #[tokio::test]

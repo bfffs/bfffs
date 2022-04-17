@@ -416,6 +416,84 @@ root:
     assert_eq!(expected, OsStr::from_bytes(&out[..]));
 }
 
+/// Insert an item for a key that already has a value, and needs dclone
+#[test]
+fn insert_dclone() {
+    let txg = TxgT::from(42);
+    let mut mock = MockDML::new();
+    mock.expect_pop::<DivBufShared, DivBuf>()
+        .with(eq(4), eq(txg))
+        .times(1)
+        .returning(|_, _| future::ok(Box::new(DivBufShared::from(vec![])))
+                   .boxed()
+        );
+
+    let mut ld = LeafData::default();
+    ld.items.insert(3, NeedsDcloneV(3));
+    ld.items.insert(4, NeedsDcloneV(4));
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
+    mock.expect_pop::<NeedsDcloneNode, NeedsDcloneNode>()
+        .once()
+        .with(eq(0), always())
+        .return_once(move |_, _| future::ok(Box::new(node)).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 0)
+        .return_const(());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(mem::forget);
+
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(
+        dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
+
+    let r = tree.clone().insert(4, NeedsDcloneV(400), txg, Credit::forge(16))
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(Some(NeedsDcloneV(4))));
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 42
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 32
+          items:
+            3: 3
+            4: 400
+"#);
+}
+
 /// Insert an item into a Tree that's not dirty
 #[test]
 fn insert_below_root() {
@@ -1505,6 +1583,86 @@ root:
                 end: 42
               ptr:
                 Addr: 1
+"#);
+}
+
+/// Remove an on-disk Value that requires dclone/ddrop
+#[test]
+fn remove_dclone() {
+    let txg = TxgT::from(42);
+    let mut mock = MockDML::new();
+    mock.expect_pop::<DivBufShared, DivBuf>()
+        .with(eq(4), eq(txg))
+        .times(1)
+        .returning(|_, _| future::ok(Box::new(DivBufShared::from(vec![])))
+                   .boxed()
+        );
+
+    let mut ld = LeafData::default();
+    ld.items.insert(3, NeedsDcloneV(3));
+    ld.items.insert(4, NeedsDcloneV(4));
+    ld.items.insert(5, NeedsDcloneV(5));
+    let node = Arc::new(Node::new(NodeData::Leaf(ld)));
+    mock.expect_pop::<NeedsDcloneNode, NeedsDcloneNode>()
+        .once()
+        .with(eq(0), always())
+        .return_once(move |_, _| future::ok(Box::new(node)).boxed());
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 16)
+        .returning(mem::forget);
+    mock.expect_repay()
+        .once()
+        .withf(|credit| *credit == 32)
+        .returning(mem::forget);
+
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(
+        dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Addr: 0
+  "#));
+
+    let r = tree.clone().remove(4, txg, Credit::forge(48))
+        .now_or_never()
+        .unwrap();
+    assert_eq!(Ok(Some(NeedsDcloneV(4))), r);
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 32
+          items:
+            3: 3
+            5: 5
 "#);
 }
 

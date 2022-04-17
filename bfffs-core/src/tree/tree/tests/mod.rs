@@ -4,6 +4,7 @@
 #[cfg(test)] mod txg;
 
 use crate::dml::MockDML;
+use divbuf::{DivBufShared, DivBuf};
 use mockall::mock;
 use super::*;
 use super::super::LeafData;
@@ -33,13 +34,24 @@ impl TypicalSize for NeedsDcloneV {
 }
 
 impl Value for NeedsDcloneV {
-    const NEEDS_DCLONE: bool = true;
+    const NEEDS_FLUSH: bool = true;
 
     fn ddrop<D>(&self, dml: &D, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
         dml.delete(&checked_transmute(self.0), txg)
+    }
+
+    fn dpop<D>(self, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        // Weirdly, self doesn't change when dpopped().  That's unlike a real
+        // type, such as FSValue.  But fine for unit tests
+        dml.pop::<DivBufShared, DivBuf>(&checked_transmute(self.0), txg)
+            .map_ok(move |_| self)
+            .boxed()
     }
 }
 

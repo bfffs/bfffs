@@ -102,9 +102,6 @@ impl Key for u32 {}
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     Serialize + TypicalSize + 'static
 {
-    /// Does this Value type require dclone/ddrop ?
-    const NEEDS_DCLONE: bool = false;
-
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
 
@@ -122,7 +119,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // should never be called since NEEDS_FLUSH is false.  Ideally, this
         // entire function should go away once generic specialization is stable
         // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
@@ -133,7 +130,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since NEEDS_DCLONE is false.  Ideally, this
+        // should never be called since NEEDS_FLUSH is false.  Ideally, this
         // entire function should go away once generic specialization is stable
         // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
@@ -150,6 +147,19 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
     }
+
+    /// Drop a reference to the on-disk data, and read it into `self`, like the
+    /// opposite of [`flush`].
+    fn dpop<D>(self, _dml: &D, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
+        where D: DML + 'static, D::Addr: 'static
+    {
+        // should never be called since needs_flush is false.  Ideally, this
+        // entire function should go away once generic specialization is stable
+        // https://github.com/rust-lang/rust/issues/31844
+        unreachable!()
+    }
+
     // LCOV_EXCL_STOP
 }
 
@@ -334,8 +344,15 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Insert one key-value pair into the LeafData, returning the old value, if
     /// any.  Also, return any excess credit that was provided.
-    pub fn insert(&mut self, k: K, v: V, mut credit: Credit)
-        -> (Option<V>, Credit)
+    pub fn insert<A, D>(
+        &mut self,
+        k: K,
+        v: V,
+        txg: TxgT,
+        dml: &D,
+        mut credit: Credit)
+        -> impl Future<Output = Result<(Option<V>, Credit)>> + Send
+        where D: DML<Addr=A> + 'static, A: 'static
     {
         self.assert_accredited();
         let v_space = v.allocated_space();
@@ -356,7 +373,14 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.assert_accredited();
         // Return excess credit, which might've resulted from an insertion
         // to an already-dirty record.
-        (old_v, excess_credit)
+        if V::NEEDS_FLUSH {
+            if let Some(v) = old_v {
+                return v.dpop(dml, txg)
+                    .map_ok(move |v| (Some(v), excess_credit))
+                    .boxed()
+            }
+        }
+        future::ok((old_v, excess_credit)).boxed()
     }
 
     pub fn get<Q>(&self, k: &Q) -> Option<V>
@@ -415,7 +439,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         for k in keys.into_iter() {
             let v = self.items.remove(k.borrow()).unwrap();
             allocated_space += v.allocated_space();
-            if V::NEEDS_DCLONE {
+            if V::NEEDS_FLUSH {
                 fut.push(v.ddrop::<D>(dml, txg));
             }
         }
@@ -439,8 +463,14 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.range_delete_unaccredited(dml, txg, range)
     }
 
-    pub fn remove<Q>(&mut self, k: &Q) -> (Option<V>, Credit)
-        where K: Borrow<Q>, Q: Ord
+    pub async fn remove<D, Q>(
+        &mut self,
+        dml: &D,
+        txg: TxgT,
+        k: &Q
+    ) -> Result<(Option<V>, Credit)>
+        where D: DML + 'static,
+              K: Borrow<Q>, Q: Ord
     {
         self.assert_accredited();
         let old_v = self.items.remove(k);
@@ -453,7 +483,12 @@ impl<K: Key, V: Value> LeafData<K, V> {
             Credit::null()
         };
         self.assert_accredited();
-        (old_v, credit)
+        if V::NEEDS_FLUSH {
+            if let Some(v) = old_v {
+                return Ok((Some(v.dpop(dml, txg).await?), credit));
+            }
+        }
+        Ok((old_v, credit))
     }
 
     /// Split this LeafNode in two.  Returns the transaction range of the rump

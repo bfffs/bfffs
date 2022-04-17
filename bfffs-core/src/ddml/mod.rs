@@ -56,7 +56,7 @@ impl DRP {
     }
 
     /// Return the storage space actually allocated for this record
-    fn asize(&self) -> LbaT {
+    pub fn asize(&self) -> LbaT {
         div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
     }
 

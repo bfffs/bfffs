@@ -3,26 +3,28 @@
 //! Can't use the standard test harness because we need to run single-threaded.
 
 use bfffs_core::{
-    cache::Cacheable,
+    cache::{Cacheable, CacheRef},
     ddml::DRP,
-    dml::Compression,
+    dml::{Compression, DML},
     fs_tree::*,
     idml::RidtEntry,
     property::Property,
     tree::*,
     LbaT,
     PBA,
+    Result,
     RID,
     TxgT,
     writeback::{Credit, WriteBack}
 };
 use clap::Parser;
 use divbuf::DivBufShared;
-use futures::FutureExt;
+use futures::{Future, FutureExt};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     ffi::OsString,
     mem,
+    pin::Pin,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -50,6 +52,55 @@ unsafe impl GlobalAlloc for Counter {
 
 #[global_allocator]
 static A: Counter = Counter;
+
+/// This program will never do disk I/O, but it needs a stub DML to satisfy the
+/// compiler.
+struct StubDML {}
+impl DML for StubDML {
+    type Addr = RID;
+
+    fn delete(&self, _addr: &Self::Addr, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+    {
+        unimplemented!()
+    }
+
+    fn evict(&self, _addr: &Self::Addr)
+    {
+        unimplemented!()
+    }
+
+    fn get<T: Cacheable, R: CacheRef>(&self, _addr: &Self::Addr)
+        -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
+    {
+        unimplemented!()
+    }
+
+    fn pop<T: Cacheable, R: CacheRef>(&self, _rid: &Self::Addr, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
+    {
+        unimplemented!()
+    }
+
+    fn put<T: Cacheable>(&self, _cacheable: T, _compression: Compression,
+                             _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr>> + Send>>
+    {
+        unimplemented!()
+    }
+
+    fn repay(&self, _credit: Credit)
+    {
+        unimplemented!()
+    }
+
+    fn sync_all(&self, _txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
+    {
+        unimplemented!()
+    }
+}
+
 
 /// Borrow enough credit for an insertion.
 ///
@@ -86,7 +137,10 @@ fn alloct_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     for i in 0..n {
         let k = PBA::new(1, i as LbaT);
         let v = RID(i as u64);
-        ld.insert(k, v, Credit::null());
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, Credit::null())
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<DRP, PBA, RID>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -127,7 +181,10 @@ fn ridt_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         let addr = PBA::new(0, i as LbaT);
         let drp = DRP::new(addr, Compression::None, 40000, 40000, 0);
         let v = RidtEntry::new(drp);
-        ld.insert(k, v, Credit::null());
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, Credit::null())
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<DRP, RID, RidtEntry>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -157,7 +214,10 @@ fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
         };
         let v = FSValue::BlobExtent(extent);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -174,7 +234,10 @@ fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         };
         let v = FSValue::DirEntry(dirent);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -196,7 +259,10 @@ fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
         };
         let v = FSValue::DirEntries(vec![dirent0, dirent1]);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -208,7 +274,10 @@ fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::DyingInode(DyingInode::from(0));
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -230,7 +299,10 @@ fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable
         let extattr = ExtAttr::Blob(blob_ext_attr);
         let v = FSValue::ExtAttr(extattr);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -250,7 +322,10 @@ fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetab
         let extattr = ExtAttr::Inline(inline_ext_attr);
         let v = FSValue::ExtAttr(extattr);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -282,7 +357,10 @@ fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         let extattr1 = ExtAttr::Blob(blob_ext_attr1);
         let v = FSValue::ExtAttrs(vec![extattr0, extattr1]);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -296,7 +374,10 @@ fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetabl
         let extent = InlineExtent::new(Arc::new(dbs));
         let v = FSValue::InlineExtent(extent);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -322,7 +403,10 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         };
         let v = FSValue::Inode(inode);
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -334,7 +418,10 @@ fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         let k = FSKey::new(i as u64, ObjKey::Inode);
         let v = FSValue::Property(Property::RecordSize(17));
         let credit = borrow_credit(wb, &v);
-        ld.insert(k, v, credit);
+        ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))

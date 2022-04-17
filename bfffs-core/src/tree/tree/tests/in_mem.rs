@@ -206,6 +206,68 @@ root:
 "#);
 }
 
+/// Insert an entry for a key that already exists.  The Value type needs dclone.
+#[test]
+fn insert_dup_dclone() {
+    let txg = TxgT::from(42);
+    let mut mock = mock_dml();
+    mock.expect_pop::<DivBufShared, DivBuf>()
+        .with(eq(0), eq(txg))
+        .times(1)
+        .returning(|_, _| future::ok(Box::new(DivBufShared::from(vec![])))
+                   .boxed()
+        );
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(
+        dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Leaf:
+          credit: 16
+          items:
+            0: 0
+"#));
+    let r = tree.clone().insert(0, NeedsDcloneV(100), txg, Credit::forge(8))
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(Some(NeedsDcloneV(0))));
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 42
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 16
+          items:
+            0: 100
+"#);
+}
+
 /// When overwriting an existing value, don't split the leaf node, even if it's
 /// full
 #[test]
@@ -8662,6 +8724,71 @@ root:
         .try_collect()
         .now_or_never().unwrap();
     assert_eq!(r, Ok(vec![(1, 1.0), (3, 3.0)]));
+}
+
+/// Remove a Value that requires dclone/ddrop
+#[test]
+fn remove_dclone() {
+    let txg = TxgT::from(42);
+    let mut mock = mock_dml();
+    mock.expect_pop::<DivBufShared, DivBuf>()
+        .with(eq(1), eq(txg))
+        .times(1)
+        .returning(|_, _| future::ok(Box::new(DivBufShared::from(vec![])))
+                   .boxed()
+        );
+    let dml = Arc::new(mock);
+    let tree = Arc::new(Tree::<u32, MockDML, u32, NeedsDcloneV>::from_str(
+        dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 42
+    ptr:
+      Mem:
+        Leaf:
+          credit: 48
+          items:
+            0: 0
+            1: 1
+            2: 2
+  "#));
+    let r = tree.clone().remove(1, txg, Credit::null())
+        .now_or_never().unwrap();
+    assert_eq!(r, Ok(Some(NeedsDcloneV(1))));
+    assert_eq!(format!("{}", tree),
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 1
+  elem:
+    key: 0
+    txgs:
+      start: 41
+      end: 43
+    ptr:
+      Mem:
+        Leaf:
+          credit: 32
+          items:
+            0: 0
+            2: 2
+"#);
 }
 
 #[test]
