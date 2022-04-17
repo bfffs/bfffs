@@ -750,10 +750,7 @@ mod t {
 mod database {
     use super::super::*;
     use super::super::super::{ForestKey, ForestValue};
-    use crate::{
-        tree::{OPEN_MTX, RangeQuery, Tree},
-        util::basic_runtime
-    };
+    use crate::tree::{OPEN_MTX, RangeQuery, Tree};
     use futures::{
         task::Poll,
         future
@@ -768,11 +765,10 @@ mod database {
         format!("{:?}", label);
     }
 
-    #[test]
-    fn check_ok() {
+    #[tokio::test]
+    async fn check_ok() {
         let _guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -806,18 +802,15 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        let r = db.check().await.unwrap();
         assert!(r);
     }
 
-    #[test]
-    fn check_idml_fails() {
+    #[tokio::test]
+    async fn check_idml_fails() {
         let _guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -851,18 +844,15 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        let r = db.check().await.unwrap();
         assert!(!r);
     }
 
-    #[test]
-    fn check_tree_fails() {
+    #[tokio::test]
+    async fn check_tree_fails() {
         let _guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -896,18 +886,14 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        let r = db.check().await.unwrap();
         assert!(!r);
     }
 
-    #[test]
-    fn flush() {
+    #[tokio::test]
+    async fn flush() {
         const TXG: TxgT = TxgT(42);
-
-        let rt = basic_runtime();
 
         let mut idml = IDML::default();
         idml.expect_txg()
@@ -920,47 +906,35 @@ mod database {
 
         let forest = Tree::default();
 
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            Database::flush(&db.inner).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        Database::flush(&db.inner).await.unwrap();
     }
 
     /// Flushing should be a no-op when there is no dirty data.
-    #[test]
-    fn flush_empty() {
+    #[tokio::test]
+    async fn flush_empty() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.inner.dirty.store(false, Ordering::Relaxed);
-            Database::flush(&db.inner).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.inner.dirty.store(false, Ordering::Relaxed);
+        Database::flush(&db.inner).await.unwrap();
     }
 
-    #[test]
-    fn shutdown() {
+    #[tokio::test]
+    async fn shutdown() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.shutdown().await
-        });
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.shutdown().await
     }
 
-    #[test]
-    fn sync_transaction() {
+    #[tokio::test]
+    async fn sync_transaction() {
         let mut seq = Sequence::new();
         let mut idml = IDML::default();
         let mut forest = Tree::default();
-
-        let rt = basic_runtime();
 
         idml.expect_advance_transaction_inner()
             .once()
@@ -1013,30 +987,22 @@ mod database {
             .with(eq(TxgT::from(0)))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.sync_transaction()
-            .and_then(move |_| {
-                // Syncing a 2nd time should be a no-op, since the database
-                // isn't dirty.
-                db.sync_transaction()
-            }).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.sync_transaction().await.unwrap();
+        // Syncing a 2nd time should be a no-op, since the database
+        // isn't dirty.
+        db.sync_transaction().await.unwrap();
     }
 
     /// Syncing a transaction that isn't dirty should be a no-op
-    #[test]
-    fn sync_transaction_empty() {
+    #[tokio::test]
+    async fn sync_transaction_empty() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.inner.dirty.store(false, Ordering::Relaxed);
-            db.sync_transaction().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.inner.dirty.store(false, Ordering::Relaxed);
+        db.sync_transaction().await.unwrap();
     }
 }
 
