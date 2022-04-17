@@ -9,7 +9,6 @@ ignore = [
 	# futures combinators.
 	"bfffs-core",
 ]
-edition = "2018"
 force_multiline_blocks = true
 format_strings = true
 group_imports = "StdExternalCrate"
