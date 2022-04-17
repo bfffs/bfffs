@@ -10,7 +10,9 @@ use crate::{
     writeback::{Credit, WriteBack}
 };
 use divbuf::DivBufShared;
-use futures::{Future, FutureExt, Stream, TryFutureExt, TryStreamExt, future};
+use futures::{
+    Future, FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt, future
+};
 use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
 use serde_derive::{Deserialize, Serialize};
@@ -80,7 +82,8 @@ impl<'a> IDML {
 
     /// Foreground RIDT/AllocT consistency check.
     ///
-    /// Checks that the RIDT and AllocT are exact inverses of each other.
+    /// Checks that the RIDT and AllocT are exact inverses of each other and
+    /// that the DDML's allocated space count is correct.
     ///
     /// # Returns
     ///
@@ -88,13 +91,16 @@ impl<'a> IDML {
     fn check_ridt(&self) -> impl Future<Output=Result<bool>> {
         let alloct2 = self.alloct.clone();
         let alloct3 = self.alloct.clone();
+        let alloct4 = self.alloct.clone();
         let ridt2 = self.ridt.clone();
         let ridt3 = self.ridt.clone();
+        let ddml2 = self.ddml.clone();
         // Grab the TXG lock exclusively, just so other users can't modify the
         // RIDT or AllocT while we're checking them.  NB: it might be
         // preferable to use a dedicated lock for this instead.
         self.transaction.write()
         .then(move |txg_guard| {
+            let allocated = ddml2.allocated();
             let alloct_fut = alloct2.range(..)
             .try_fold(true, move |passes, (pba, rid)| {
                 ridt2.get(rid)
@@ -118,6 +124,7 @@ impl<'a> IDML {
                     }
                 })
             });
+
             let ridt_fut = ridt3.range(..)
             .try_fold(true, move |passes, (rid, entry)| {
                 alloct3.get(entry.drp.pba())
@@ -134,10 +141,35 @@ impl<'a> IDML {
                     }
                 })
             });
-            future::try_join(alloct_fut, ridt_fut)
-            .map_ok(move |(x, y)| {
+
+            let indirect_bfut = ridt3.range(..)
+            .try_fold(0, |size, (_rid, entry)| {
+                future::ok(size + entry.drp.asize())
+            });
+            let ridt_bfut = ridt3.addresses(..)
+            .fold(0, |size, drp| future::ready(size + drp.asize()))
+            .map(Ok);
+            let alloct_bfut = alloct4.addresses(..)
+            .fold(0, |size, drp| future::ready(size + drp.asize()))
+            .map(Ok);
+            let afut = future::try_join3(indirect_bfut, ridt_bfut, alloct_bfut)
+            .map_ok(move |(iblocks, rblocks, ablocks)| {
+                if allocated != iblocks + rblocks + ablocks {
+                    eprintln!(concat!("DDML allocated space inconsistency.  ",
+                        "DDML reports {} blocks allocated, but there are {} ",
+                        "indirect blocks, {} blocks used by the RIDT, and {} ",
+                        "blocks used by the alloct"),
+                        allocated, iblocks, rblocks, ablocks);
+                    false
+                } else {
+                    true
+                }
+            });
+
+            future::try_join3(alloct_fut, ridt_fut, afut)
+            .map_ok(move |(x, y, z)| {
                 drop(txg_guard);
-                x & y
+                x & y & z
             })
         })
     }
@@ -474,7 +506,7 @@ impl DML for IDML {
                      )
                 } else {
                     let ridt_fut = ridt2.insert(rid, entry, txg, Credit::null())
-                        .map_ok(drop);
+                        .map_ok(|old| assert!(old.is_some()));
                     ridt_fut.boxed()
                 }
             });
@@ -736,27 +768,41 @@ mod t {
                    bincode::serialized_size(&typical).unwrap() as usize);
     }
 
-    #[test]
-    fn check_ridt_ok() {
+    #[tokio::test]
+    async fn check_ridt_ok() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = mock_ddml();
+        let mut ddml = mock_ddml();
+        ddml.expect_allocated().return_const(1u64);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         inject_record(&idml, rid, &drp, 2);
 
-        assert!(idml.check_ridt()
-                .now_or_never().unwrap()
-                .unwrap());
+        assert!(idml.check_ridt().await.unwrap());
     }
 
-    #[test]
-    fn check_ridt_extraneous_alloct() {
+    #[tokio::test]
+    async fn check_ridt_allocation_mismatch() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = mock_ddml();
+        let mut ddml = mock_ddml();
+        ddml.expect_allocated().return_const(42u64);
+        let arc_ddml = Arc::new(ddml);
+        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        inject_record(&idml, rid, &drp, 2);
+
+        assert!(!idml.check_ridt().await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn check_ridt_extraneous_alloct() {
+        let rid = RID(42);
+        let drp = DRP::random(Compression::None, 4096);
+        let cache = Cache::default();
+        let mut ddml = mock_ddml();
+        ddml.expect_allocated().return_const(1u64);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the AllocT but not the RIDT
@@ -765,17 +811,16 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
 
-        assert!(!idml.check_ridt()
-                .now_or_never().unwrap()
-                .unwrap());
+        assert!(!idml.check_ridt().await.unwrap());
     }
 
-    #[test]
-    fn check_ridt_extraneous_ridt() {
+    #[tokio::test]
+    async fn check_ridt_extraneous_ridt() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = mock_ddml();
+        let mut ddml = mock_ddml();
+        ddml.expect_allocated().return_const(1u64);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a record into the RIDT but not the AllocT
@@ -785,18 +830,17 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
 
-        assert!(!idml.check_ridt()
-                .now_or_never().unwrap()
-                .unwrap());
+        assert!(!idml.check_ridt().await.unwrap());
     }
 
-    #[test]
-    fn check_ridt_mismatch() {
+    #[tokio::test]
+    async fn check_ridt_mismatch() {
         let rid = RID(42);
         let drp = DRP::random(Compression::None, 4096);
         let drp2 = DRP::random(Compression::None, 4096);
         let cache = Cache::default();
-        let ddml = mock_ddml();
+        let mut ddml = mock_ddml();
+        ddml.expect_allocated().return_const(1u64);
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
         // Inject a mismatched pair of records
@@ -809,9 +853,7 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
 
-        assert!(!idml.check_ridt()
-                .now_or_never().unwrap()
-                .unwrap());
+        assert!(!idml.check_ridt().await.unwrap());
     }
 
     /// Delete a record that does not exist.  This typically indicate a
