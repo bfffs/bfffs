@@ -8,7 +8,8 @@ use bfffs_core::pool::*;
 use bfffs_core::vdev_block::*;
 use bfffs_core::vdev_file::*;
 use bfffs_core::raid;
-use futures::{TryStreamExt, future};
+use futures::{StreamExt, TryStreamExt, future};
+use rstest::rstest;
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex}
@@ -125,6 +126,7 @@ mod persistence {
 
 mod t {
     use bfffs_core::{
+        Error,
         cache::*,
         pool::*,
         ddml::*,
@@ -262,6 +264,114 @@ root:
                 .unwrap();
             assert_ne!(tree_id2, first_tree_id);
             assert_ne!(tree_id2, tree_id1);
+        }
+    }
+
+    mod destroy_fs {
+        use super::*;
+
+        async fn assert_no_such_tree(
+            db: &Database,
+            parent: Option<TreeID>,
+            tree_id: TreeID,
+            name: &str)
+        {
+            /* The tree's name should be removed from the Forest */
+            assert_eq!(Ok((None, None)), db.lookup_fs(name).await);
+            if let Some(p) = parent {
+                // Really, readdir may return undestroyed sister datasets, but
+                // none of these tests create any.
+                assert!(db.readdir(p, 0).next().await.is_none());
+            }
+            /* And so should the tree itself */
+            let r = db.fsread(tree_id, |_| future::ok(())).await;
+            assert_eq!(Err(Error::ENOENT), r);
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn child(#[case] sync: bool) {
+            let (db, _tempdir, parent) = harness().await;
+            let tree_id1 = db.create_fs(Some(parent), "foo")
+                .await
+                .unwrap();
+            if sync {
+                db.sync_transaction().await.unwrap();
+            }
+            db.destroy_fs(Some(parent), tree_id1, "foo").await.unwrap();
+
+            assert_no_such_tree(&db, Some(parent), tree_id1, "foo").await;
+        }
+
+        /// Can't destroy a tree with a child.
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn ebusy(#[case] sync: bool) {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            let _tree_id1 = db.create_fs(Some(first_tree_id), "foo")
+                .await
+                .unwrap();
+            if sync {
+                db.sync_transaction().await.unwrap();
+            }
+            assert_eq!(
+                Err(Error::EBUSY),
+                db.destroy_fs(None, first_tree_id, "").await
+            );
+        }
+
+        /// Can't destroy a tree that does not exist
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn enoent(#[case] sync: bool) {
+            let (db, _tempdir, first_tree_id) = harness().await;
+            if sync {
+                db.sync_transaction().await.unwrap();
+            }
+            assert_eq!(
+                Err(Error::ENOENT),
+                db.destroy_fs(Some(first_tree_id), TreeID(42), "foo").await
+            );
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn grandchild(#[case] sync: bool) {
+            let (db, _tempdir, tree_id0) = harness().await;
+            let tree_id1 = db.create_fs(Some(tree_id0), "foo")
+                .await
+                .unwrap();
+            let tree_id2 = db.create_fs(Some(tree_id1), "bar")
+                .await
+                .unwrap();
+            if sync {
+                db.sync_transaction().await.unwrap();
+            }
+            db.destroy_fs(Some(tree_id1), tree_id2, "bar").await.unwrap();
+
+            assert_no_such_tree(&db, Some(tree_id1), tree_id2, "foo/bar").await;
+        }
+
+        #[rstest]
+        #[case(false)]
+        #[case(true)]
+        #[tokio::test]
+        async fn root(#[case] sync: bool) {
+            let (db, _tempdir, tree_id) = harness().await;
+            if sync {
+                db.sync_transaction().await.unwrap();
+            }
+            db.destroy_fs(None, tree_id, "").await.unwrap();
+
+            assert_no_such_tree(&db, None, tree_id, "").await;
         }
     }
 

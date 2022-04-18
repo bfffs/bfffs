@@ -153,6 +153,41 @@ struct Inner {
 }
 
 impl Inner {
+    async fn destroy_fs(
+        inner: Arc<Self>,
+        parent: Option<TreeID>,
+        tree_id: TreeID,
+        name: &str
+        ) -> Result<()>
+    {
+        // First, remove the tree from the forest.  If this succeeds, delete it
+        // from disk.  Ensure that it does not remain in the cache, too.  Do
+        // this all in a single transaction.
+        let tname = name.split('/').last().unwrap();
+        inner.dirty.store(true, Ordering::Relaxed);
+
+        // First check that the tree exists ane ensure it is cached.
+        Inner::open_filesystem(&inner, tree_id).await?;
+
+        let txg = inner.idml.txg().await;
+        // Delete it from the forest while locking fs_trees
+        let itree = {
+            let mut wg = inner.fs_trees.write().await;
+            inner.forest.unlink(parent, tree_id, tname, *txg).await?;
+            wg.remove(&tree_id).unwrap()
+        };
+
+        // Finally delete its contents
+        let cr = itree.credit_requirements();
+        let credit = inner.idml.borrow_credit(cr.range_delete).await;
+        // XXX range_delete is effective, but it prevents any transactions from
+        // syncing, and it holds all of the affected metadata in RAM at the same
+        // time.  TODO: for better efficiency, create a restartable
+        // Tree::destroy method that partially destroys a tree, iterating like
+        // Tree::flush.
+        itree.range_delete(.., *txg, credit).await
+    }
+
     fn new(idml: Arc<IDML>, forest: Forest) -> Self
     {
         let dirty = AtomicBool::new(true);
@@ -254,6 +289,15 @@ pub struct Dirent {
     pub name: String,
     pub id: TreeID,
     pub offs: u64
+}
+
+/// Information about the overall properties of a bfffs pool.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Stat {
+    /// Number of blocks have been allocated across the entire pool.
+    pub allocated: LbaT,
+    /// The approximate usable size of the Pool in blocks.
+    pub size: LbaT,
 }
 
 pub struct Database {
@@ -495,6 +539,25 @@ impl Database {
         Ok(tree_id)
     }
 
+    /// Destroy an unmounted file system
+    // Outline:
+    // 1) Move its entry in the Forest to a "destroying" area.
+    // 2) Wakeup the Reaper task
+    //
+    // TODO: create a Reaper task that destroys file systems in the background.
+    // On startup, it should check the destroying area.  It should check it
+    // again whenever it gets woken.  For each dataset to destroy, it should get
+    // credit and tell the Tree layer to destroy it.
+    pub async fn destroy_fs(
+        &self,
+        parent: Option<TreeID>,
+        tree_id: TreeID,
+        name: &str
+        ) -> Result<()>
+    {
+        Inner::destroy_fs(self.inner.clone(), parent, tree_id, name).await
+    }
+
     fn fsread_real<F, B, R>(&self, tree_id: TreeID, f: F)
         -> impl Future<Output=Result<R>> + Send
         where F: FnOnce(ReadOnlyFilesystem) -> B + Send + 'static,
@@ -597,6 +660,14 @@ impl Database {
         future::join(self.syncer.shutdown(),
                      self.cleaner.shutdown())
         .await;
+    }
+
+    /// Retrieve information about a pool's space usage
+    pub fn stat(&self) -> Stat {
+        Stat {
+            allocated: self.inner.idml.allocated(),
+            size: self.inner.idml.size(),
+        }
     }
 
     /// Finish the current transaction group and start a new one.
@@ -750,10 +821,7 @@ mod t {
 mod database {
     use super::super::*;
     use super::super::super::{ForestKey, ForestValue};
-    use crate::{
-        tree::{OPEN_MTX, RangeQuery, Tree},
-        util::basic_runtime
-    };
+    use crate::tree::{OPEN_MTX, RangeQuery, Tree};
     use futures::{
         task::Poll,
         future
@@ -768,11 +836,12 @@ mod database {
         format!("{:?}", label);
     }
 
-    #[test]
-    fn check_ok() {
-        let _guard = OPEN_MTX.lock().unwrap();
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn check_ok() {
+        let guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -806,18 +875,18 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        drop(guard);
+        let r = db.check().await.unwrap();
         assert!(r);
     }
 
-    #[test]
-    fn check_idml_fails() {
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn check_idml_fails() {
         let _guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -851,18 +920,17 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        let r = db.check().await.unwrap();
         assert!(!r);
     }
 
-    #[test]
-    fn check_tree_fails() {
+    // await_holding_lock is ok, because the tests don't share reactors
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn check_tree_fails() {
         let _guard = OPEN_MTX.lock().unwrap();
 
-        let rt = basic_runtime();
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
 
@@ -896,18 +964,14 @@ mod database {
             .once()
             .return_once(|_: RangeFull| rq);
 
-        let r = rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.check().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        let r = db.check().await.unwrap();
         assert!(!r);
     }
 
-    #[test]
-    fn flush() {
+    #[tokio::test]
+    async fn flush() {
         const TXG: TxgT = TxgT(42);
-
-        let rt = basic_runtime();
 
         let mut idml = IDML::default();
         idml.expect_txg()
@@ -920,47 +984,35 @@ mod database {
 
         let forest = Tree::default();
 
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            Database::flush(&db.inner).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        Database::flush(&db.inner).await.unwrap();
     }
 
     /// Flushing should be a no-op when there is no dirty data.
-    #[test]
-    fn flush_empty() {
+    #[tokio::test]
+    async fn flush_empty() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.inner.dirty.store(false, Ordering::Relaxed);
-            Database::flush(&db.inner).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.inner.dirty.store(false, Ordering::Relaxed);
+        Database::flush(&db.inner).await.unwrap();
     }
 
-    #[test]
-    fn shutdown() {
+    #[tokio::test]
+    async fn shutdown() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.shutdown().await
-        });
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.shutdown().await
     }
 
-    #[test]
-    fn sync_transaction() {
+    #[tokio::test]
+    async fn sync_transaction() {
         let mut seq = Sequence::new();
         let mut idml = IDML::default();
         let mut forest = Tree::default();
-
-        let rt = basic_runtime();
 
         idml.expect_advance_transaction_inner()
             .once()
@@ -1013,30 +1065,22 @@ mod database {
             .with(eq(TxgT::from(0)))
             .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.sync_transaction()
-            .and_then(move |_| {
-                // Syncing a 2nd time should be a no-op, since the database
-                // isn't dirty.
-                db.sync_transaction()
-            }).await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.sync_transaction().await.unwrap();
+        // Syncing a 2nd time should be a no-op, since the database
+        // isn't dirty.
+        db.sync_transaction().await.unwrap();
     }
 
     /// Syncing a transaction that isn't dirty should be a no-op
-    #[test]
-    fn sync_transaction_empty() {
+    #[tokio::test]
+    async fn sync_transaction_empty() {
         let idml = IDML::default();
         let forest = Tree::default();
 
-        let rt = basic_runtime();
-
-        rt.block_on(async {
-            let db = Database::new(Arc::new(idml), forest.into());
-            db.inner.dirty.store(false, Ordering::Relaxed);
-            db.sync_transaction().await
-        }).unwrap();
+        let db = Database::new(Arc::new(idml), forest.into());
+        db.inner.dirty.store(false, Ordering::Relaxed);
+        db.sync_transaction().await.unwrap();
     }
 }
 

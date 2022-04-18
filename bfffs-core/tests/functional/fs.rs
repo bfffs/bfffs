@@ -685,6 +685,43 @@ mod fs {
         assert_ts_changed(&fs, &fdh, false, false, false, false).await;
     }
 
+    /// Destroying a file system should free its contents
+    // This is really a test of Database::destroy_fs, but it needs to be in this
+    // file so we can populate the file system.
+    #[tokio::test]
+    async fn destroy_fs() {
+        let (fs, _cache, db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let filename = OsString::from("x");
+        let buf = vec![42u8; 4096];
+        let ns = ExtAttrNamespace::User;
+        let xname = OsString::from("foo");
+        let xvalue = vec![42u8; 4096];
+        fs.sync().await;
+
+        let stat1 = db.stat();
+
+        // Create a file with blob extents and extended attrs
+        let fd = fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
+        let fdh = fd.handle();
+        assert_eq!(Ok(4096), fs.write(&fdh, 0, &buf[..], 0).await);
+        fs.setextattr(&fdh, ns, &xname, &xvalue[..]).await.unwrap();
+        fs.sync().await;
+
+        let stat2 = db.stat();
+        assert_eq!(stat2.allocated - stat1.allocated, 2);
+
+        drop(fs);
+        let tree_id = db.lookup_fs("").await.unwrap().1.unwrap();
+        db.destroy_fs(None, tree_id, "").await.unwrap();
+
+        // The fs tree and both blobs should've been deallocated.  Other
+        // metadata stuff might've been deallocated too, in the forest or idml.
+        let stat3 = db.stat();
+        assert!(stat3.allocated < stat1.allocated);
+    }
+
     // Dumps a nearly empty FS tree.  All of the real work is done in
     // Tree::dump, so the bulk of testing is in the tree tests.
     #[tokio::test]
@@ -3668,6 +3705,7 @@ root:
     /// Unlink a file with blobs on disk
     #[tokio::test]
     async fn unlink_with_blobs() {
+        // Must write a lot of data to ensure the Tree is of depth 2
         const NBLOCKS: usize = 1024;
         let (fs, _cache, _db) = harness4k().await;
         let root = fs.root();

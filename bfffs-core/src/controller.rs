@@ -21,6 +21,7 @@ use futures_locks::RwLock;
 use std::{
     collections::BTreeMap,
     io,
+    ops::Deref,
     pin::Pin,
     sync::{Arc, Weak}
 };
@@ -40,6 +41,7 @@ pub struct Dirent {
 
 pub struct Controller {
     db: Arc<Database>,
+    /// Collection of all currently-mounted file systems
     filesystems: RwLock<BTreeMap<TreeID, Weak<Fs>>>,
 }
 
@@ -91,6 +93,29 @@ impl Controller {
         }.await
     }
 
+    /// Destroy a filesystem
+    ///
+    ///
+    /// # Arguments
+    ///
+    /// - `name`    -   Name of the file system to destroy, including pool name
+    pub async fn destroy_fs(&self, name: &str) -> Result<()>
+    {
+        let dsname = self.strip_pool_name(name)?;
+        let guard = self.filesystems.read().await;
+        let (parent, tree_id) = self.db.lookup_fs(dsname).await?;
+        match tree_id {
+            Some(id) => {
+                if let Some(_fs) = guard.get(&id) {
+                    Err(Error::EBUSY)
+                } else {
+                    self.db.destroy_fs(parent, id, dsname).await
+                }
+            }
+            None => Err(Error::ENOENT)
+        }
+    }
+
     /// Dump a YAMLized representation of the Forest in text format.
     pub async fn dump_forest(&self, f: &mut dyn io::Write) -> Result<()>
     {
@@ -108,13 +133,26 @@ impl Controller {
     pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
-        let inheritable_propname = propname.inheritable();
         let dsname = self.strip_pool_name(dataset)?;
-        let tree_id = match self.db.lookup_fs(dsname).await? {
-            (_parent, Some(tree_id)) => tree_id,
-            (_, None) => return Err(Error::ENOENT)
-        };
         let guard = self.filesystems.read().await;
+        match self.db.lookup_fs(dsname).await? {
+            (_parent, Some(tree_id)) => {
+                self.get_prop_locked(&guard, dataset, tree_id, propname).await
+            }
+            (_, None) => Err(Error::ENOENT)
+        }
+    }
+
+    async fn get_prop_locked<T>(
+        &self,
+        guard: &T,
+        dataset: &str,
+        tree_id: TreeID,
+        propname: PropertyName)
+        -> Result<(Property, PropertySource)>
+        where T: Deref<Target = BTreeMap<TreeID, Weak<Fs>>>
+    {
+        let inheritable_propname = propname.inheritable();
         if let Some(fs) = guard.get(&tree_id).and_then(Weak::upgrade) {
             fs.get_prop(inheritable_propname).await
         } else {
@@ -327,17 +365,28 @@ impl Controller {
     {
         use nix::mount::{unmount, MntFlags};
 
+        let dsname = self.strip_pool_name(name)?;
         let mut flags = MntFlags::empty();
         if force {
             flags.insert(MntFlags::MNT_FORCE);
         }
-        let (prop, _) = self.get_prop(name, PropertyName::Mountpoint).await?;
+        let mut guard = self.filesystems.write().await;
+        let tree_id = match self.db.lookup_fs(dsname).await? {
+            (_, Some(id)) => id,
+            (_, None) => return Err(Error::ENOENT)
+        };
+        let (prop, _) = self.get_prop_locked(&guard, name, tree_id,
+                                             PropertyName::Mountpoint)
+            .await?;
+
         // unmount(2) can block waiting for the daemon to respond.  And the
         // daemon might be using this thread to read from /dev/fuse.  So we must
         // spawn a separate thread for unmount(2).
         tokio::task::spawn_blocking(move || {
             unmount(prop.as_str(), flags)
                 .map_err(Error::from)
-        }).await.unwrap()
+        }).await.unwrap()?;
+        guard.remove(&tree_id);
+        Ok(())
     }
 }
