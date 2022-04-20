@@ -3,7 +3,6 @@
 use crate::{
     label::*,
     types::*,
-    util::*,
     vdev::*
 };
 use futures::{
@@ -20,7 +19,7 @@ use std::{
     ops::Range,
     pin::Pin,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU32, Ordering},
         Arc
     }
 };
@@ -76,48 +75,9 @@ struct Stats {
 
     /// The total size of each `Cluster`
     size: Vec<LbaT>,
-
-    /// The total amount of allocated space in each `Cluster`, excluding
-    /// space that has already been freed but not erased.
-    allocated_space: Vec<AtomicU64>,
 }
 
 impl Stats {
-    /// How many blocks have been allocated, including blocks that have been
-    /// freed but not erased?
-    fn allocated(&self) -> LbaT {
-        self.allocated_space.iter()
-            .map(|alloc| alloc.load(Ordering::Relaxed))
-            .sum()
-    }
-
-    /// Choose the best Cluster for the next write
-    ///
-    /// This decision is subjective, but should strive to:
-    /// 1) Balance capacity utilization amongst all Clusters
-    /// 2) Balance IOPs amongst all Clusters
-    /// 3) Run quickly
-    fn choose_cluster(&self) -> ClusterT {
-        // This simple implementation weighs both capacity utilization and IOPs,
-        // though above 95% utilization it switches to weighing by capacity
-        // utilization only.  It's slow because it iterates through all clusters
-        // on every write.  A better implementation would perform the full
-        // calculation only occasionally, to update coefficients, and perform a
-        // quick calculation on each write.
-        (0..self.size.len()).map(|i| {
-            let alloc = self.allocated_space[i].load(Ordering::Relaxed) as f64;
-            let space_util = alloc / (self.size[i] as f64);
-            let qdepth = self.queue_depth[i].load(Ordering::Relaxed) as f64;
-            let queue_fraction = qdepth / self.optimum_queue_depth[i];
-            let q_coeff = if 0.95 > space_util {0.95 - space_util} else {0.0};
-            let weight = q_coeff * queue_fraction + space_util;
-            (i, weight)
-        })
-        .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
-        .map(|(i, _)| i)
-        .unwrap() as ClusterT
-    }
-
     /// The approximate usable size of the Pool
     fn size(&self) -> LbaT {
         self.size.iter().sum()
@@ -141,13 +101,44 @@ impl Pool {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
-        self.stats.allocated()
+        self.clusters.iter()
+            .map(Cluster::allocated)
+            .sum()
     }
 
     /// Assert that the given zone was clean as of the given transaction
     #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
         self.clusters[cluster as usize].assert_clean_zone(zone, txg)
+    }
+
+    /// Choose the best Cluster for the next write
+    ///
+    /// This decision is subjective, but should strive to:
+    /// 1) Balance capacity utilization amongst all Clusters
+    /// 2) Balance IOPs amongst all Clusters
+    /// 3) Run quickly
+    fn choose_cluster(&self) -> ClusterT {
+        // This simple implementation weighs both capacity utilization and IOPs,
+        // though above 95% utilization it switches to weighing by capacity
+        // utilization only.  It's slow because it iterates through all clusters
+        // on every write.  A better implementation might perform the full
+        // calculation only occasionally, to update coefficients, and perform a
+        // quick calculation on each write.
+        (0..self.clusters.len())
+        .map(|i| {
+            let alloc = self.clusters[i].allocated() as f64;
+            let space_util = alloc / (self.stats.size[i] as f64);
+            let qdepth = self.stats.queue_depth[i]
+                .load(Ordering::Relaxed) as f64;
+            let queue_fraction = qdepth / self.stats.optimum_queue_depth[i];
+            let q_coeff = if 0.95 > space_util {0.95 - space_util} else {0.0};
+            let weight = q_coeff * queue_fraction + space_util;
+            (i, weight)
+        })
+        .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
+        .map(|(i, _)| i)
+        .unwrap() as ClusterT
     }
 
     /// Create a new `Cluster` from unused files or devices.
@@ -208,8 +199,6 @@ impl Pool {
     // above the layer of the Pool.
     pub fn free(&self, pba: PBA, length: LbaT) -> BoxVdevFut
     {
-        let idx = pba.cluster as usize;
-        self.stats.allocated_space[idx].fetch_sub(length, Ordering::Relaxed);
         Box::pin(self.clusters[pba.cluster as usize].free(pba.lba, length))
     }
 
@@ -221,9 +210,6 @@ impl Pool {
         let size = clusters.iter()
             .map(Cluster::size)
             .collect::<Vec<_>>();
-        let allocated_space = clusters.iter()
-            .map(|cluster| AtomicU64::new(cluster.allocated()))
-            .collect::<Vec<_>>();
         let optimum_queue_depth = clusters.iter()
             .map(|cluster| f64::from(cluster.optimum_queue_depth()))
             .collect::<Vec<_>>();
@@ -234,7 +220,6 @@ impl Pool {
             queue_depth,
             optimum_queue_depth,
             size,
-            allocated_space,
         });
         Pool{clusters, name, stats, uuid}
     }
@@ -360,20 +345,15 @@ impl Pool {
     pub fn write(&self, buf: IoVec, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<PBA>> + Send>>
     {
-        let cluster = self.stats.choose_cluster();
+        let cluster = self.choose_cluster();
         let cidx = cluster as usize;
-        let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
         let stats2 = self.stats.clone();
         match self.clusters[cidx].write(buf, txg) {
             Ok((lba, wfut)) => {
                 self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
                 wfut.map(move |r: Result<()>| {
                     stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
-                    r.map(|_| {
-                        stats2.allocated_space[cidx]
-                            .fetch_add(space, Ordering::Relaxed);
-                        PBA::new(cluster, lba)
-                    })
+                    r.and(Ok(PBA::new(cluster, lba)))
                 }).boxed()
             },
             Err(e) => future::err(e).boxed()
@@ -420,11 +400,96 @@ mod label {
 
 mod pool {
     use super::super::*;
-    use crate::cluster;
+    use crate::{cluster, util::*};
     use divbuf::DivBufShared;
     use futures::future;
     use mockall::predicate::*;
     use pretty_assertions::assert_eq;
+
+    /// Two clusters, one full and one empty.  Choose the empty one
+    #[test]
+    fn choose_cluster_empty() {
+        let mut c0 = Cluster::default();
+        c0.expect_allocated().return_const(0u64);
+        c0.expect_size().return_const(1000u64);
+        c0.expect_optimum_queue_depth().return_const(10u32);
+        let mut c1 = Cluster::default();
+        c1.expect_allocated().return_const(1000u64);
+        c1.expect_size().return_const(1000u64);
+        c1.expect_optimum_queue_depth().return_const(10u32);
+        let clusters = vec![c0, c1];
+        let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        assert_eq!(pool.choose_cluster(), 0);
+
+        // Try the reverse, too
+        let mut c0 = Cluster::default();
+        c0.expect_allocated().return_const(1000u64);
+        c0.expect_size().return_const(1000u64);
+        c0.expect_optimum_queue_depth().return_const(10u32);
+        let mut c1 = Cluster::default();
+        c1.expect_allocated().return_const(0u64);
+        c1.expect_size().return_const(1000u64);
+        c1.expect_optimum_queue_depth().return_const(10u32);
+        let clusters = vec![c0, c1];
+        let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        assert_eq!(pool.choose_cluster(), 1);
+    }
+
+    /// Two clusters, one busy and one idle.  Choose the idle one
+    #[test]
+    fn choose_cluster_queue_depth() {
+        let clust = || {
+            let mut c = Cluster::default();
+            c.expect_allocated().return_const(0u64);
+            c.expect_size().return_const(1000u64);
+            c.expect_optimum_queue_depth().return_const(10u32);
+            c
+        };
+        let clusters = vec![clust(), clust()];
+        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        pool.stats.queue_depth[0].store(0, Ordering::Relaxed);
+        pool.stats.queue_depth[1].store(10, Ordering::Relaxed);
+        assert_eq!(pool.choose_cluster(), 0);
+
+        // Try the reverse, too
+        pool.stats.queue_depth[0].store(10, Ordering::Relaxed);
+        pool.stats.queue_depth[1].store(0, Ordering::Relaxed);
+        assert_eq!(pool.choose_cluster(), 1);
+    }
+
+    /// Two clusters, one nearly full and idle, the other busy but not very
+    /// full.  Choose the not very full one.
+    #[test]
+    fn choose_cluster_nearly_full() {
+        let mut c0 = Cluster::default();
+        c0.expect_allocated().return_const(960u64);
+        c0.expect_size().return_const(1000u64);
+        c0.expect_optimum_queue_depth().return_const(10u32);
+        let mut c1 = Cluster::default();
+        c1.expect_allocated().return_const(50u64);
+        c1.expect_size().return_const(1000u64);
+        c1.expect_optimum_queue_depth().return_const(10u32);
+        let clusters = vec![c0, c1];
+        let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        pool.stats.queue_depth[0].store(0, Ordering::Relaxed);
+        pool.stats.queue_depth[1].store(10, Ordering::Relaxed);
+        assert_eq!(pool.choose_cluster(), 1);
+
+        // Try the reverse, too
+        let mut c0 = Cluster::default();
+        c0.expect_allocated().return_const(50u64);
+        c0.expect_size().return_const(1000u64);
+        c0.expect_optimum_queue_depth().return_const(10u32);
+        let mut c1 = Cluster::default();
+        c1.expect_allocated().return_const(960u64);
+        c1.expect_size().return_const(1000u64);
+        c1.expect_optimum_queue_depth().return_const(10u32);
+        let clusters = vec![c0, c1];
+        let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        pool.stats.queue_depth[0].store(10, Ordering::Relaxed);
+        pool.stats.queue_depth[1].store(0, Ordering::Relaxed);
+        assert_eq!(pool.choose_cluster(), 0);
+    }
 
     #[test]
     fn find_closed_zone() {
@@ -492,7 +557,7 @@ mod pool {
     fn free() {
         let cluster = || {
             let mut c = Cluster::default();
-            c.expect_allocated().return_const(0u64);
+            c.expect_allocated().return_const(100u64);
             c.expect_optimum_queue_depth().return_const(10u32);
             c.expect_size().return_const(32_768_000u64);
             c.expect_uuid().return_const(Uuid::new_v4());
@@ -510,6 +575,8 @@ mod pool {
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
         assert!(rt.block_on(pool.free(PBA::new(1, 12345), 16)).is_ok());
+        // Freeing bytes should not decrease allocated.  Only erasing should.
+        assert_eq!(pool.allocated(), 200);
     }
 
     // optimum_queue_depth is always a smallish integer, so exact equality
@@ -528,8 +595,6 @@ mod pool {
 
         let clusters = vec![ cluster(), cluster() ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
-        assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 500);
-        assert_eq!(pool.stats.allocated_space[1].load(Ordering::Relaxed), 500);
         assert_eq!(pool.stats.optimum_queue_depth[0], 10.0);
         assert_eq!(pool.stats.optimum_queue_depth[1], 10.0);
         assert_eq!(pool.allocated(), 1000);
@@ -670,98 +735,6 @@ mod pool {
         let db0 = dbs.try_const().unwrap();
         let result = rt.block_on( pool.write(db0, TxgT::from(42)));
         assert_eq!(result.unwrap_err(), e);
-    }
-
-    // Make sure allocated space accounting is symmetric
-    #[test]
-    fn write_and_free() {
-        let mut cluster = Cluster::default();
-        cluster.expect_allocated().return_const(0u64);
-        cluster.expect_optimum_queue_depth().return_const(10u32);
-        cluster.expect_size().return_const(32_768_000u64);
-        cluster.expect_uuid().return_const(Uuid::new_v4());
-        cluster.expect_write()
-            .once()
-            .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
-        cluster.expect_free()
-            .once()
-            .return_once(|_, _| Box::pin(future::ok(())));
-
-        let rt = basic_runtime();
-        let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
-
-        let dbs = DivBufShared::from(vec![0u8; 1024]);
-        let db0 = dbs.try_const().unwrap();
-        let drp = rt.block_on( pool.write(db0, TxgT::from(42))).unwrap();
-        assert!(pool.stats.allocated_space[0].load(Ordering::Relaxed) > 0);
-        rt.block_on( pool.free(drp, 1)).unwrap();
-        assert_eq!(pool.stats.allocated_space[0].load(Ordering::Relaxed), 0);
-    }
-}
-
-mod stats {
-    use pretty_assertions::assert_eq;
-    use super::super::*;
-
-    #[test]
-    fn allocated() {
-        let stats = Stats {
-            optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(0)],
-            size: vec![1000, 1000],
-            allocated_space: vec![AtomicU64::new(10), AtomicU64::new(900)]
-        };
-        assert_eq!(stats.allocated(), 910);
-    }
-
-    #[test]
-    fn choose_cluster_empty() {
-        // Two clusters, one full and one empty.  Choose the empty one
-        let mut stats = Stats {
-            optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(0)],
-            size: vec![1000, 1000],
-            allocated_space: vec![AtomicU64::new(0), AtomicU64::new(1000)]
-        };
-        assert_eq!(stats.choose_cluster(), 0);
-
-        // Try the reverse, too
-        stats.allocated_space = vec![AtomicU64::new(1000), AtomicU64::new(0)];
-        assert_eq!(stats.choose_cluster(), 1);
-    }
-
-    #[test]
-    fn choose_cluster_queue_depth() {
-        // Two clusters, one busy and one idle.  Choose the idle one
-        let mut stats = Stats {
-            optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(10)],
-            size: vec![1000, 1000],
-            allocated_space: vec![AtomicU64::new(0), AtomicU64::new(0)]
-        };
-        assert_eq!(stats.choose_cluster(), 0);
-
-        // Try the reverse, too
-        stats.queue_depth = vec![AtomicU32::new(10), AtomicU32::new(0)];
-        assert_eq!(stats.choose_cluster(), 1);
-    }
-
-    #[test]
-    fn choose_cluster_nearly_full() {
-        // Two clusters, one nearly full and idle, the other busy but not very
-        // full.  Choose the not very full one.
-        let mut stats = Stats {
-            optimum_queue_depth: vec![10.0, 10.0],
-            queue_depth: vec![AtomicU32::new(0), AtomicU32::new(10)],
-            size: vec![1000, 1000],
-            allocated_space: vec![AtomicU64::new(960), AtomicU64::new(50)]
-        };
-        assert_eq!(stats.choose_cluster(), 1);
-
-        // Try the reverse, too
-        stats.queue_depth = vec![AtomicU32::new(10), AtomicU32::new(0)];
-        stats.allocated_space = vec![AtomicU64::new(50), AtomicU64::new(960)];
-        assert_eq!(stats.choose_cluster(), 0);
     }
 }
 }

@@ -31,7 +31,11 @@ use std::{
     ops::Range,
     path::Path,
     pin::Pin,
-    sync::{Arc, RwLock},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+        RwLock
+    },
 };
 
 /// Minimal in-memory representation of a zone.
@@ -130,18 +134,23 @@ struct FreeSpaceMap {
 }
 
 impl<'a> FreeSpaceMap {
-    /// How many blocks have been allocated, including blocks that have been
-    /// freed but not erased?
-    fn allocated(&self) -> LbaT {
-        (0..self.zones.len()).map(|idx| {
-            let zid = idx as ZoneT;
-            if let Some(oz) = self.open_zones.get(&zid) {
-                LbaT::from(oz.allocated_blocks)
-            } else if self.empty_zones.contains(&zid) {
-                0
-            } else {
-                LbaT::from(self.zones[idx].total_blocks)
-            }
+    /// How many blocks have been allocated from this Zone, including blocks
+    /// that have been freed but not erased?
+    fn allocated(&self, zid: ZoneT) -> LbaT {
+        if let Some(oz) = self.open_zones.get(&zid) {
+            LbaT::from(oz.allocated_blocks)
+        } else if self.empty_zones.contains(&zid) {
+            0
+        } else {
+            LbaT::from(self.zones[zid as usize].total_blocks)
+        }
+    }
+
+    /// How many blocks have been allocated from all zones, including blocks
+    /// that have been freed but not erased?
+    fn allocated_total(&self) -> LbaT {
+        (0..self.zones.len() as ZoneT).map(|idx| {
+            self.allocated(idx)
         }).sum()
     }
 
@@ -218,14 +227,16 @@ impl<'a> FreeSpaceMap {
         self.dirty.insert(block);
     }
 
-    /// Return Zone `zone_id` to an Empty state
-    fn erase_zone(&mut self, zone_id: ZoneT) {
+    /// Return Zone `zone_id` to an Empty state.  Return the number of its
+    /// previously allocated blocks.
+    fn erase_zone(&mut self, zone_id: ZoneT) -> LbaT {
         self.dirty_zone(zone_id);
         let zone_idx = zone_id as usize;
         assert!(!self.is_open(zone_id),
             "Can't erase an open zone");
         assert!(zone_idx < self.zones.len(),
             "Can't erase an empty zone");
+        let allocated_blocks = self.allocated(zone_id);
         self.empty_zones.insert(zone_id);
         self.zones[zone_idx].txgs = TxgT::from(0)..TxgT::from(0);
         // If this was the last zone, then remove all trailing Empty zones
@@ -242,6 +253,7 @@ impl<'a> FreeSpaceMap {
             self.zones.truncate(first_empty as usize);
             let _going_away = self.empty_zones.split_off(&first_empty);
         }
+        allocated_blocks
     }
 
     /// Find the first Empty zone
@@ -255,14 +267,17 @@ impl<'a> FreeSpaceMap {
         })
     }
 
-    /// Mark the Zone as closed.  `txg` is the current transaction group
-    fn finish_zone(&mut self, zone_id: ZoneT, txg: TxgT) {
+    /// Mark the Zone as closed.  `txg` is the current transaction group.
+    /// Return the number of wasted blocks, those that can no longer be
+    /// used because the zone is closed.
+    fn finish_zone(&mut self, zone_id: ZoneT, txg: TxgT) -> LbaT {
         self.dirty_zone(zone_id);
-        let available = self.available(zone_id) as u32;
+        let available = self.available(zone_id);
         assert!(self.open_zones.remove(&zone_id).is_some(),
             "Can't finish a Zone that isn't open");
-        self.zones[zone_id as usize].freed_blocks += available;
+        self.zones[zone_id as usize].freed_blocks += available as u32;
         self.zones[zone_id as usize].txgs.end = txg + 1;
+        available
     }
 
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
@@ -664,6 +679,11 @@ impl SpacemapOnDisk {
 /// A `Cluster` is BFFFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
 pub struct Cluster {
+    /// The total amount of allocated space in the `Cluster`, excluding
+    /// space that has already been freed but not erased.  Redundant with
+    /// detailed information in the `FreeSpaceMap`.
+    allocated_space: AtomicU64,
+
     fsm: RwLock<FreeSpaceMap>,
 
     /// Underlying vdev (which may or may not use RAID)
@@ -677,7 +697,7 @@ impl Cluster {
     /// How many blocks have been allocated, including blocks that have been
     /// freed but not erased?
     pub fn allocated(&self) -> LbaT {
-        self.fsm.read().unwrap().allocated()
+        self.allocated_space.load(Ordering::Relaxed)
     }
 
     /// Assert that the given zone was clean as of the given transaction
@@ -692,7 +712,8 @@ impl Cluster {
         -> FuturesUnordered<BoxVdevFut>
     {
         nearly_full_zones.iter().map(|&zone_id| {
-            self.fsm.write().unwrap().finish_zone(zone_id, txg);
+            let blocks = self.fsm.write().unwrap().finish_zone(zone_id, txg);
+            self.allocated_space.fetch_add(blocks, Ordering::Relaxed);
             let fut = self.vdev.finish_zone(zone_id);
             Box::pin(fut) as BoxVdevFut
         }).collect::<FuturesUnordered<BoxVdevFut>>()
@@ -735,7 +756,8 @@ impl Cluster {
     /// Delete the underlying storage for a Zone.
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut
     {
-        self.fsm.write().unwrap().erase_zone(zone);
+        let blocks = self.fsm.write().unwrap().erase_zone(zone);
+        self.allocated_space.fetch_sub(blocks, Ordering::Relaxed);
         self.vdev.erase_zone(zone)
     }
 
@@ -759,6 +781,7 @@ impl Cluster {
         let mut futs = zone_ids.iter().map(|&zone_id| {
             let (gap, fut) = self.vdev.flush_zone(zone_id);
             fsm.waste_space(zone_id, gap);
+            self.allocated_space.fetch_add(gap, Ordering::Relaxed);
             fut
         }).collect::<FuturesUnordered<BoxVdevFut>>();
         // Since FreeSpaceMap::waste_space is synchronous, we can serialize the
@@ -815,7 +838,8 @@ impl Cluster {
     /// [`VdevRaidApi`](trait.VdevRaidApi.html)
     fn new(args: (FreeSpaceMap, Arc<dyn VdevRaidApi>)) -> Self {
         let (fsm, vdev) = args;
-        Cluster{fsm: RwLock::new(fsm), vdev}
+        let allocated_space = fsm.allocated_total().into();
+        Cluster{allocated_space, fsm: RwLock::new(fsm), vdev}
     }
 
     /// Open a `Cluster` from an already opened
@@ -899,6 +923,7 @@ impl Cluster {
                 }
             })
         }).map(|(zone_id, lba, oz_fut)| {
+            self.allocated_space.fetch_add(space, Ordering::Relaxed);
             let wfut = vdev3.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {
                 wfut
@@ -993,11 +1018,14 @@ mod cluster {
         let (lba, fut1) = cluster.write(db0, TxgT::from(0))
             .expect("write failed early");
         fut1.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
         // Write a 2nd time so the first zone will get closed
         let (_, fut1) = cluster.write(db1, TxgT::from(0))
             .expect("write failed early");
         fut1.await.unwrap();
+        assert_eq!(cluster.allocated(), 2);
         cluster.free(lba, 1).await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
     }
 
     #[tokio::test]
@@ -1048,12 +1076,15 @@ mod cluster {
         let db1 = dbs1.try_const().unwrap();
         let (lba, fut1) = cluster.write(db0, TxgT::from(0))
             .expect("write failed early");
-        // Write a larger buffer so the first zone will get closed
         fut1.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
+        // Write a larger buffer so the first zone will get closed
         let (_, fut2) = cluster.write(db1, TxgT::from(0))
                 .expect("write failed early");
         fut2.await.unwrap();
+        assert_eq!(cluster.allocated(), 4);
         cluster.free(lba, 1).await.unwrap();
+        assert_eq!(cluster.allocated(), 2);
     }
 
     #[tokio::test]
@@ -1107,14 +1138,18 @@ mod cluster {
         let (lba, fut1) = cluster.write(db0, TxgT::from(0))
             .expect("write failed early");
         fut1.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
         let (_, fut2) = cluster.write(db1, TxgT::from(0))
             .expect("write failed early");
         fut2.await.unwrap();
+        assert_eq!(cluster.allocated(), 2);
         // Write a larger buffer so the first zone will get closed
         let (_, fut3) = cluster.write(db2, TxgT::from(0))
             .expect("write failed early");
         fut3.await.unwrap();
+        assert_eq!(cluster.allocated(), 4);
         cluster.free(lba, 1).await.unwrap();
+        assert_eq!(cluster.allocated(), 4);
     }
 
     #[test]
@@ -1433,7 +1468,9 @@ mod cluster {
         let (_, fut) = cluster.write(db0, TxgT::from(0))
             .expect("write failed early");
         fut.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
         cluster.flush(0).await.unwrap();
+        assert_eq!(cluster.allocated(), 6);
         cluster.sync_all().await.unwrap();
         let fsm = cluster.fsm.read().unwrap();
         assert_eq!(fsm.open_zones[&0].write_pointer(), 6);
@@ -1455,6 +1492,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
+        assert_eq!(cluster.allocated(), 0);
     }
 
     #[test]
@@ -1472,6 +1510,7 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
+        assert_eq!(cluster.allocated(), 0);
     }
 
     #[tokio::test]
@@ -1501,6 +1540,7 @@ mod cluster {
         let (lba, fut) = cluster.write(db0, TxgT::from(0))
             .expect("write failed early");
         fut.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
         assert_eq!(lba, 0);
     }
 
@@ -1540,10 +1580,12 @@ mod cluster {
         let (_, fut0) = cluster.write(db0, TxgT::from(0))
             .expect("Cluster::write");
         fut0.await.unwrap();
+        assert_eq!(cluster.allocated(), 1);
         let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
             .expect("Cluster::write");
         assert_eq!(lba1, 1);
         fut1.await.expect("write failed");
+        assert_eq!(cluster.allocated(), 2);
     }
 
     // When one zone is too full to satisfy an allocation, it should be closed
@@ -1595,10 +1637,12 @@ mod cluster {
         let (_, fut0) = cluster.write(db0, TxgT::from(0))
             .expect("Cluster::write");
         fut0.await.unwrap();
+        assert_eq!(cluster.allocated(), 2);
         let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
             .expect("Cluster::write");
         assert_eq!(lba1, 3);
         fut1.await.expect("write failed");
+        assert_eq!(cluster.allocated(), 5);
     }
 }
 
@@ -1614,28 +1658,28 @@ mod free_space_map {
     }
 
     #[test]
-    fn allocated_all_empty() {
+    fn allocated_total_all_empty() {
         let fsm = FreeSpaceMap::new(32768);
-        assert_eq!(0, fsm.allocated());
+        assert_eq!(0, fsm.allocated_total());
     }
 
     #[test]
-    fn allocated_one_closed_zone() {
+    fn allocated_total_one_closed_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(0, 1000, 2000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(0, TxgT::from(0));
-        assert_eq!(1000, fsm.allocated());
+        assert_eq!(1000, fsm.allocated_total());
     }
 
     #[test]
-    fn allocated_one_open_zone() {
+    fn allocated_total_one_open_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(0, 1000, 2000, 200, TxgT::from(0)).unwrap();
-        assert_eq!(200, fsm.allocated());
+        assert_eq!(200, fsm.allocated_total());
     }
 
     #[test]
-    fn allocated_one_empty_two_closed_two_open_zones() {
+    fn allocated_total_one_empty_two_closed_two_open_zones() {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(0, 1000, 2000, 200, TxgT::from(0)).unwrap();
         // Leave zone 1 empty
@@ -1644,7 +1688,7 @@ mod free_space_map {
         fsm.open_zone(3, 4000, 5000, 500, TxgT::from(0)).unwrap();
         fsm.open_zone(4, 5000, 7000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
-        assert_eq!(3700, fsm.allocated());
+        assert_eq!(3700, fsm.allocated_total());
     }
 
     #[test]
