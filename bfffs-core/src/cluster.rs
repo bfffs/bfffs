@@ -280,6 +280,7 @@ impl<'a> FreeSpaceMap {
         available
     }
 
+    /// Record `length` LBAs in zone `zone_id` as freed.
     fn free(&mut self, zone_id: ZoneT, length: LbaT) {
         self.dirty_zone(zone_id);
         assert!(!self.is_empty(zone_id), "Can't free from an empty zone");
@@ -307,6 +308,13 @@ impl<'a> FreeSpaceMap {
             let z = &self.zones[zone_id as usize];
             LbaT::from(z.total_blocks - z.freed_blocks)
         }
+    }
+
+    /// How many blocks have been used in total, across all zones?
+    fn in_use_total(&self) -> LbaT {
+        (0..ZoneT::try_from(self.zones.len()).unwrap())
+            .map(|i| self.in_use(i))
+            .sum()
     }
 
     /// Is the Zone with the given id closed?
@@ -876,6 +884,11 @@ impl Cluster {
     /// storage.
     pub fn sync_all(&self) -> BoxVdevFut {
         self.vdev.sync_all()
+    }
+
+    /// How many blocks are currently in use?
+    pub fn used(&self) -> LbaT {
+        self.fsm.read().unwrap().in_use_total()
     }
 
     /// Return the `Cluster`'s UUID.  It's the same as its RAID device's.
@@ -2196,6 +2209,60 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     fn try_allocate_only_empty_zones() {
         let mut fsm = FreeSpaceMap::new(32768);
         assert!(fsm.try_allocate(64).0.is_none());
+    }
+
+    #[test]
+    fn in_use_total_empty() {
+        let fsm = FreeSpaceMap::new(32768);
+        assert_eq!(fsm.in_use_total(), 0);
+    }
+
+    #[test]
+    fn in_use_total_one_open_zone() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let txg = TxgT::from(0);
+        assert_eq!(fsm.open_zone(0, 0, 1000, 10, txg).unwrap(), Some((0, 0)));
+        assert_eq!(fsm.in_use_total(), 10);
+    }
+
+    #[test]
+    fn in_use_total_two_open_zones() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let txg = TxgT::from(0);
+        assert_eq!(fsm.open_zone(0, 0, 20, 15, txg).unwrap(), Some((0, 0)));
+        assert_eq!(fsm.open_zone(1, 20, 40, 15, txg).unwrap(), Some((1, 20)));
+        assert_eq!(fsm.in_use_total(), 30);
+    }
+
+    #[test]
+    fn in_use_total_one_closed_and_one_empty_zone() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let txg = TxgT::from(0);
+        assert_eq!(fsm.open_zone(0, 0, 20, 5, txg).unwrap(), Some((0, 0)));
+        fsm.finish_zone(0, txg);
+        assert_eq!(fsm.open_zone(1, 20, 40, 5, txg).unwrap(), Some((1, 20)));
+        fsm.erase_zone(0);
+        assert_eq!(fsm.in_use_total(), 5);
+    }
+
+    #[test]
+    fn in_use_total_one_closed_and_one_open_zone() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let txg = TxgT::from(0);
+        assert_eq!(fsm.open_zone(0, 0, 20, 5, txg).unwrap(), Some((0, 0)));
+        fsm.finish_zone(0, txg);
+        assert_eq!(fsm.open_zone(1, 20, 40, 5, txg).unwrap(), Some((1, 20)));
+        assert_eq!(fsm.in_use_total(), 10);
+    }
+
+    #[test]
+    fn in_use_total_one_open_zone_with_freed_lbas() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let txg = TxgT::from(0);
+        assert_eq!(fsm.open_zone(0, 0, 20, 5, txg).unwrap(), Some((0, 0)));
+        assert_eq!(fsm.try_allocate(6), (Some((0, 5)), vec![]));
+        fsm.free(0, 5);
+        assert_eq!(fsm.in_use_total(), 6);
     }
 }
 }

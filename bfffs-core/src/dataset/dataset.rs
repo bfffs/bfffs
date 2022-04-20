@@ -25,10 +25,6 @@ struct Dataset<K: Key, V: Value>  {
 }
 
 impl<K: Key, V: Value> Dataset<K, V> {
-    fn allocated(&self) -> LbaT {
-        self.idml.allocated()
-    }
-
     fn delete_blob(&self, rid: RID, txg: TxgT)
         -> impl Future<Output=Result<()>>
     {
@@ -99,6 +95,10 @@ impl<K: Key, V: Value> Dataset<K, V> {
     fn size(&self) -> LbaT {
         self.idml.size()
     }
+
+    fn used(&self) -> LbaT {
+        self.idml.used()
+    }
 }
 
 /// A dataset handle with read-only access
@@ -107,10 +107,6 @@ pub struct ReadOnlyDataset<K: Key, V: Value>  {
 }
 
 impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
-    pub fn allocated(&self) -> LbaT {
-        self.dataset.allocated()
-    }
-
     pub fn last_key(&self) -> impl Future<Output=Result<Option<K>>> + Send
     {
         self.dataset.last_key()
@@ -122,6 +118,10 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
 
     pub fn size(&self) -> LbaT {
         self.dataset.size()
+    }
+
+    pub fn used(&self) -> LbaT {
+        self.dataset.used()
     }
 }
 

@@ -1,22 +1,28 @@
 // vim: tw=80
+use super::*;
+use bfffs_core::{
+    cluster,
+    label::*,
+    pool::*,
+    raid,
+    vdev_block::*,
+    vdev_file::*,
+    Error,
+    TxgT
+};
+use divbuf::DivBufShared;
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom},
+    num::NonZeroU64
+};
+use tempfile::{Builder, TempDir};
 
 mod persistence {
-    use bfffs_core::vdev_file::*;
-    use bfffs_core::vdev_block::*;
-    use bfffs_core::raid;
-    use bfffs_core::cluster;
-    use bfffs_core::label::*;
-    use bfffs_core::pool::*;
     use futures::{TryFutureExt, future};
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
-    use std::{
-        fs,
-        io::{Read, Seek, SeekFrom},
-        num::NonZeroU64
-    };
-    use super::super::*;
-    use tempfile::{Builder, TempDir};
+    use super::*;
     use tokio::runtime::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
@@ -123,5 +129,36 @@ mod persistence {
             // Rest of the buffer should be zero-filled
             assert!(v[72..].iter().all(|&x| x == 0));
         }
+    }
+}
+
+mod t {
+    use super::*;
+
+    #[tokio::test]
+    async fn enospc() {
+        let len = 1 << 16;  // 64 KB
+        let tempdir =
+            t!(Builder::new().prefix("test_pool_enospc").tempdir());
+        let path = format!("{}/vdev", tempdir.path().display());
+        let file = t!(fs::File::create(&path));
+        t!(file.set_len(len));
+        let clusters = vec![
+            Pool::create_cluster(None, 1, NonZeroU64::new(16), 0, &[path][..])
+        ];
+        let pool = Pool::create("TestPool".to_string(), clusters);
+
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let txg = TxgT::from(1);
+        // Given current label sizes, this cluster is large enough for 6 data
+        // blocks.
+        for _ in 0..6 {
+            let db0 = dbs.try_const().unwrap();
+            pool.write(db0, txg).await.unwrap();
+        }
+        assert_eq!(pool.used(), 6);
+        let db0 = dbs.try_const().unwrap();
+        assert_eq!(Err(Error::ENOSPC), pool.write(db0, txg).await);
+        assert_eq!(pool.used(), 6);
     }
 }

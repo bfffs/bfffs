@@ -294,8 +294,8 @@ pub struct Dirent {
 /// Information about the overall properties of a bfffs pool.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Stat {
-    /// Number of blocks have been allocated across the entire pool.
-    pub allocated: LbaT,
+    /// Number of blocks that are in-use across the entire pool.
+    pub used: LbaT,
     /// The approximate usable size of the Pool in blocks.
     pub size: LbaT,
 }
@@ -665,8 +665,8 @@ impl Database {
     /// Retrieve information about a pool's space usage
     pub fn stat(&self) -> Stat {
         Stat {
-            allocated: self.inner.idml.allocated(),
             size: self.inner.idml.size(),
+            used: self.inner.idml.used(),
         }
     }
 
