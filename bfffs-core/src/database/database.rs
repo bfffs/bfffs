@@ -840,7 +840,7 @@ mod database {
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn check_ok() {
-        let guard = OPEN_MTX.lock().unwrap();
+        let _guard = OPEN_MTX.lock().unwrap();
 
         let forest_key = ForestKey::tree(TreeID(42));
         let mut seq = Sequence::new();
@@ -876,7 +876,6 @@ mod database {
             .return_once(|_: RangeFull| rq);
 
         let db = Database::new(Arc::new(idml), forest.into());
-        drop(guard);
         let r = db.check().await.unwrap();
         assert!(r);
     }
