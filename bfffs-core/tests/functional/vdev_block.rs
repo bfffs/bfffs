@@ -85,53 +85,70 @@ mod vdev_block {
         }).unwrap();
     }
 
-    #[should_panic]
     #[rstest]
-    fn check_iovec_bounds_over(vdev: (VdevBlock, TempDir)) {
+    #[tokio::test]
+    async fn check_iovec_bounds_within(vdev: (VdevBlock, TempDir)) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let size = vdev.0.size();
-            vdev.0.write_at(wbuf, size).await
-        }).unwrap();
+        let lba = vdev.0.size() - 1;
+        vdev.0.write_at(wbuf, lba).await.unwrap();
     }
 
     #[should_panic]
     #[rstest]
-    fn check_iovec_bounds_spans(vdev: (VdevBlock, TempDir)) {
+    #[tokio::test]
+    async fn check_iovec_bounds_over(vdev: (VdevBlock, TempDir)) {
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
+        let lba = vdev.0.size();
+        vdev.0.write_at(wbuf, lba).await.unwrap();
+    }
+
+    #[should_panic]
+    #[rstest]
+    #[tokio::test]
+    async fn check_iovec_bounds_spans(vdev: (VdevBlock, TempDir)) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let wbuf = dbs.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let size = vdev.0.size() - 1;
-            vdev.0.write_at(wbuf, size).await
-        }).unwrap();
+        let lba = vdev.0.size() - 1;
+        vdev.0.write_at(wbuf, lba).await.unwrap();
     }
 
-    #[should_panic]
     #[rstest]
-    fn check_sglist_bounds_over(vdev: (VdevBlock, TempDir)) {
+    #[tokio::test]
+    async fn check_sglist_bounds_within(vdev: (VdevBlock, TempDir)) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(1024);
         let wbuf1 = wbuf.slice_from(1024);
         let wbufs = vec![wbuf0, wbuf1];
-        basic_runtime().block_on(async {
-            let size = vdev.0.size();
-            vdev.0.writev_at(wbufs, size).await
-        }).unwrap();
+        let lba = vdev.0.size() - 1;
+        vdev.0.writev_at(wbufs, lba).await.unwrap();
     }
 
     #[should_panic]
     #[rstest]
-    fn check_sglist_bounds_spans(vdev: (VdevBlock, TempDir)) {
+    #[tokio::test]
+    async fn check_sglist_bounds_over(vdev: (VdevBlock, TempDir)) {
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
+        let wbuf0 = wbuf.slice_to(1024);
+        let wbuf1 = wbuf.slice_from(1024);
+        let wbufs = vec![wbuf0, wbuf1];
+        let lba = vdev.0.size();
+        vdev.0.writev_at(wbufs, lba).await.unwrap();
+    }
+
+    #[should_panic]
+    #[rstest]
+    #[tokio::test]
+    async fn check_sglist_bounds_spans(vdev: (VdevBlock, TempDir)) {
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let wbuf = dbs.try_const().unwrap();
         let wbuf0 = wbuf.slice_to(5120);
         let wbuf1 = wbuf.slice_from(5120);
         let wbufs = vec![wbuf0, wbuf1];
-        basic_runtime().block_on(async {
-            let size = vdev.0.size() - 1;
-            vdev.0.writev_at(wbufs, size).await
-        }).unwrap();
+        let lba = vdev.0.size() - 1;
+        vdev.0.writev_at(wbufs, lba).await.unwrap();
     }
 }
