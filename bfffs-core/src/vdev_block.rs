@@ -474,7 +474,7 @@ impl VdevBlock {
     fn check_iovec_bounds(&self, lba: LbaT, buf: &[u8]) {
         let buflen = buf.len() as u64;
         let last_lba : LbaT = lba + buflen / (BYTES_PER_LBA as u64);
-        assert!(last_lba < self.size as u64)
+        assert!(last_lba <= self.size as u64)
     }
 
     /// Helper function for readv and writev methods
@@ -484,7 +484,8 @@ impl VdevBlock {
         let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
             accumulator + buf.len() as u64
         });
-        assert!(lba + len / (BYTES_PER_LBA as u64) < self.size as u64)
+        let last_lba = lba + len / (BYTES_PER_LBA as u64);
+        assert!(last_lba <= self.size as u64)
     }
 
     /// Create a new VdevBlock from an unused file or device

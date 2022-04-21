@@ -21,12 +21,12 @@ use super::{ITree, RangeQuery, ReadDataset, ReadOnlyDataset, ReadWriteDataset};
 
 mock! {
     pub ReadOnlyDataset<K: Key, V: Value> {
-        pub fn allocated(&self) -> LbaT;
         pub fn last_key(&self)
             -> Pin<Box<dyn Future<Output=Result<Option<K>>> + Send>>;
         pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
             -> ReadOnlyDataset<K, V>;
         pub fn size(&self) -> LbaT;
+        pub fn used(&self) -> LbaT;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
         fn get(&self, k: K)

@@ -2318,10 +2318,10 @@ impl Fs {
         let rs = 1 << self.record_size.load(Ordering::Relaxed);
         self.db.fsread(self.tree, move |dataset| {
             let blocks = dataset.size();
-            let allocated = dataset.allocated();
+            let used = dataset.used();
             let r = libc::statvfs {
-                f_bavail: blocks - allocated,
-                f_bfree: blocks - allocated,
+                f_bavail: blocks - used,
+                f_bfree: blocks - used,
                 f_blocks: blocks,
                 f_favail: u64::max_value(),
                 f_ffree: u64::max_value(),

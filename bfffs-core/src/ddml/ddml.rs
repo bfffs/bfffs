@@ -42,12 +42,6 @@ pub struct DDML {
 // instead by integration tests.
 #[cfg_attr(test, allow(unused))]
 impl DDML {
-    /// How many blocks have been allocated, including blocks that have been
-    /// freed but not erased?
-    pub fn allocated(&self) -> LbaT {
-        self.pool.allocated()
-    }
-
     /// Assert that the given zone was clean as of the given transaction
     #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
@@ -218,6 +212,11 @@ impl DDML {
         self.pool.size()
     }
 
+    /// How many blocks are currently used?
+    pub fn used(&self) -> LbaT {
+        self.pool.used()
+    }
+
     pub fn write_label(&self, labeller: LabelWriter)
         -> impl Future<Output=Result<()>> + Send
     {
@@ -309,7 +308,6 @@ impl DML for DDML {
 #[cfg(test)]
 mock! {
     pub DDML {
-        pub fn allocated(&self) -> LbaT;
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
         pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
@@ -327,6 +325,7 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>
             where T: borrow::Borrow<dyn CacheRef>;
         pub fn size(&self) -> LbaT;
+        pub fn used(&self) -> LbaT;
         pub fn write_label(&self, labeller: LabelWriter)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }

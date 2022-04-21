@@ -710,7 +710,7 @@ mod fs {
         fs.sync().await;
 
         let stat2 = db.stat();
-        assert_eq!(stat2.allocated - stat1.allocated, 2);
+        assert_eq!(stat2.used - stat1.used, 2);
 
         drop(fs);
         let tree_id = db.lookup_fs("").await.unwrap().1.unwrap();
@@ -719,7 +719,7 @@ mod fs {
         // The fs tree and both blobs should've been deallocated.  Other
         // metadata stuff might've been deallocated too, in the forest or idml.
         let stat3 = db.stat();
-        assert!(stat3.allocated < stat1.allocated);
+        assert!(stat3.used < stat1.used);
     }
 
     // Dumps a nearly empty FS tree.  All of the real work is done in
