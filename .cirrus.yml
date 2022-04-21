@@ -73,7 +73,7 @@ lint_task:
     - rustup component add --toolchain $VERSION rustfmt
     - cargo +$VERSION fmt --all -- --check --color=never
   audit_script:
+    - pkg install -y cargo-audit
     - . $HOME/.cargo/env
-    - cargo install cargo-audit
     - cargo audit
   before_cache_script: rm -rf $CARGO_HOME/registry/index
