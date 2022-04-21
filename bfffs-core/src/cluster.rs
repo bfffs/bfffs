@@ -945,8 +945,8 @@ mod cluster {
     use pretty_assertions::assert_eq;
     use std::iter;
 
-    #[test]
-    fn free_and_erase_full_zone() {
+    #[tokio::test]
+    async fn free_and_erase_full_zone() {
         let mut vr = MockVdevRaid::default();
         vr.expect_lba2zone()
             .with(eq(1))
@@ -990,23 +990,18 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = db0.clone();
-        basic_runtime().block_on(async {
-            let (lba, fut1) = cluster.write(db0, TxgT::from(0))
-                .expect("write failed early");
-            // Write a 2nd time so the first zone will get closed
-            fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1, TxgT::from(0))
-                    .expect("write failed early");
-                fut2
-            }).map_ok(move|_| lba)
-                .and_then(|lba| {
-                cluster.free(lba, 1)
-            }).await
-        }).unwrap();
+        let (lba, fut1) = cluster.write(db0, TxgT::from(0))
+            .expect("write failed early");
+        fut1.await.unwrap();
+        // Write a 2nd time so the first zone will get closed
+        let (_, fut1) = cluster.write(db1, TxgT::from(0))
+            .expect("write failed early");
+        fut1.await.unwrap();
+        cluster.free(lba, 1).await.unwrap();
     }
 
-    #[test]
-    fn free_and_erase_nonfull_zone() {
+    #[tokio::test]
+    async fn free_and_erase_nonfull_zone() {
         let mut vr = MockVdevRaid::default();
         vr.expect_lba2zone()
             .with(eq(1))
@@ -1051,23 +1046,18 @@ mod cluster {
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs1.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let (lba, fut1) = cluster.write(db0, TxgT::from(0))
+        let (lba, fut1) = cluster.write(db0, TxgT::from(0))
+            .expect("write failed early");
+        // Write a larger buffer so the first zone will get closed
+        fut1.await.unwrap();
+        let (_, fut2) = cluster.write(db1, TxgT::from(0))
                 .expect("write failed early");
-            // Write a larger buffer so the first zone will get closed
-            fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1, TxgT::from(0))
-                    .expect("write failed early");
-                fut2
-            }).map_ok(move|_| lba)
-                .and_then(|lba| {
-                cluster.free(lba, 1)
-            }).await
-        }).unwrap();
+        fut2.await.unwrap();
+        cluster.free(lba, 1).await.unwrap();
     }
 
-    #[test]
-    fn free_and_dont_erase_zone() {
+    #[tokio::test]
+    async fn free_and_dont_erase_zone() {
         let mut vr = MockVdevRaid::default();
         vr.expect_lba2zone()
             .with(eq(1))
@@ -1114,24 +1104,17 @@ mod cluster {
         let db0 = dbs0.try_const().unwrap();
         let db1 = dbs0.try_const().unwrap();
         let db2 = dbs1.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let (lba, fut1) = cluster.write(db0, TxgT::from(0))
-                .expect("write failed early");
-            fut1.and_then(|_| {
-                let (_, fut2) = cluster.write(db1, TxgT::from(0))
-                    .expect("write failed early");
-                fut2
-            })
-            // Write a larger buffer so the first zone will get closed
-            .and_then(|_| {
-                let (_, fut3) = cluster.write(db2, TxgT::from(0))
-                    .expect("write failed early");
-                fut3
-            }).map_ok(move|_| lba)
-                .and_then(|lba| {
-                cluster.free(lba, 1)
-            }).await
-        }).unwrap();
+        let (lba, fut1) = cluster.write(db0, TxgT::from(0))
+            .expect("write failed early");
+        fut1.await.unwrap();
+        let (_, fut2) = cluster.write(db1, TxgT::from(0))
+            .expect("write failed early");
+        fut2.await.unwrap();
+        // Write a larger buffer so the first zone will get closed
+        let (_, fut3) = cluster.write(db2, TxgT::from(0))
+            .expect("write failed early");
+        fut3.await.unwrap();
+        cluster.free(lba, 1).await.unwrap();
     }
 
     #[test]
@@ -1402,8 +1385,8 @@ mod cluster {
     // During transaction sync, Cluster::flush should flush all open VdevRaid
     // zones and write the spacemap.  Then Cluster.sync_all should sync_all the
     // VdevRaid
-    #[test]
-    fn txg_sync() {
+    #[tokio::test]
+    async fn txg_sync() {
         let mut seq = Sequence::new();
         let mut vr = MockVdevRaid::default();
         vr.expect_zones()
@@ -1447,13 +1430,11 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let (_, fut) = cluster.write(db0, TxgT::from(0))
-                .expect("write failed early");
-            fut.and_then(|_| cluster.flush(0))
-            .and_then(|_| cluster.sync_all())
-            .await
-        }).unwrap();
+        let (_, fut) = cluster.write(db0, TxgT::from(0))
+            .expect("write failed early");
+        fut.await.unwrap();
+        cluster.flush(0).await.unwrap();
+        cluster.sync_all().await.unwrap();
         let fsm = cluster.fsm.read().unwrap();
         assert_eq!(fsm.open_zones[&0].write_pointer(), 6);
         assert_eq!(fsm.zones[0].freed_blocks, 5);
@@ -1493,8 +1474,8 @@ mod cluster {
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
     }
 
-    #[test]
-    fn write_with_no_open_zones() {
+    #[tokio::test]
+    async fn write_with_no_open_zones() {
         let mut vr = MockVdevRaid::default();
         vr.expect_zones()
             .return_const(32768u32);
@@ -1517,18 +1498,14 @@ mod cluster {
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let rt = basic_runtime();
-        let result = rt.block_on(async {
-            let (lba, fut) = cluster.write(db0, TxgT::from(0))
-                .expect("write failed early");
-            fut.map_ok(move |_| lba)
-            .await
-        });
-        assert_eq!(result.unwrap(), 0);
+        let (lba, fut) = cluster.write(db0, TxgT::from(0))
+            .expect("write failed early");
+        fut.await.unwrap();
+        assert_eq!(lba, 0);
     }
 
-    #[test]
-    fn write_with_open_zones() {
+    #[tokio::test]
+    async fn write_with_open_zones() {
         let mut vr = MockVdevRaid::default();
         vr.expect_zones()
             .return_const(32768u32);
@@ -1559,23 +1536,20 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let cluster_ref = &cluster;
-            let (_, fut0) = cluster.write(db0, TxgT::from(0))
-                .expect("Cluster::write");
-            fut0.and_then(move |_| {
-                let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
-                    .expect("Cluster::write");
-                assert_eq!(lba1, 1);
-                fut1
-            }).await
-        }).expect("write failed");
+        let cluster_ref = &cluster;
+        let (_, fut0) = cluster.write(db0, TxgT::from(0))
+            .expect("Cluster::write");
+        fut0.await.unwrap();
+        let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
+            .expect("Cluster::write");
+        assert_eq!(lba1, 1);
+        fut1.await.expect("write failed");
     }
 
     // When one zone is too full to satisfy an allocation, it should be closed
     // and a new zone opened.
-    #[test]
-    fn write_zone_full() {
+    #[tokio::test]
+    async fn write_zone_full() {
         let mut vr = MockVdevRaid::default();
         vr.expect_zones()
             .return_const(32768u32);
@@ -1617,17 +1591,14 @@ mod cluster {
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try_const().unwrap();
         let db1 = dbs.try_const().unwrap();
-        basic_runtime().block_on(async {
-            let cluster_ref = &cluster;
-            let (_, fut0) = cluster.write(db0, TxgT::from(0))
-                .expect("Cluster::write");
-            fut0.and_then(move |_| {
-                let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
-                    .expect("Cluster::write");
-                assert_eq!(lba1, 3);
-                fut1
-            }).await
-        }).expect("write failed");
+        let cluster_ref = &cluster;
+        let (_, fut0) = cluster.write(db0, TxgT::from(0))
+            .expect("Cluster::write");
+        fut0.await.unwrap();
+        let (lba1, fut1) = cluster_ref.write(db1, TxgT::from(0))
+            .expect("Cluster::write");
+        assert_eq!(lba1, 3);
+        fut1.await.expect("write failed");
     }
 }
 
