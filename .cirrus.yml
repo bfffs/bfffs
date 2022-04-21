@@ -37,10 +37,12 @@ task:
     - . $HOME/.cargo/env
     - cargo +$VERSION test $CARGO_ARGS --all --all-targets
   fio_script:
-    - . $HOME/.cargo/env
-    - truncate -s 1g /tmp/bfffs.img
-    - cargo +$VERSION run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
-    - fio bfffs-fio/data/ci.fio
+    - if [ `fio --version | sed 's:fio-3.::'` -ge 30 ]; then
+    -   . $HOME/.cargo/env
+    -   truncate -s 1g /tmp/bfffs.img
+    -   cargo +$VERSION run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
+    -   fio bfffs-fio/data/ci.fio
+    - fi
   fuseless_script:
     - . $HOME/.cargo/env
     - cd bfffs
