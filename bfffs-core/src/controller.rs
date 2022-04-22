@@ -130,6 +130,7 @@ impl Controller {
     }
 
     /// Get the value of the `propname` property on the given dataset
+    #[tracing::instrument(skip(self))]
     pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
@@ -139,7 +140,10 @@ impl Controller {
             (_parent, Some(tree_id)) => {
                 self.get_prop_locked(&guard, dataset, tree_id, propname).await
             }
-            (_, None) => Err(Error::ENOENT)
+            (_, None) => {
+                tracing::debug!("no property found");
+                Err(Error::ENOENT)
+            }
         }
     }
 
@@ -288,6 +292,7 @@ impl Controller {
     /// - `name`    -   Name of the file system to create, including pool name
     // Clippy false positive.
     #[allow(clippy::unnecessary_to_owned)]
+    #[tracing::instrument(skip(self))]
     pub fn new_fs(&self, name: &str)
         -> impl Future<Output = Result<Arc<Fs>>> + Send
     {
@@ -319,7 +324,10 @@ impl Controller {
                             guard.insert(tree_id, fsw);
                             Ok(fs)
                         },
-                        (_, None) => Err(Error::ENOENT)
+                        (_, None) => {
+                            tracing::debug!("file system not found");
+                            Err(Error::ENOENT)
+                        }
                     }
                 }).boxed()
             }
@@ -351,7 +359,10 @@ impl Controller {
     fn strip_pool_name<'a>(&self, name: &'a str) -> Result<&'a str> {
         match name.strip_prefix(&self.db.pool_name()) {
             Some(s) => Ok(s.strip_prefix('/').unwrap_or(s)),
-            None => Err(Error::ENOENT),
+            None => {
+                tracing::debug!("pool name not provided");
+                Err(Error::ENOENT)
+            },
         }
     }
 

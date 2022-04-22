@@ -204,6 +204,7 @@ impl Bfffsd {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     #[cfg_attr(test, allow(unused_variables))]
     async fn mount(&self, name: String) -> Result<MountHandle> {
         let mo2 = self.mount_opts.clone();
@@ -212,6 +213,7 @@ impl Bfffsd {
             .get_prop(&name, PropertyName::Mountpoint)
             .map_ok(|(prop, _source)| PathBuf::from(prop.as_str()))
             .await?;
+        tracing::debug!("mounting {:?}", mp);
         cfg_if! {
             if #[cfg(test)] {
                 Session::new(mo2).mount(FuseFs::default(), mp)
