@@ -4,9 +4,11 @@ fn main() {
     // Avoid unnecessary re-building.
     println!("cargo:rerun-if-changed=build.rs");
 
-    let utsname = uname();
+    let utsname = uname().unwrap();
     if utsname.sysname() == "FreeBSD" {
         let major = utsname.release()
+            .to_str()
+            .unwrap()
             .split('.')
             .next()
             .unwrap()
