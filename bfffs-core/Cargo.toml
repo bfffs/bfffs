@@ -50,6 +50,7 @@ features=  [ "derive", "wrap_help" ]
 
 [dev-dependencies]
 chashmap = "2"
+criterion = "0.3"
 futures-test = "0.3.7"
 glob = "0.2"
 histogram = "0.6"
@@ -82,3 +83,7 @@ path = "tests/cacheable_space.rs"
 [[test]]
 name = "functional"
 path = "tests/functional/mod.rs"
+
+[[bench]]
+name = "serde"
+harness = false
