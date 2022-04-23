@@ -113,7 +113,7 @@ async fn create() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            future::ok(Some(FSValue::Inode(inode))).boxed()
+            future::ok(Some(FSValue::inode(inode))).boxed()
         });
     ds.expect_insert()
         .once()
@@ -193,7 +193,7 @@ async fn create_hash_collision() {
                 file_type: FileType::Dir,
                 perm: 0o755,
             };
-            future::ok(Some(FSValue::Inode(inode))).boxed()
+            future::ok(Some(FSValue::inode(inode))).boxed()
         });
     ds.expect_insert()
         .once()

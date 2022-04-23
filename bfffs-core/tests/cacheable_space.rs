@@ -401,7 +401,7 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
             perm: 0o644,
             file_type: FileType::Reg(17)
         };
-        let v = FSValue::Inode(inode);
+        let v = FSValue::inode(inode);
         let credit = borrow_credit(wb, &v);
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()

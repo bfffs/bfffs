@@ -499,7 +499,7 @@ impl Database {
                 file_type: FileType::Dir,
                 perm: 0o755
             };
-            let inode_value = FSValue::Inode(inode);
+            let inode_value = FSValue::inode(inode);
 
             // Create the /. and /.. directory entries
             let dot_dirent = fs_tree::Dirent {

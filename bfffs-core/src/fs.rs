@@ -652,7 +652,7 @@ impl Fs {
             perm: args.perm,
             file_type: args.file_type
         };
-        let inode_value = FSValue::Inode(inode);
+        let inode_value = FSValue::inode(inode);
 
         let ninsert = 5 + cb_credit.0;
         self.db.fswrite(self.tree, ninsert, cb_credit.1, cb_credit.2, bb,
@@ -841,7 +841,7 @@ impl Fs {
         };
 
         iv.bytes = iv.bytes.saturating_sub(freed_bytes);
-        dataset.insert(inode_key, FSValue::Inode(iv)).await
+        dataset.insert(inode_key, FSValue::inode(iv)).await
         .map(drop)
     }
 
@@ -1004,7 +1004,7 @@ impl Fs {
                 };
                 future::try_join(
                     fut,
-                    dataset.insert(key, FSValue::Inode(iv))
+                    dataset.insert(key, FSValue::inode(iv))
                     .map_ok(drop)
                 ).await?;
             } else {
@@ -1406,7 +1406,7 @@ impl Fs {
             // count.  The real VFS will provide a held vnode rather
             // than an inode.  So in neither case is there a race here.
             // XXX TODO: fuse3 is _not_ single-threaded
-            let ifut = ds.insert(inode_key, FSValue::Inode(iv));
+            let ifut = ds.insert(inode_key, FSValue::inode(iv));
 
             let dirent_objkey = ObjKey::dir_entry(&name);
             let dirent = Dirent { ino, dtype, name };
