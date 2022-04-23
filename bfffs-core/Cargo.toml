@@ -55,6 +55,7 @@ glob = "0.2"
 histogram = "0.6"
 itertools = "0.7.1"
 mockall = "0.11.0"
+nix = { version = "0.24.0", default-features = false, features = ["user"] }
 num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "1.2"
