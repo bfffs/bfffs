@@ -849,10 +849,6 @@ impl<'a> Extent<'a> {
     }
 }
 
-// This struct isn't really generic.  It should only ever be instantiated with
-// A=RID.  However, it's not possible to implement FSValue::flush without either
-// making FSValue generic, or using generics specialization.  And generics
-// specialization isn't stable yet.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
