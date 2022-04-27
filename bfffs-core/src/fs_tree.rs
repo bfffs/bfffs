@@ -852,7 +852,7 @@ impl<'a> Extent<'a> {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
-    Inode(Inode),
+    Inode(Box<Inode>),
     InlineExtent(InlineExtent),
     BlobExtent(BlobExtent),
     /// An Extended Attribute, for inodes >= 1.  Or a dataset User Property, for
@@ -958,6 +958,11 @@ impl FSValue {
         nrecs * (rs + InlineExtent::FUDGE)
     }
 
+    /// Construct a new FSValue::Inode object
+    pub fn inode(inode: Inode) -> Self {
+        Self::Inode(Box::new(inode))
+    }
+
     pub fn into_property(self) -> Option<Property> {
         if let FSValue::Property(prop) = self {
             Some(prop)
@@ -997,6 +1002,7 @@ impl Value for FSValue {
         match self {
             FSValue::DirEntry(dirent) => dirent.allocated_space(),
             FSValue::InlineExtent(extent) => extent.allocated_space(),
+            FSValue::Inode(inode) => mem::size_of_val(inode.as_ref()),
             FSValue::ExtAttr(extattr) => extattr.allocated_space(),
             FSValue::ExtAttrs(extattrs) =>
                 extattrs.capacity() * mem::size_of::<ExtAttr>() +
@@ -1127,6 +1133,21 @@ fn fsvalue_typical_size() {
     });
     let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
     assert_eq!(FSValue::TYPICAL_SIZE, v.len());
+}
+
+/// Print the size of every FSValue variant.  Not really a test, but useful for
+/// debugging.
+#[test]
+fn fsvalue_variant_size() {
+    println!("DirEntry:     {} bytes", mem::size_of::<Dirent>());
+    println!("Inode:        {} bytes", mem::size_of::<Box<Inode>>());
+    println!("InlineExtent: {} bytes", mem::size_of::<InlineExtent>());
+    println!("BlobExtent:   {} bytes", mem::size_of::<BlobExtent>());
+    println!("ExtAttr:      {} bytes", mem::size_of::<ExtAttr>());
+    println!("ExtAttrs:     {} bytes", mem::size_of::<Vec<ExtAttr>>());
+    println!("DirEntries:   {} bytes", mem::size_of::<Vec<Dirent>>());
+    println!("Property:     {} bytes", mem::size_of::<Property>());
+    println!("DyingInode:   {} bytes", mem::size_of::<DyingInode>());
 }
 
 /// Long InlineExtAttrs should be converted to BlobExtAttrs during flush
