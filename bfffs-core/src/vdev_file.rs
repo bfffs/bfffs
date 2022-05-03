@@ -485,6 +485,11 @@ impl VdevFile {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
+        self.write_at_unchecked(buf, lba)
+    }
+
+    fn write_at_unchecked(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
+    {
         let off = lba * (BYTES_PER_LBA as u64);
         {
             let b: &[u8] = (*buf).borrow();
@@ -521,8 +526,8 @@ impl VdevFile {
         };
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
-        let sglist = label_writer.into_sglist();
-        self.writev_at(sglist, lba)
+        let v = label_writer.into_db();
+        self.write_at_unchecked(v, lba)
     }
 
     /// Asynchronously write to the Vdev's spacemap area.
@@ -545,7 +550,7 @@ impl VdevFile {
         debug_assert_eq!(bytes % BYTES_PER_LBA as u64, 0);
         let lbas = bytes / BYTES_PER_LBA as LbaT;
         assert!(lba + lbas <= self.reserved_space());
-        self.writev_at(sglist, lba)
+        self.writev_at_unchecked(sglist, lba)
     }
 
     /// The asynchronous scatter/gather write function.
@@ -553,6 +558,12 @@ impl VdevFile {
     /// * `sglist`  Scatter-gather list of buffers to write
     /// * `lba`     LBA to write to
     pub fn writev_at(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
+    {
+        assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
+        self.writev_at_unchecked(sglist, lba)
+    }
+
+    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
