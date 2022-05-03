@@ -204,6 +204,17 @@ mod basic {
         }).unwrap();
     }
 
+    #[should_panic]
+    #[rstest]
+    fn writev_at_overwrite_label(harness: Harness) {
+        let dbs = DivBufShared::from(vec![42u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
+        let rt = runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            harness.0.writev_at(vec![wbuf], 0).await
+        }).unwrap();
+    }
+
     #[rstest]
     fn write_at_lba(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
