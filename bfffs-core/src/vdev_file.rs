@@ -22,7 +22,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     fs::OpenOptions,
-    io,
+    io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
     num::NonZeroU64,
     os::unix::{
@@ -32,7 +32,7 @@ use std::{
     path::Path,
     pin::Pin
 };
-use tokio_file::{AioFut, File};
+use tokio_file::File;
 use tokio::task;
 
 /// How does this device deallocate sectors?
@@ -384,21 +384,16 @@ impl VdevFile {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let off = lba * (BYTES_PER_LBA as u64);
-        let mut ra = Box::pin(ReadAt {
-            buf,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to buf's (or rather, it will
-            // be once we move it into the ReadAt struct
-            let buf: &'static mut [u8] =
-                mem::transmute::<&mut[u8], &'static mut [u8]>(ra.buf.as_mut());
-            let fut = self.file.read_at(&mut *buf, off).unwrap();
-            Pin::get_unchecked_mut(ra.as_mut()).fut = Some(fut);
-        }
-        ra
+        let bufaddr: &'static mut [u8] = unsafe {
+            // Safe because fut's lifetime will be equal to buf's once we move
+            // it into the ReadAt struct.  Also, because buf is already
+            // heap-allocated, moving it won't change the data's address.
+            mem::transmute::<&mut[u8], &'static mut [u8]>(buf.as_mut())
+        };
+        let fut = self.file.read_at(&mut *bufaddr, off).unwrap();
+        Box::pin(ReadAt { _buf: buf, fut })
     }
 
     /// Read just one of a vdev's labels
@@ -443,33 +438,35 @@ impl VdevFile {
     /// * `sglist   Scatter-gather list of buffers to receive data
     /// * `lba`     LBA to read from
     #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
-    pub fn readv_at(&self, sglist: SGListMut, lba: LbaT) -> BoxVdevFut
+    pub fn readv_at(&self, mut sglist: SGListMut, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        let mut rva = Box::pin(ReadvAt {
-            sglist,
-            slices: None,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to slices' (or rather, it
-            // will be once we move it into the WriteAt struct
-            let slices: Box<[&'static mut [u8]]> =
-                rva.sglist.iter_mut()
-                .map(|b| {
-                    mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..])
-                }).collect::<Vec<_>>()
-                .into_boxed_slice();
-            Pin::get_unchecked_mut(rva.as_mut()).slices = Some(slices);
-            let bufs: &'static mut [&'static mut [u8]] =
-                mem::transmute::<&mut[&'static mut[u8]],
-                                 &'static mut [&'static mut [u8]]>(
-                    rva.slices.as_mut().unwrap()
-                );
-            let fut = self.file.readv_at(bufs, off).unwrap();
-            Pin::get_unchecked_mut(rva.as_mut()).fut = Some(fut);
-        }
-        rva
+        let mut slices: Box<[IoSliceMut<'static>]> = unsafe {
+            // Safe because fut's lifetime will be equal to slices's once we
+            // move it into the ReadvAt struct.  Also, because sglist is already
+            // heap-allocated, so moving it won't change the data's address.
+            sglist.iter_mut()
+            .map(|b| {
+                let sl = mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..]);
+                IoSliceMut::new(sl)
+            }).collect::<Vec<_>>()
+            .into_boxed_slice()
+        };
+        let bufs: &'static mut [IoSliceMut<'static>] = unsafe {
+            // Safe because fut's lifetime will be equal to bufs's once we
+            // move it into the ReadvAt struct.  Also, because slies is already
+            // heap-allocated, so moving it won't change the data's address.
+            mem::transmute::<&mut[IoSliceMut<'static>],
+                             &'static mut [IoSliceMut<'static>]>(
+                &mut slices
+            )
+        };
+        let fut = self.file.readv_at(bufs, off).unwrap();
+        Box::pin(ReadvAt {
+            _sglist: sglist,
+            _slices: slices,
+            fut
+        })
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -500,20 +497,14 @@ impl VdevFile {
             debug_assert!(b.len() % BYTES_PER_LBA == 0);
         }
 
-        let mut wa = Box::pin(WriteAt {
-            buf,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to buf's (or rather, it will
-            // be once we move it into the WriteAt struct
-            let buf: &'static [u8] = mem::transmute::<&[u8], &'static [u8]>(
-                wa.buf.as_ref()
-            );
-            let fut = self.file.write_at(buf, off).unwrap();
-            Pin::get_unchecked_mut(wa.as_mut()).fut = Some(fut);
-        }
-        wa
+        // Safe because fut's lifetime is equal to buf's (or rather, it will
+        // be once we move it into the WriteAt struct
+        let sbuf: &'static [u8] = unsafe {
+            mem::transmute::<&[u8], &'static [u8]>( buf.as_ref())
+        };
+        let fut = self.file.write_at(sbuf, off).unwrap();
+
+        Box::pin(WriteAt { _buf: buf, fut })
     }
 
     /// Asynchronously write this Vdev's label.
@@ -622,32 +613,32 @@ impl VdevFile {
             sglist
         };
 
-        let mut wva = Box::pin(WritevAt {
-            sglist,
-            slices: None,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to slices' (or rather, it
-            // will be once we move it into the WriteAt struct
-            let slices: Box<[&'static [u8]]> =
-                wva.sglist.iter()
-                    .map(|b| {
+        let slices: Box<[IoSlice<'static>]> =
+            sglist.iter()
+                .map(|b| {
+                    // Safe because fut's lifetime is equal to slices' (or
+                    // rather, it will be once we move it into the WriteAt
+                    // struct
+                    let sb = unsafe {
                         mem::transmute::<&[u8], &'static [u8]>(&b[..])
-                    }).collect::<Vec<_>>()
-                    .into_boxed_slice();
-            Pin::get_unchecked_mut(wva.as_mut()).slices = Some(slices);
-            let fut = self.file.writev_at(wva.slices.as_ref().unwrap(), off)
-                .unwrap();
-            Pin::get_unchecked_mut(wva.as_mut()).fut = Some(fut);
-        }
-        wva
+                    };
+                    IoSlice::new(sb)
+                }).collect::<Vec<_>>()
+                .into_boxed_slice();
+        let fut = self.file.writev_at(&slices, off).unwrap();
+
+        Box::pin(WritevAt {
+            _sglist: sglist,
+            _slices: slices,
+            fut
+        })
     }
 }
 
 struct ReadAt {
-    buf: IoVecMut,
-    fut: Option<AioFut<'static>>
+    // Owns the buffer used by the Future
+    _buf: IoVecMut,
+    fut: tokio_file::ReadAt<'static>
 }
 
 impl Future for ReadAt {
@@ -660,7 +651,7 @@ impl Future for ReadAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -669,9 +660,10 @@ impl Future for ReadAt {
     }
 }
 
-struct WriteAt{
-    fut: Option<AioFut<'static>>,
-    buf: IoVec,
+struct WriteAt {
+    fut: tokio_file::WriteAt<'static>,
+    // Owns the buffer used by the Future
+    _buf: IoVec,
 }
 
 impl Future for WriteAt {
@@ -684,7 +676,7 @@ impl Future for WriteAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -693,10 +685,12 @@ impl Future for WriteAt {
     }
 }
 
-struct ReadvAt{
-    fut: Option<tokio_file::ReadvAt<'static>>,
-    slices: Option<Box<[&'static mut [u8]]>>,
-    sglist: SGListMut,
+struct ReadvAt {
+    fut: tokio_file::ReadvAt<'static>,
+    // Owns the pointer array used by the Future
+    _slices: Box<[IoSliceMut<'static>]>,
+    // Owns the buffers used by the Future
+    _sglist: SGListMut,
 }
 
 impl Future for ReadvAt {
@@ -709,7 +703,7 @@ impl Future for ReadvAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -719,9 +713,11 @@ impl Future for ReadvAt {
 }
 
 struct WritevAt{
-    fut: Option<tokio_file::WritevAt<'static>>,
-    slices: Option<Box<[&'static [u8]]>>,
-    sglist: SGList,
+    fut: tokio_file::WritevAt<'static>,
+    // Owns the pointer array used by the Future
+    _slices: Box<[IoSlice<'static>]>,
+    // Owns the buffers used by the Future
+    _sglist: SGList,
 }
 
 impl Future for WritevAt {
@@ -734,7 +730,7 @@ impl Future for WritevAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -822,9 +818,9 @@ mod writev_at {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 1);
-        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut.sglist[0][1024..], &wbuf1[..]);
+        assert_eq!(fut._sglist.len(), 1);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
     }
 
     #[allow(clippy::async_yields_async)]
@@ -839,10 +835,10 @@ mod writev_at {
         let wbuf2 = dbs2.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 1);
-        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut.sglist[0][1024..3074], &wbuf1[..]);
-        assert_eq!(&fut.sglist[0][3074..], &wbuf2[..]);
+        assert_eq!(fut._sglist.len(), 1);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..3074], &wbuf1[..]);
+        assert_eq!(&fut._sglist[0][3074..], &wbuf2[..]);
     }
 
     #[allow(clippy::async_yields_async)]
@@ -857,10 +853,10 @@ mod writev_at {
         let wbuf2 = dbs2.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 2);
-        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut.sglist[0][1024..], &wbuf1[..]);
-        assert_eq!(&fut.sglist[1][..], &wbuf2[..]);
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
+        assert_eq!(&fut._sglist[1][..], &wbuf2[..]);
     }
 
     #[allow(clippy::async_yields_async)]
@@ -875,10 +871,10 @@ mod writev_at {
         let wbuf2 = dbs2.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 2);
-        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut.sglist[1][..3072], &wbuf1[..]);
-        assert_eq!(&fut.sglist[1][3072..], &wbuf2[..]);
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
+        assert_eq!(&fut._sglist[1][3072..], &wbuf2[..]);
     }
 
     #[allow(clippy::async_yields_async)]
@@ -891,10 +887,10 @@ mod writev_at {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 2);
-        assert_eq!(&fut.sglist[0][..], &wbuf0[..4096]);
-        assert_eq!(&fut.sglist[1][..1024], &wbuf0[4096..]);
-        assert_eq!(&fut.sglist[1][1024..], &wbuf1[..]);
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..4096]);
+        assert_eq!(&fut._sglist[1][..1024], &wbuf0[4096..]);
+        assert_eq!(&fut._sglist[1][1024..], &wbuf1[..]);
     }
 
     #[rstest]
@@ -907,12 +903,12 @@ mod writev_at {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 3);
-        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut.sglist[1][..], &wbuf1[..4096]);
+        assert_eq!(fut._sglist.len(), 3);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..], &wbuf1[..4096]);
         let zbuf = ZERO_REGION.try_const().unwrap();
-        assert_eq!(&fut.sglist[2][..3072], &wbuf1[4096..]);
-        assert_eq!(&fut.sglist[2][3072..], &zbuf[..1024]);
+        assert_eq!(&fut._sglist[2][..3072], &wbuf1[4096..]);
+        assert_eq!(&fut._sglist[2][3072..], &zbuf[..1024]);
     }
 
     #[allow(clippy::async_yields_async)]
@@ -925,11 +921,11 @@ mod writev_at {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
-        assert_eq!(fut.sglist.len(), 2);
-        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut.sglist[1][..3072], &wbuf1[..]);
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
         let zbuf = ZERO_REGION.try_const().unwrap();
-        assert_eq!(&fut.sglist[1][3072..], &zbuf[..1024]);
+        assert_eq!(&fut._sglist[1][3072..], &zbuf[..1024]);
     }
 }
 

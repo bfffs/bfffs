@@ -2,6 +2,8 @@
 
 use async_trait::async_trait;
 use crate::{
+    BYTES_PER_LBA,
+    ZERO_REGION,
     label::*,
     types::*,
     vdev::*,
@@ -142,7 +144,18 @@ impl VdevRaidApi for VdevOneDisk {
 
     fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut
     {
-        Box::pin(self.blockdev.write_at(buf, lba))
+        // Pad up to a whole number of LBAs.  Upper layers don't do this because
+        // VdevRaidApi doesn't have a writev_at method.  But VdevBlock does, so
+        // the raid layer is the most efficient place to pad.
+        let partial = buf.len() % BYTES_PER_LBA;
+        if partial == 0 {
+            Box::pin(self.blockdev.write_at(buf, lba))
+        } else {
+            let remainder = BYTES_PER_LBA - partial;
+            let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
+            let sglist = vec![buf, zbuf];
+            Box::pin(self.blockdev.writev_at(sglist, lba))
+        }
     }
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
