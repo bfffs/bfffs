@@ -7,7 +7,7 @@ use crate::{
     vdev::*
 };
 use cfg_if::cfg_if;
-use divbuf::DivBuf;
+use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
     FutureExt,
@@ -215,7 +215,7 @@ impl VdevFile {
     ///                     zones.
     pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
-        where P: AsRef<Path> + 'static
+        where P: AsRef<Path>
     {
         let f = OpenOptions::new()
             .read(true)
@@ -485,7 +485,11 @@ impl VdevFile {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
-        self.write_at_unchecked(buf, lba)
+        if buf.len() % BYTES_PER_LBA != 0 {
+            self.writev_at_unchecked(vec![buf], lba)
+        } else {
+            self.write_at_unchecked(buf, lba)
+        }
     }
 
     fn write_at_unchecked(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
@@ -563,9 +567,60 @@ impl VdevFile {
         self.writev_at_unchecked(sglist, lba)
     }
 
-    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
+    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT)
+        -> Pin<Box<WritevAt>>
     {
         let off = lba * (BYTES_PER_LBA as u64);
+
+        let sglist = if sglist.iter().any(|db| db.len() % BYTES_PER_LBA != 0) {
+            // We must copy data to make all writes block-sized.  We do it here
+            // rather than upstack to minimize the time that the copied data
+            // must live.
+            // We must copy partial-block divbufs, rather than extend them,
+            // because we don't want to modify data that might be in the Cache.
+            let mut outlist = SGList::with_capacity(sglist.len());
+            let mut accumulator: Option<Vec<u8>> = None;
+            for mut db in sglist.into_iter() {
+                if db.len() % BYTES_PER_LBA == 0 {
+                    assert!(accumulator.is_none());
+                    outlist.push(db);
+                    continue
+                }
+                if let Some(ref mut accum) = accumulator {
+                    if db.len() > BYTES_PER_LBA {
+                        unimplemented!();
+                    }
+                    // Data copy
+                    accum.extend(&db[..]);
+                    if accum.len() % BYTES_PER_LBA == 0 {
+                        let dbs = DivBufShared::from(
+                            accumulator.take().unwrap()
+                        );
+                        let db = dbs.try_const().unwrap();
+                        outlist.push(db);
+                    }
+                } else {
+                    if db.len() > BYTES_PER_LBA {
+                        let wlen = db.len() & !(BYTES_PER_LBA - 1);
+                        outlist.push(db.split_to(wlen));
+                    }
+                    // Data copy
+                    accumulator = Some(Vec::from(&db[..]));
+                }
+            }
+            if let Some(ref mut accum) = accumulator {
+                // Must've been an incomplete block.  zero-pad the tail
+                let l = div_roundup(accum.len(), BYTES_PER_LBA) * BYTES_PER_LBA;
+                // Data copy
+                accum.resize(l, 0);
+                let dbs = DivBufShared::from(accumulator.take().unwrap());
+                let db = dbs.try_const().unwrap();
+                outlist.push(db);
+            }
+            outlist
+        } else {
+            sglist
+        };
 
         let mut wva = Box::pin(WritevAt {
             sglist,
@@ -736,6 +791,145 @@ mod label {
             spacemap_space: 0
         };
         format!("{:?}", label);
+    }
+}
+
+mod writev_at {
+    use super::super::*;
+    use divbuf::DivBufShared;
+    use rstest::{fixture, rstest};
+    use tokio::runtime::Runtime;
+
+    type Harness = (VdevFile, Runtime);
+
+    #[fixture]
+    fn harness() -> Harness {
+        let len = 1 << 26;  // 64MB
+        let mut tf = tempfile::NamedTempFile::new().unwrap();
+        tf.as_file_mut().set_len(len).unwrap();
+        let vd = VdevFile::create(tf.path(), None).unwrap();
+        let rt = Runtime::new().unwrap();
+        (vd, rt)
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 1);
+        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut.sglist[0][1024..], &wbuf1[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_three_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 2050]);
+        let dbs2 = DivBufShared::from(vec![2u8; 1022]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 1);
+        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut.sglist[0][1024..3074], &wbuf1[..]);
+        assert_eq!(&fut.sglist[0][3074..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_first_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let dbs2 = DivBufShared::from(vec![2u8; 4096]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 2);
+        assert_eq!(&fut.sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut.sglist[0][1024..], &wbuf1[..]);
+        assert_eq!(&fut.sglist[1][..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_last_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let dbs2 = DivBufShared::from(vec![2u8; 1024]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 2);
+        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut.sglist[1][..3072], &wbuf1[..]);
+        assert_eq!(&fut.sglist[1][3072..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_tail_of_iovec(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 5120]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 2);
+        assert_eq!(&fut.sglist[0][..], &wbuf0[..4096]);
+        assert_eq!(&fut.sglist[1][..1024], &wbuf0[4096..]);
+        assert_eq!(&fut.sglist[1][1024..], &wbuf1[..]);
+    }
+
+    #[rstest]
+    #[allow(clippy::async_yields_async)]
+    fn pad_large_tail(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 7168]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 3);
+        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut.sglist[1][..], &wbuf1[..4096]);
+        let zbuf = ZERO_REGION.try_const().unwrap();
+        assert_eq!(&fut.sglist[2][..3072], &wbuf1[4096..]);
+        assert_eq!(&fut.sglist[2][3072..], &zbuf[..1024]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn pad_small_tail(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut.sglist.len(), 2);
+        assert_eq!(&fut.sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut.sglist[1][..3072], &wbuf1[..]);
+        let zbuf = ZERO_REGION.try_const().unwrap();
+        assert_eq!(&fut.sglist[1][3072..], &zbuf[..1024]);
     }
 }
 
