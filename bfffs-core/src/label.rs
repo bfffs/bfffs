@@ -134,32 +134,26 @@ impl LabelWriter {
         })
     }
 
-    /// Consume the `LabelWriter` and return a DivBuf suitable for writing to
-    /// the first sectors of the disk.
-    pub fn into_db(self) -> DivBuf {
-        let mut v = Vec::with_capacity(LABEL_SIZE);
-        v.extend(&MAGIC[..]);
-
+    /// Consume the `LabelWriter` and return an `SGList` suitable for writing to
+    /// the first sector of a disk.
+    pub fn into_sglist(self) -> SGList {
+        let mut sglist: SGList = Vec::with_capacity(self.buffers.len() + 2);
+        let header_len = MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN;
+        let header_dbs = DivBufShared::with_capacity(header_len);
+        let mut header = header_dbs.try_mut().unwrap();
+        header.extend(&MAGIC[..]);
+        let contents = self.buffers.into_iter().rev().collect::<Vec<_>>();
+        let contents_len: usize = contents.iter().map(DivBuf::len).sum();
         let mut hasher = MetroHash64::new();
-        let contents_len: usize = self.buffers.iter().map(DivBuf::len).sum();
         (contents_len as u64).to_be().hash(&mut hasher);
-
-        for buf in self.buffers.iter().rev() {
-            checksum_iovec(buf, &mut hasher);
-        }
-        v.resize(MAGIC_LEN + CHECKSUM_LEN, 0);
-        BigEndian::write_u64(&mut v[MAGIC_LEN..], hasher.finish());
-
-        v.resize(MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN, 0);
+        checksum_sglist(&contents, &mut hasher);
+        header.try_resize(MAGIC_LEN + CHECKSUM_LEN, 0).unwrap();
+        BigEndian::write_u64(&mut header[MAGIC_LEN..], hasher.finish());
+        header.try_resize(MAGIC_LEN + CHECKSUM_LEN + LENGTH_LEN, 0).unwrap();
         let length_start = MAGIC_LEN + CHECKSUM_LEN;
-        BigEndian::write_u64(&mut v[length_start..], contents_len as u64);
-
-        for buf in self.buffers.into_iter().rev() {
-            v.extend(&buf[..]);
-        }
-
-        v.resize(LABEL_SIZE, 0);
-        let dbs = DivBufShared::from(v);
-        dbs.try_const().unwrap()
+        BigEndian::write_u64(&mut header[length_start..], contents_len as u64);
+        sglist.push(header.freeze());
+        sglist.extend(contents);
+        sglist
     }
 }

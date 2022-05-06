@@ -526,8 +526,8 @@ impl VdevFile {
         };
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
-        let v = label_writer.into_db();
-        self.write_at_unchecked(v, lba)
+        let sglist = label_writer.into_sglist();
+        self.writev_at_unchecked(sglist, lba)
     }
 
     /// Asynchronously write to the Vdev's spacemap area.
