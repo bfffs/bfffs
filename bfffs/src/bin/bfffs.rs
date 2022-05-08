@@ -9,6 +9,7 @@ use bfffs_core::{
 };
 use clap::{crate_version, Parser};
 use futures::{future, TryStreamExt};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Clone, Debug)]
 /// Consistency check
@@ -496,6 +497,10 @@ struct Cli {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .pretty()
+        .with_env_filter(EnvFilter::from_default_env())
+        .init();
     let cli: Cli = Cli::parse();
     match cli.cmd {
         SubCommand::Check(check) => check.main().await,
