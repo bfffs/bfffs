@@ -1292,9 +1292,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         elem.txgs = txg..txg + 1;
         child.as_leaf_mut()
         .insert(k, v, txg, dml.as_ref(), credit)
-        .map_ok(move |(old_v, excess)| {
+        .map(move |(r, excess)| {
             dml.repay(excess);
-            old_v
+            r
         })
     }
 
