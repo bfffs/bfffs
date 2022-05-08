@@ -3,7 +3,7 @@ use std::{path::PathBuf, process::exit, sync::Arc};
 use bfffs::{Bfffs, Result};
 use bfffs_core::{
     controller::Controller,
-    database::TreeID,
+    database::{Database, TreeID},
     device_manager::DevManager,
     property::Property,
 };
@@ -52,12 +52,18 @@ impl Check {
 #[derive(Parser, Clone, Debug)]
 /// Dump internal filesystem information
 struct Dump {
+    /// Dump the Allocation Table
+    #[clap(long)]
+    alloct:    bool,
     /// Dump the Forest
     #[clap(long)]
     forest:    bool,
     /// Dump the Free Space Map
     #[clap(short, long)]
     fsm:       bool,
+    /// Dump the Record Indirection Table
+    #[clap(long)]
+    ridt:      bool,
     /// Dump the file system tree
     #[clap(short, long)]
     tree:      bool,
@@ -69,18 +75,13 @@ struct Dump {
 }
 
 impl Dump {
+    async fn dump_alloct(self) {
+        let db = self.load_db().await;
+        db.dump_alloct(&mut std::io::stdout()).await.unwrap()
+    }
+
     async fn dump_forest(self) {
-        let dev_manager = DevManager::default();
-        for disk in self.disks.iter() {
-            dev_manager.taste(disk).await.unwrap();
-        }
-        let db = dev_manager
-            .import_by_name(self.pool_name)
-            .await
-            .unwrap_or_else(|_e| {
-                eprintln!("Error: pool not found");
-                exit(1);
-            });
+        let db = self.load_db().await;
         db.dump_forest(&mut std::io::stdout()).await.unwrap()
     }
 
@@ -101,29 +102,42 @@ impl Dump {
         }
     }
 
+    async fn dump_ridt(self) {
+        let db = self.load_db().await;
+        db.dump_ridt(&mut std::io::stdout()).await.unwrap()
+    }
+
     async fn dump_tree(self) {
-        let dev_manager = DevManager::default();
-        for disk in self.disks.iter() {
-            dev_manager.taste(disk).await.unwrap();
-        }
-        let db = dev_manager
-            .import_by_name(self.pool_name)
-            .await
-            .unwrap_or_else(|_e| {
-                eprintln!("Error: pool not found");
-                exit(1);
-            });
-        let db = Arc::new(db);
+        let db = self.load_db().await;
         // For now, hardcode tree_id to 0
         let tree_id = TreeID(0);
         db.dump_fs(&mut std::io::stdout(), tree_id).await.unwrap()
     }
 
+    async fn load_db(&self) -> Arc<Database> {
+        let dev_manager = DevManager::default();
+        for disk in self.disks.iter() {
+            dev_manager.taste(disk).await.unwrap();
+        }
+        let db = dev_manager
+            .import_by_name(&self.pool_name)
+            .await
+            .unwrap_or_else(|_e| {
+                eprintln!("Error: pool not found");
+                exit(1);
+            });
+        Arc::new(db)
+    }
+
     async fn main(self) -> Result<()> {
-        if self.forest {
+        if self.alloct {
+            self.dump_alloct().await;
+        } else if self.forest {
             self.dump_forest().await;
         } else if self.fsm {
             self.dump_fsm().await;
+        } else if self.ridt {
+            self.dump_ridt().await;
         } else if self.tree {
             self.dump_tree().await
         }
