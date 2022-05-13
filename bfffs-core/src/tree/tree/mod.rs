@@ -742,27 +742,33 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     Tree::dump_r(dml2, child_node, ser3)
                 })
             }).collect::<FuturesOrdered<_>>()
-            .try_collect::<Vec<_>>();
+            .collect::<Vec<_>>();
             Box::pin(futs) as Pin<Box<_>>
         } else {
-            Box::pin(future::ok(Vec::new()))
+            Box::pin(future::ready(Vec::new()))
                 as Pin<Box<dyn Future<
-                    Output=Result<Vec<TreeReadGuard<A, K, V>>>
+                    Output=Vec<Result<TreeReadGuard<A, K, V>>>
                 >>>
-        }.map_ok(move |v: Vec<TreeReadGuard<A, K, V>>| {
+        }.map(move |v: Vec<Result<TreeReadGuard<A, K, V>>>| {
             if !node.is_leaf() {
-                let mut hmap = BTreeMap::new();
+                let mut hmap = BTreeMap::<A, &NodeData<A, K, V>>::new();
                 let citer = node.as_int().children.iter();
                 for (child, guard) in citer.zip(v.iter()) {
-                    if !guard.is_mem() {
-                        hmap.insert(*child.ptr.as_addr(), guard.deref());
+                    match guard {
+                        Ok(TreeReadGuard::Mem(_)) => (),
+                        Ok(TreeReadGuard::Addr(mguard, _)) => {
+                            hmap.insert(*child.ptr.as_addr(), mguard.deref());
+                        }
+                        Err(e) => format!("Error reading {:?}: {:?}",
+                            child.ptr.as_addr(), e)
+                            .serialize(&mut *ser2.borrow_mut()).unwrap()
                     }
                 }
                 if ! hmap.is_empty() {
                     hmap.serialize(&mut *ser2.borrow_mut()).unwrap();
                 }
             }
-            node
+            Ok(node)
         });
         Box::pin(fut) as Pin<Box<_>>
     }

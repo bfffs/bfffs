@@ -416,6 +416,130 @@ root:
     assert_eq!(expected, OsStr::from_bytes(&out[..]));
 }
 
+/// Dump a Tree, but get an I/O error reading part of it.
+#[test]
+fn dump_error() {
+    let mut mock = mock_dml();
+    let addrl0 = 3;
+    let addrl1 = 4;
+    let addrl2 = 5;
+
+    let mut ld0 = LeafData::default();
+    ld0.items.insert(0, 0.0);
+    ld0.items.insert(1, 1.0);
+    let leafnode0 = Arc::new(Node::new(NodeData::Leaf(ld0)));
+
+    let mut ld2 = LeafData::default();
+    ld2.items.insert(20, 20.0);
+    ld2.items.insert(21, 21.0);
+    let leafnode2 = Arc::new(Node::new(NodeData::Leaf(ld2)));
+
+    expect_get(&mut mock, addrl0, leafnode0);
+    mock.expect_get::<NodeT, NodeT>()
+        .once()
+        .with(eq(addrl1))
+        .return_once(move |_| future::err(Error::EIO).boxed());
+    expect_get(&mut mock, addrl2, leafnode2);
+
+    let dml = Arc::new(mock);
+    let tree: Tree<u32, MockDML, u32, f32> = Tree::from_str(dml, false, r#"
+---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 3
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Addr: 4
+            - key: 20
+              txgs:
+                start: 0
+                end: 1
+              ptr:
+                Addr: 5
+  "#);
+let expected =
+r#"---
+limits:
+  min_int_fanout: 2
+  max_int_fanout: 5
+  min_leaf_fanout: 2
+  max_leaf_fanout: 5
+  _max_size: 4194304
+root:
+  height: 2
+  elem:
+    key: 0
+    txgs:
+      start: 0
+      end: 42
+    ptr:
+      Mem:
+        Int:
+          children:
+            - key: 0
+              txgs:
+                start: 8
+                end: 9
+              ptr:
+                Addr: 3
+            - key: 10
+              txgs:
+                start: 20
+                end: 32
+              ptr:
+                Addr: 4
+            - key: 20
+              txgs:
+                start: 0
+                end: 1
+              ptr:
+                Addr: 5
+...
+---
+"Error reading 4: EIO"
+...
+---
+3:
+  Leaf:
+    credit: 0
+    items:
+      0: 0.0
+      1: 1.0
+5:
+  Leaf:
+    credit: 0
+    items:
+      20: 20.0
+      21: 21.0
+"#;
+    let mut out = Vec::new();
+    tree.dump(&mut out).now_or_never().unwrap().unwrap();
+    assert_eq!(expected, OsStr::from_bytes(&out[..]));
+}
+
 /// Insert an item for a key that already has a value, and needs dclone
 #[test]
 fn insert_dclone() {
