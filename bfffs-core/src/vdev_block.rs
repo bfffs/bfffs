@@ -6,13 +6,15 @@ use futures::{
     channel::oneshot,
     task::{Context, Poll}
 };
+use lazy_static::lazy_static;
+use nix::unistd::{sysconf, SysconfVar};
 use std::{
     cmp::{Ord, Ordering, PartialOrd},
     collections::BinaryHeap,
     collections::VecDeque,
     io,
     mem,
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     path::Path,
     pin::Pin,
     sync::{Arc, RwLock, Weak},
@@ -34,6 +36,17 @@ pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
+lazy_static! {
+    static ref IOV_MAX: Option<NonZeroUsize> = {
+        sysconf(SysconfVar::IOV_MAX)
+            .unwrap()
+            .map(usize::try_from)
+            .map(std::result::Result::unwrap)
+            .map(NonZeroUsize::try_from)
+            .map(std::result::Result::unwrap)
+    };
+}
+
 #[derive(Debug)]
 enum Cmd {
     OpenZone,
@@ -52,6 +65,24 @@ enum Cmd {
 }
 
 impl Cmd {
+    #[cfg(test)]
+    fn as_readv_at(&self) -> &SGListMut {
+        if let Cmd::ReadvAt(sglist_mut) = &self {
+            sglist_mut
+        } else {
+            panic!("Not a Cmd::WriteAt");
+        }
+    }
+
+    #[cfg(test)]
+    fn as_writev_at(&self) -> &SGList {
+        if let Cmd::WritevAt(sglist) = &self {
+            sglist
+        } else {
+            panic!("Not a Cmd::WriteAt");
+        }
+    }
+
     // Oh, this would be so much easier if only `std::mem::Discriminant`
     // implemented `Ord`!
     fn discriminant(&self) -> i32 {
@@ -68,6 +99,11 @@ impl Cmd {
             Cmd::WriteSpacemap(_, _, _) => 9,
             Cmd::SyncAll => 10,
         }
+    }
+
+    #[cfg(test)]
+    fn is_sync_all(&self) -> bool {
+        matches!(self, Cmd::SyncAll)
     }
 }
 
@@ -103,6 +139,8 @@ struct BlockOp {
     pub lba: LbaT,
     pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
+    // Consider replacing with std::sync::Waker, which is smaller than oneshot
+    // Sender and Receiver.
     pub senders: Vec<oneshot::Sender<()>>
 }
 
@@ -138,6 +176,190 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
+    pub fn can_accumulate(&self, other: &BlockOp) -> bool {
+
+        // Assuming everything else is ok, can two operations with the given
+        // LBA offsets and total byte lengths be accumulated?
+        let bytes_ok = |len0: usize, _len1: usize| {
+            other.lba == self.lba + (len0 / BYTES_PER_LBA) as LbaT
+        };
+        // Assuming everything else is ok, can two operations be accumulated
+        // without exceeding the operating system's IOV_MAX limitation?
+        fn iov_max_ok(len0: usize, len1: usize) -> bool {
+            match *IOV_MAX {
+                Some(iov_max) => usize::from(iov_max) >= len0 + len1,
+                None => true
+            }
+        }
+
+        match (&self.cmd, &other.cmd) {
+            // Adjacent reads may be combined
+            (Cmd::ReadAt(iovec0), Cmd::ReadAt(iovec1)) => {
+                bytes_ok(iovec0.len(), iovec1.len())
+            }
+            (Cmd::ReadAt(iovec0), Cmd::ReadvAt(sglist1)) => {
+                bytes_ok(iovec0.len(), sglist_len(sglist1)) &&
+                    iov_max_ok(1, sglist1.len())
+            }
+            (Cmd::ReadvAt(sglist0), Cmd::ReadAt(iovec1)) => {
+                bytes_ok(sglist_len(sglist0), iovec1.len()) &&
+                    iov_max_ok(sglist0.len(), 1)
+            }
+            (Cmd::ReadvAt(sglist0), Cmd::ReadvAt(sglist1)) => {
+                bytes_ok(sglist_len(sglist0), sglist_len(sglist1)) &&
+                    iov_max_ok(sglist0.len(), sglist1.len())
+            }
+            (Cmd::SyncAll, Cmd::SyncAll) => {
+                // There's no point to adjacent syncs.  Combine them
+                true
+            },
+            // Adjacent writes may be combined
+            (Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                bytes_ok(iovec0.len(), iovec1.len())
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WritevAt(sglist1)) => {
+                bytes_ok(iovec0.len(), sglist_len(sglist1)) &&
+                    iov_max_ok(1, sglist1.len())
+            }
+            (Cmd::WritevAt(sglist0), Cmd::WriteAt(iovec1)) => {
+                bytes_ok(sglist_len(sglist0), iovec1.len()) &&
+                    iov_max_ok(sglist0.len(), 1)
+            }
+            (Cmd::WritevAt(sglist0), Cmd::WritevAt(sglist1)) => {
+                bytes_ok(sglist_len(sglist0), sglist_len(sglist1)) &&
+                    iov_max_ok(sglist0.len(), sglist1.len())
+            }
+            _ => {
+                // Other pairs of commands never accumulate
+                false
+            }
+        }
+    }
+
+    //pub fn accumulate2(&mut self, mut other: BlockOp) {
+        //debug_assert_eq!(other.senders.len(), 1);
+        //self.senders.push(other.senders.pop().unwrap());
+        //self.cmd = match (self.cmd, other.cmd) {
+            //(Cmd::SyncAll, Cmd::SyncAll) => {
+                //// Nothing to do
+                //Cmd::SyncAll
+            //},
+            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                //Cmd::WritevAt(vec![iovec0, iovec1])
+            //}
+            //_ => todo!()
+        //};
+        //todo!()
+    //}
+
+    //pub fn accumulate3(&mut self, mut other: BlockOp) -> Option<BlockOp> {
+        //match (self.cmd, other.cmd) {
+            //(Cmd::SyncAll, Cmd::SyncAll) => {
+                //// Nothing to do
+            //},
+            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
+                //if other.lba == self.lba + len0 {
+                    //// Adjacent writes may be combined
+                    //self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
+                //} else {
+                    //return Some(other);
+                //}
+            //}
+            //_ => todo!()
+        //}
+        //debug_assert_eq!(other.senders.len(), 1);
+        //self.senders.push(other.senders.pop().unwrap());
+        //todo!()
+    //}
+
+    pub fn accumulate(self, mut other: BlockOp) -> BlockOp {
+        debug_assert!(self.can_accumulate(&other));
+
+        debug_assert_eq!(other.senders.len(), 1);
+        let mut senders = self.senders;
+        senders.push(other.senders.pop().unwrap());
+
+        let cmd = match (self.cmd, other.cmd) {
+            (Cmd::SyncAll, Cmd::SyncAll) => {
+                // Nothing to do
+                Cmd::SyncAll
+            },
+            (Cmd::ReadAt(iovec0), Cmd::ReadAt(iovec1)) => {
+                Cmd::ReadvAt(vec![iovec0, iovec1])
+            }
+            (Cmd::ReadAt(iovec0), Cmd::ReadvAt(sglist1)) => {
+                let mut sglist = Vec::with_capacity(sglist1.len() + 1);
+                sglist.push(iovec0);
+                sglist.extend(sglist1);
+                Cmd::ReadvAt(sglist)
+            }
+            (Cmd::ReadvAt(mut sglist0), Cmd::ReadAt(iovec1)) => {
+                sglist0.push(iovec1);
+                Cmd::ReadvAt(sglist0)
+            }
+            (Cmd::ReadvAt(mut sglist0), Cmd::ReadvAt(sglist1)) => {
+                sglist0.extend(sglist1);
+                Cmd::ReadvAt(sglist0)
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                Cmd::WritevAt(vec![iovec0, iovec1])
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WritevAt(sglist1)) => {
+                let mut sglist = Vec::with_capacity(sglist1.len() + 1);
+                sglist.push(iovec0);
+                sglist.extend(sglist1);
+                Cmd::WritevAt(sglist)
+            }
+            (Cmd::WritevAt(mut sglist0), Cmd::WriteAt(iovec1)) => {
+                sglist0.push(iovec1);
+                Cmd::WritevAt(sglist0)
+            }
+            (Cmd::WritevAt(mut sglist0), Cmd::WritevAt(sglist1)) => {
+                sglist0.extend(sglist1);
+                Cmd::WritevAt(sglist0)
+            }
+            _ => todo!()
+        };
+
+        BlockOp {
+            lba: self.lba,
+            senders,
+            cmd
+        }
+    }
+
+    /// Attempt to merge the two BlockOps together.  If successful, the result
+    /// will be a single block op that spans the contiguous LBA range of the
+    /// originals and includes the buffers of both.  When complete, it will
+    /// signal notification to both originals' waiters.
+    //pub fn accumulate(&mut self, other: Option<&mut BlockOp>) -> bool {
+        //if let Some(other) = other {
+            //match (self.cmd, &other.cmd) {
+                //(Cmd::SyncAll, Cmd::SyncAll) => {
+                    //// There's no point to adjacent syncs.  Combine them
+                    ////true
+                //},
+                //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                    //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
+                    //if other.lba == self.lba + len0 {
+                        //// Adjacent writes may be combined
+                        ////self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
+                        ////true
+                    //} else {
+                        //return false;
+                    //}
+                //}
+                //_ => todo!()
+            //}
+            //debug_assert_eq!(other.senders.len(), 1);
+            //self.senders.push(other.senders.pop().unwrap());
+            //todo!()
+        //} else {
+            //return false;
+        //}
+    //}
+
     pub fn erase_zone(start: LbaT, end: LbaT,
                       sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba: end, cmd: Cmd::EraseZone(start), senders: vec![sender] }
@@ -246,10 +468,51 @@ impl Inner {
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self, cx: &mut Context) {
         while self.queue_depth < self.optimum_queue_depth {
+            // TODO: accumulate adjacent reads and writes
+            // let (sender,fut) = if let Some(x)  = self.delayed.take() {
+            //     x
+            // } else {
+            //     let mut op = self.pop_op().unwrap_or(break);
+            //     while self.peek_op().map(|op| op.lba == self.lba).or(false) {
+            //         op.accumulate(self.pop_op())
+            //     }
+            // }
+            // or
+            // } else {
+            //     while self.peek_op().and_then(|op2| op.accumulate(op2)) {
+            //         self.pop_op()
+            //      }
+            // }
+            // or
+            // } else {
+            //     let op2 = loop {
+            //         match self.pop_op() {
+            //             None => break None,
+            //             Some(op2) => match op1.accumulate(op2) {
+            //                 None => continue,
+            //                 Some(op2) => break Some(op2)
+            //             }
+            //         }
+            //    }
+            //    self.next_op = Some(op2);
+            //    issue(op1);
+            // }
+            // or
+            // } else {
+            //     while self.peek_op().and_then(|op2| op.can_accumulate(op2)) {
+            //         op = op.accumulate(self.pop_op());
+            //     }
+            // }
             let delayed = self.delayed.take();
             let (senders, fut) = if let Some((senders, fut)) = delayed {
                 (senders, fut)
-            } else if let Some(op) = self.pop_op() {
+            } else if let Some(mut op) = self.pop_op() {
+                while self.peek_op()
+                    .map(|op2| op.can_accumulate(op2))
+                    .unwrap_or(false)
+                {
+                    op = op.accumulate(self.pop_op().unwrap());
+                }
                 self.make_fut(op)
             } else {
                 // Ran out of pending operations
@@ -349,6 +612,19 @@ impl Inner {
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.senders, fut)
+    }
+
+    /// Get a reference to the next pending operation, if any
+    fn peek_op(&self) -> Option<&BlockOp> {
+        if let Some(op) = self.ahead.peek() {
+            Some(op)
+        } else if let Some(op) = self.behind.peek() {
+            Some(op)
+        } else if let Some(op) = self.after_sync.front() {
+            Some(op)
+        } else {
+            None
+        }
     }
 
     /// Get the next pending operation, if any
@@ -766,6 +1042,455 @@ mod t {
     mod block_op {
         use super::*;
 
+        mod accumulate {
+            use super::*;
+
+            /// Can't accumulate because the second operation's LBA lies before
+            /// than the first.  This can happen, especially on a lightly-loaded
+            /// system, when the seek pointer wraps around.
+            #[test]
+            fn backwards_lba() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 999;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Can't accumulate because the commands are different
+            #[test]
+            fn different_cmds() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Erase Zone commands never accumulate
+            // They could, when working with non-SMR drives, but the zones are
+            // so big that there would be little benefit.  With SMR drives they
+            // cannot accumulate, because the RESET_WRITE_POINTER operation
+            // works on only one zone at a time.
+            #[test]
+            fn erase_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0s = 1000;
+                let lba0e = 1009;
+                let lba1s = 1010;
+                let lba1e = 1019;
+                let op0 = BlockOp::erase_zone(lba0s, lba0e, tx0);
+                let op1 = BlockOp::erase_zone(lba1s, lba1e, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Finish Zone commands never accumulate.
+            // For non-SMR disks there is no point because the command is a
+            // no-op.  For SMR disks they cannot accumulate because the
+            // FINISH_ZONE command works on only one zone at a time.
+            #[test]
+            fn finish_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0s = 1000;
+                let lba0e = 1009;
+                let lba1s = 1010;
+                let lba1e = 1019;
+                let op0 = BlockOp::finish_zone(lba0s, lba0e, tx0);
+                let op1 = BlockOp::finish_zone(lba1s, lba1e, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Can't accumulate because both operations have the same LBA.
+            /// This ideally shouldn't happen, but it's possible, if two
+            /// processes try to read the same uncached block at the same time.
+            #[test]
+            fn identical_lba() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1000;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// read and write operations cannot accumulate if the resulting
+            /// length of iovec would exceed _SC_IOV_MAX.
+            #[test]
+            fn iov_max() {
+                let limit = match sysconf(SysconfVar::IOV_MAX).unwrap() {
+                    None => {
+                        // No such limit
+                        return;
+                    }
+                    Some(limit) => limit
+                };
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let dbs = DivBufShared::from(vec![0; 4096]);
+                let mut sglist0 = vec![];
+                let mut sglist1 = vec![];
+                let iovlen0 = limit / 2;
+                let iovlen1 = limit + 1 - iovlen0;
+                for _ in 0..iovlen0 {
+                    sglist0.push(dbs.try_const().unwrap());
+                }
+                for _ in 0..iovlen1 {
+                    sglist1.push(dbs.try_const().unwrap());
+                }
+                let lba0: LbaT = 1000;
+                let lba1: LbaT = lba0 + iovlen0 as LbaT;
+
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Can't accumulate because of a gap in the LBA range
+            #[test]
+            fn lba_gap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// OpenZone commands never accumulate
+            #[test]
+            fn open_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let op0 = BlockOp::open_zone(lba0, tx0);
+                let op1 = BlockOp::open_zone(lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Successfully accumulate two ReadAt operations
+            #[test]
+            fn read_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rptr1 = &rbuf1[0] as *const _;
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+            }
+
+            /// Successfully accumulate a ReadAt with a ReadvAt operation
+            #[test]
+            fn read_at_and_readv_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let dbs3 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rbuf3 = dbs3.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let rptr3 = &rbuf3[0] as *const _;
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::readv_at(vec![rbuf2, rbuf3], lba1, tx1);
+
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr2);
+                assert_eq!(&sglist[2][0] as *const _, rptr3);
+            }
+
+            /// ReadSpacemap commands never accumulate
+            #[test]
+            fn read_spacemap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_spacemap(rbuf0, lba0, 0, tx0);
+                let op1 = BlockOp::read_spacemap(rbuf1, lba1, 0, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Successfully accumulate two ReadvAt operations
+            #[test]
+            fn readv_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let dbs3 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rbuf3 = dbs3.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr1 = &rbuf1[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let rptr3 = &rbuf3[0] as *const _;
+                let op0 = BlockOp::readv_at(vec![rbuf0, rbuf1], lba0, tx0);
+                let op1 = BlockOp::readv_at(vec![rbuf2, rbuf3], lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 4);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+                assert_eq!(&sglist[2][0] as *const _, rptr2);
+                assert_eq!(&sglist[3][0] as *const _, rptr3);
+            }
+
+            /// Successfully accumulate a ReadvAt with a ReadAt operation
+            #[test]
+            fn readv_at_and_read_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr1 = &rbuf1[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let op0 = BlockOp::readv_at(vec![rbuf0, rbuf1], lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf2, lba1, tx1);
+
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+                assert_eq!(&sglist[2][0] as *const _, rptr2);
+            }
+
+            /// Successfully accumulate two SyncAll operations
+            #[test]
+            fn sync_all() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let op0 = BlockOp::sync_all(tx0);
+                let op1 = BlockOp::sync_all(tx1);
+                let opa = op0.accumulate(op1);
+                assert!(opa.cmd.is_sync_all());
+            }
+
+            /// Successfully accumulate two WriteAt operations
+            #[test]
+            fn write_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::write_at(wbuf0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+            }
+
+            /// Successfully accumulate a WriteAt and a WritevAt operation
+            #[test]
+            fn write_at_and_writev_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let dbs3 = DivBufShared::from(vec![3; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbuf3 = dbs3.try_const().unwrap();
+                let sglist1 = vec![wbuf2, wbuf3];
+                let op0 = BlockOp::write_at(wbuf0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs2.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs3.try_const().unwrap()[..]);
+            }
+
+            /// WriteLabel commands never accumulate
+            #[test]
+            fn write_label() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lw0 = LabelWriter::new(0);
+                let lw1 = LabelWriter::new(1);
+                let op0 = BlockOp::write_label(lw0, tx0);
+                let op1 = BlockOp::write_label(lw1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// WriteSpacemap commands never accumulate
+            #[test]
+            fn write_spacemap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, 0, 10,
+                                                      tx0);
+                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, 0, 11,
+                                                  tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Successfully accumulate two WritevAt operations
+            #[test]
+            fn writev_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let dbs3 = DivBufShared::from(vec![3; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbuf3 = dbs3.try_const().unwrap();
+                let sglist0 = vec![wbuf0, wbuf1];
+                let sglist1 = vec![wbuf2, wbuf3];
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 4);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
+                assert_eq!(&sglist[3][..], &dbs3.try_const().unwrap()[..]);
+            }
+
+            /// Successfully accumulate a WritevAt and a WriteAt operation
+            #[test]
+            fn writev_at_and_write_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let sglist0 = vec![wbuf0, wbuf1];
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf2, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
+            }
+
+            // TODO: test cases for
+            // [✓] None
+            // [✓] read_at
+            // [✓] write_at
+            // [✓] writev_at
+            // [✓] readv_at
+            // [✓] read_at + readv_at
+            // [✓] write_at + writev_at
+            // [✓] readv_at + read_at
+            // [✓] writev_at + write_at
+            // [✓] gap in lba range: can't accumulate
+            // [✓] identical lba.  Can't accumulate
+            // [✓] backwards lba.  Can't accumulate
+            // [ ] left side's buffer only partially fills lba: can accumulate:
+            //   [ ] write_at
+            //   [ ] read_at
+            //   [ ] writev_at
+            //   [ ] readv_at
+            // [✓] Different cmds.  Can't accumulate
+            // [✓] Non-accumulatable commands:
+            //   [✓] OpenZone
+            //   [✓] ReadSpacemap
+            //   [✓] WriteLabel
+            //   [✓] WriteSpacemap
+            //   [✓] EraseZone
+            //   [✓] FinishZone
+            // [✓] SyncAll.
+            // [✓] Total iovec length would exceed _SC_IOV_MAX.  Can't accumulate.
+            // [✓] Total iovec byte length would exceed maxphys.  Can't
+            // accumulate
+        }
+
         // pet kcov
         #[test]
         #[allow(clippy::eq_op)]
@@ -851,8 +1576,7 @@ mod t {
             }
         }
 
-        #[fixture]
-        fn leaf() -> MockVdevFile {
+        fn partial_leaf() -> MockVdevFile {
             let mut leaf = MockVdevFile::new();
             leaf.expect_size()
                 .once()
@@ -860,8 +1584,6 @@ mod t {
             leaf.expect_lba2zone()
                 .with(ge(1).and(lt(1<<16)))
                 .return_const(Some(0));
-            leaf.expect_optimum_queue_depth()
-                .return_const(10u32);
             leaf.expect_spacemap_space()
                 .return_const(1u64);
             leaf.expect_zone_limits()
@@ -876,9 +1598,73 @@ mod t {
             leaf
         }
 
+        #[fixture]
+        fn leaf() -> MockVdevFile {
+            let mut leaf = partial_leaf();
+            leaf.expect_optimum_queue_depth()
+                .return_const(10u32);
+            leaf
+        }
+
+        #[fixture]
+        fn leaf1() -> MockVdevFile {
+            let mut leaf = partial_leaf();
+            leaf.expect_optimum_queue_depth()
+                .return_const(1u32);
+            leaf
+        }
+
         mod issue_all {
             use super::*;
             use pretty_assertions::assert_eq;
+
+            /// The upper layer creates two operations that can be accumulated.
+            /// VdevBlock::issue_all should do that, and only issue one
+            /// operation to VdevFile
+            #[rstest]
+            fn accumulate(mut leaf1: MockVdevFile) {
+                leaf1.expect_optimum_queue_depth()
+                    .return_const(1u32);
+                let mut seq = Sequence::new();
+
+                let (tx, rx) = oneshot::channel::<()>();
+                leaf1.expect_read_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+                leaf1.expect_readv_at()
+                    .withf(|iovec, lba| {
+                        *lba == 2 && iovec.len() == 2
+                    }).once()
+                    .in_sequence(&mut seq)
+                    .returning(|_, _| Box::pin(future::ok(())));
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs2 = DivBufShared::from(vec![0u8; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let vdev = VdevBlock::new(leaf1);
+                basic_runtime().block_on(async {
+                    let mut ctx = noop_context();
+                    // VdevBlock will issue the first operation immediately.
+                    // But it won't return immediately.
+                    let mut f0 = Box::pin(vdev.read_at(rbuf0, 1));
+                    assert!(f0.as_mut().poll(&mut ctx).is_pending());
+                    // Since the optimium queue depth is 1, the second two
+                    // operations will pile up in the queue.  When eventually
+                    // issued, they'll be accumulated.
+                    let mut f1 = Box::pin(vdev.read_at(rbuf1, 2));
+                    assert!(f1.as_mut().poll(&mut ctx).is_pending());
+                    let mut f2 = Box::pin(vdev.read_at(rbuf2, 3));
+                    assert!(f2.as_mut().poll(&mut ctx).is_pending());
+                    // Now that all Futures have been polled to get into the
+                    // scheduler loop, complete the first one.
+                    tx.send(()).unwrap();
+                    future::try_join3(f0, f1, f2).await
+                }).unwrap();
+            }
 
             // Issueing an operation fails with EAGAIN.  This can happen if the
             // per-process or per-system AIO limits are reached
@@ -907,7 +1693,7 @@ mod t {
                     });
 
                 leaf.expect_read_at()
-                    .with(always(), eq(2))
+                    .with(always(), eq(3))
                     .once()
                     .in_sequence(&mut seq0)
                     .returning( move |_, _| {
@@ -930,7 +1716,7 @@ mod t {
                 let vdev = VdevBlock::new(leaf);
                 basic_runtime().block_on(async {
                     let f0 = vdev.read_at(rbuf0, 1);
-                    let f1 = vdev.read_at(rbuf1, 2);
+                    let f1 = vdev.read_at(rbuf1, 3);
                     future::try_join(f0, f1).await
                 }).unwrap();
             }
@@ -968,9 +1754,10 @@ mod t {
                 }).expect("test eagain_queue_depth_1");
             }
 
-            // Queued operations will both complete
+            // Multiple queued operations that cannot be accumulated will both
+            // be issued separately and concurrently.
             #[rstest]
-            fn queued(mut leaf: MockVdevFile) {
+            fn unaccumulatable(mut leaf: MockVdevFile) {
                 let mut seq = Sequence::new();
 
                 let (sender, receiver) = oneshot::channel::<()>();
@@ -983,7 +1770,7 @@ mod t {
                     .in_sequence(&mut seq)
                     .return_once(move |_, _| fut0);
                 leaf.expect_read_at()
-                    .with(always(), eq(2))
+                    .with(always(), eq(3))
                     .once()
                     .in_sequence(&mut seq)
                     .return_once(move |_, _| {
@@ -997,7 +1784,7 @@ mod t {
                 let vdev = VdevBlock::new(leaf);
                 basic_runtime().block_on(async {
                     let f0 = vdev.read_at(rbuf0, 1);
-                    let f1 = vdev.read_at(rbuf1, 2);
+                    let f1 = vdev.read_at(rbuf1, 3);
                     future::try_join(f0, f1).await
                 }).unwrap();
             }
@@ -1021,7 +1808,7 @@ mod t {
                 .unzip();
                 for (i, r) in receivers.into_iter().enumerate().rev() {
                     leaf.expect_write_at()
-                        .with(always(), eq(i as LbaT + 1))
+                        .with(always(), eq((2 * i) as LbaT + 2))
                         .once()
                         .in_sequence(&mut seq)
                         .return_once(|_, _| Box::pin(r));
@@ -1030,13 +1817,13 @@ mod t {
                 // verify that they get issued in actual LBA order
                 let final_fut = future::ok::<(), Error>(());
                 leaf.expect_write_at()
-                    .with(always(), eq(LbaT::from(num_ops) - 1))
+                    .with(always(), eq(LbaT::from(2 * num_ops) - 2))
                     .once()
                     .in_sequence(&mut seq)
                     .return_once(|_, _| Box::pin(final_fut));
                 let penultimate_fut = future::ok::<(), Error>(());
                 leaf.expect_write_at()
-                    .with(always(), eq(LbaT::from(num_ops)))
+                    .with(always(), eq(LbaT::from(2 * num_ops)))
                     .once()
                     .in_sequence(&mut seq)
                     .return_once(|_, _| Box::pin(penultimate_fut));
@@ -1050,14 +1837,16 @@ mod t {
                     // issue them all immediately
                     let futs = (1..num_ops - 1).rev().map(|i| {
                         let mut fut = Box::pin(
-                            vdev.write_at(wbuf.clone(), LbaT::from(i))
+                            // Schedule in increasing but nonadjacent LBAs so
+                            // they can't be accumulated.
+                            vdev.write_at(wbuf.clone(), LbaT::from(i * 2))
                         );
                         // Manually poll so the VdevBlockFut will get scheduled
                         assert!(fut.as_mut().poll(&mut ctx).is_pending());
                         fut
                     }).collect::<FuturesUnordered<_>>();
                     let mut penultimate_fut = Box::pin(
-                        vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
+                        vdev.write_at(wbuf.clone(), LbaT::from(num_ops * 2))
                     );
                     // Manually poll so the VdevBlockFut will get scheduled
                     assert!(penultimate_fut
@@ -1067,7 +1856,7 @@ mod t {
                     );
                     futs.push(penultimate_fut);
                     let mut final_fut = Box::pin(
-                        vdev.write_at(wbuf.clone(), LbaT::from(num_ops - 1))
+                        vdev.write_at(wbuf.clone(), LbaT::from(2 * num_ops - 2))
                     );
                     // Manually poll so the VdevBlockFut will get scheduled
                     assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
