@@ -80,7 +80,7 @@ dependencies = [
  "futures",
  "libc 0.2.121",
  "mockall",
- "nix 0.24.1",
+ "nix",
  "predicates",
  "regex",
  "rstest",
@@ -123,7 +123,7 @@ dependencies = [
  "metrohash",
  "mockall",
  "mockall_double",
- "nix 0.24.1",
+ "nix",
  "num-traits",
  "num_cpus",
  "num_enum",
@@ -649,8 +649,8 @@ dependencies = [
 
 [[package]]
 name = "fuse3"
-version = "0.3.0"
-source = "git+https://github.com/asomers/fuse3.git?rev=8a80f2bcf1067847a5a704c749a22b9f69603873#8a80f2bcf1067847a5a704c749a22b9f69603873"
+version = "0.4.0"
+source = "git+https://github.com/asomers/fuse3.git?rev=452c6b280bc012c6aca6200c7d8a0464e5d5c173#452c6b280bc012c6aca6200c7d8a0464e5d5c173"
 dependencies = [
  "async-trait",
  "bincode",
@@ -659,7 +659,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "libc 0.2.121",
- "nix 0.23.1",
+ "nix",
  "serde",
  "slab",
  "tokio",
@@ -1024,7 +1024,7 @@ version = "0.7.0"
 source = "git+http://github.com/asomers/mio-aio?rev=604c410041322eb29d8421478b9b816dd75824b8#604c410041322eb29d8421478b9b816dd75824b8"
 dependencies = [
  "mio",
- "nix 0.24.1",
+ "nix",
  "pin-utils",
 ]
 
@@ -1078,21 +1078,8 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f866317acbd3a240710c63f065ffb1e4fd466259045ccb504130b7f668f35c6"
-dependencies = [
- "bitflags",
- "cc",
- "cfg-if 1.0.0",
- "libc 0.2.121",
- "memoffset 0.6.5",
-]
-
-[[package]]
-name = "nix"
 version = "0.24.1"
-source = "git+http://github.com/nix-rust/nix?rev=69738c0fd03af19053c5701a984f923ecbbfada6#69738c0fd03af19053c5701a984f923ecbbfada6"
+source = "git+https://github.com/nix-rust/nix.git?rev=69738c0fd03af19053c5701a984f923ecbbfada6#69738c0fd03af19053c5701a984f923ecbbfada6"
 dependencies = [
  "bitflags",
  "cfg-if 1.0.0",
@@ -1977,7 +1964,7 @@ dependencies = [
  "futures",
  "mio",
  "mio-aio",
- "nix 0.24.1",
+ "nix",
  "tokio",
 ]
 
