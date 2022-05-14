@@ -218,7 +218,7 @@ struct Inner {
     // Pending operations are stored in a pair of priority queues.  They _could_
     // be stored in a single queue, _if_ the priority queue's comparison
     // function were allowed to be stateful, as in C++'s STL.  However, Rust's
-    // standard library does not have any way to create a priority queueful with
+    // standard library does not have any way to create a priority queue with
     // a stateful comparison function.
     /// Pending operations ahead of the scheduler's current LBA.
     ahead: BinaryHeap<BlockOp>,
@@ -255,9 +255,9 @@ impl Inner {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
                     // Can't issue any I/O at all!  This means that other
-                    // processes outside of bfffs's control are using too many
-                    // disk resources.  In this case, the only thing we can do
-                    // is sleep and try again later.
+                    // VdevBlocks or other processes outside of bfffs's control
+                    // are using too many disk resources.  In this case, the
+                    // only thing we can do is sleep and try again later.
                     let duration = time::Duration::from_millis(10);
                     let schfut = self.reschedule();
                     let delay_fut = tokio::time::sleep(duration)
