@@ -132,9 +132,9 @@ fn fs_leaf(c: &mut Criterion) {
         let key = FSKey::new(1, ObjKey::Extent(i << 17));
         let value = FSValue::BlobExtent(BlobExtent{lsize: 131072, rid: RID(i)});
         let credit = wb.borrow(99999999).now_or_never().unwrap();
-        let excess = ld.insert(key, value, txg, &dml, credit)
-            .now_or_never().unwrap()
-            .unwrap().1;
+        let (r, excess) = ld.insert(key, value, txg, &dml, credit)
+            .now_or_never().unwrap();
+        r.unwrap();
         wb.repay(excess);
     }
     let nd = NodeData::Leaf(ld);
@@ -176,7 +176,7 @@ fn alloct_leaf(c: &mut Criterion) {
         let credit = Credit::null();
         ld.insert(key, value, txg, &dml, credit)
             .now_or_never().unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let nd = NodeData::<DRP, _, _>::Leaf(ld);
     let node = Arc::new(Node::new(nd));
@@ -212,7 +212,7 @@ fn ridt_leaf(c: &mut Criterion) {
         let credit = Credit::null();
         ld.insert(key, value, txg, &dml, credit)
             .now_or_never().unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let nd = NodeData::<DRP, _, _>::Leaf(ld);
     let node = Arc::new(Node::new(nd));

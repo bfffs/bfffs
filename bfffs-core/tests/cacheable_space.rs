@@ -140,7 +140,7 @@ fn alloct_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, Credit::null())
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<DRP, PBA, RID>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -184,7 +184,7 @@ fn ridt_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, Credit::null())
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<DRP, RID, RidtEntry>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -217,7 +217,7 @@ fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -237,7 +237,7 @@ fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -262,7 +262,7 @@ fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -277,7 +277,7 @@ fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -302,7 +302,7 @@ fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -325,7 +325,7 @@ fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetab
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -360,7 +360,7 @@ fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -377,7 +377,7 @@ fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetabl
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -406,7 +406,7 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
@@ -421,7 +421,7 @@ fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
         ld.insert(k, v, TxgT::from(0), &StubDML{}, credit)
             .now_or_never()
             .unwrap()
-            .unwrap();
+            .0.unwrap();
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))

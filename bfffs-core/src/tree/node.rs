@@ -352,7 +352,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         txg: TxgT,
         dml: &D,
         mut credit: Credit)
-        -> impl Future<Output = Result<(Option<V>, Credit)>> + Send
+        -> impl Future<Output = (Result<Option<V>>, Credit)> + Send
         where D: DML<Addr=A> + 'static, A: 'static
     {
         self.assert_accredited();
@@ -377,11 +377,11 @@ impl<K: Key, V: Value> LeafData<K, V> {
         if V::NEEDS_FLUSH {
             if let Some(v) = old_v {
                 return v.dpop(dml, txg)
-                    .map_ok(move |v| (Some(v), excess_credit))
+                    .map(move |r| (Some(r).transpose(), excess_credit))
                     .boxed()
             }
         }
-        future::ok((old_v, excess_credit)).boxed()
+        future::ready((Ok(old_v), excess_credit)).boxed()
     }
 
     pub fn get<Q>(&self, k: &Q) -> Option<V>
