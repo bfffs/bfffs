@@ -63,6 +63,7 @@ impl DDML {
     }
 
     /// Get directly from disk, bypassing cache
+    #[instrument(skip(self, drp))]
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
         -> impl Future<Output=Result<Box<T>>> + Send
     {
@@ -96,6 +97,7 @@ impl DDML {
     }
 
     /// Read a record from disk
+    #[instrument(skip(self))]
     fn read(&self, drp: DRP)
         -> impl Future<Output=Result<DivBufShared>> + Send
     {
@@ -128,6 +130,7 @@ impl DDML {
                         future::ok(dbs)
                     }
                 } else {
+                    tracing::warn!("Checksum mismatch");
                     future::err(Error::EINTEGRITY)
                 }
             })
@@ -145,6 +148,7 @@ impl DDML {
     }
 
     /// Read a record and return ownership of it, bypassing Cache
+    #[instrument(skip(self, drp))]
     pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
         -> impl Future<Output=Result<Box<T>>> + Send
     {

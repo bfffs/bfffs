@@ -543,6 +543,7 @@ impl DML for IDML {
         })
     }
 
+    #[instrument(skip(self))]
     fn pop<T: Cacheable, R: CacheRef>(&self, ridp: &Self::Addr, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {

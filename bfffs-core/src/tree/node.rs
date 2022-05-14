@@ -344,6 +344,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Insert one key-value pair into the LeafData, returning the old value, if
     /// any.  Also, return any excess credit that was provided.
+    #[instrument(skip(self, v, dml, credit, txg))]
     pub fn insert<A, D>(
         &mut self,
         k: K,
@@ -463,6 +464,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         self.range_delete_unaccredited(dml, txg, range)
     }
 
+    #[instrument(skip(self, dml, txg))]
     pub async fn remove<D, Q>(
         &mut self,
         dml: &D,
@@ -470,7 +472,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
         k: &Q
     ) -> Result<(Option<V>, Credit)>
         where D: DML + 'static,
-              K: Borrow<Q>, Q: Ord
+              K: Borrow<Q>, Q: Debug + Ord
     {
         self.assert_accredited();
         let old_v = self.items.remove(k);
