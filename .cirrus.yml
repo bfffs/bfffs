@@ -25,7 +25,7 @@ task:
       env:
         VERSION: 1.56.0
       freebsd_instance:
-        image: freebsd-13-0-release-amd64
+        image: freebsd-13-1-release-amd64
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
@@ -60,7 +60,7 @@ lint_task:
     VERSION: nightly
     CARGO_ARGS: --all-features
   freebsd_instance:
-    image: freebsd-13-0-release-amd64
+    image: freebsd-13-1-release-amd64
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
