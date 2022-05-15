@@ -7,7 +7,7 @@ use crate::{
     vdev::*
 };
 use cfg_if::cfg_if;
-use divbuf::DivBuf;
+use divbuf::{DivBufShared, DivBuf};
 use futures::{
     Future,
     FutureExt,
@@ -22,7 +22,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
     fs::OpenOptions,
-    io,
+    io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
     num::NonZeroU64,
     os::unix::{
@@ -32,7 +32,7 @@ use std::{
     path::Path,
     pin::Pin
 };
-use tokio_file::{AioFut, File};
+use tokio_file::File;
 use tokio::task;
 
 /// How does this device deallocate sectors?
@@ -215,7 +215,7 @@ impl VdevFile {
     ///                     zones.
     pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
-        where P: AsRef<Path> + 'static
+        where P: AsRef<Path>
     {
         let f = OpenOptions::new()
             .read(true)
@@ -384,21 +384,16 @@ impl VdevFile {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let off = lba * (BYTES_PER_LBA as u64);
-        let mut ra = Box::pin(ReadAt {
-            buf,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to buf's (or rather, it will
-            // be once we move it into the ReadAt struct
-            let buf: &'static mut [u8] =
-                mem::transmute::<&mut[u8], &'static mut [u8]>(ra.buf.as_mut());
-            let fut = self.file.read_at(&mut *buf, off).unwrap();
-            Pin::get_unchecked_mut(ra.as_mut()).fut = Some(fut);
-        }
-        ra
+        let bufaddr: &'static mut [u8] = unsafe {
+            // Safe because fut's lifetime will be equal to buf's once we move
+            // it into the ReadAt struct.  Also, because buf is already
+            // heap-allocated, moving it won't change the data's address.
+            mem::transmute::<&mut[u8], &'static mut [u8]>(buf.as_mut())
+        };
+        let fut = self.file.read_at(&mut *bufaddr, off).unwrap();
+        Box::pin(ReadAt { _buf: buf, fut })
     }
 
     /// Read just one of a vdev's labels
@@ -443,33 +438,35 @@ impl VdevFile {
     /// * `sglist   Scatter-gather list of buffers to receive data
     /// * `lba`     LBA to read from
     #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
-    pub fn readv_at(&self, sglist: SGListMut, lba: LbaT) -> BoxVdevFut
+    pub fn readv_at(&self, mut sglist: SGListMut, lba: LbaT) -> BoxVdevFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
-        let mut rva = Box::pin(ReadvAt {
-            sglist,
-            slices: None,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to slices' (or rather, it
-            // will be once we move it into the WriteAt struct
-            let slices: Box<[&'static mut [u8]]> =
-                rva.sglist.iter_mut()
-                .map(|b| {
-                    mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..])
-                }).collect::<Vec<_>>()
-                .into_boxed_slice();
-            Pin::get_unchecked_mut(rva.as_mut()).slices = Some(slices);
-            let bufs: &'static mut [&'static mut [u8]] =
-                mem::transmute::<&mut[&'static mut[u8]],
-                                 &'static mut [&'static mut [u8]]>(
-                    rva.slices.as_mut().unwrap()
-                );
-            let fut = self.file.readv_at(bufs, off).unwrap();
-            Pin::get_unchecked_mut(rva.as_mut()).fut = Some(fut);
-        }
-        rva
+        let mut slices: Box<[IoSliceMut<'static>]> = unsafe {
+            // Safe because fut's lifetime will be equal to slices's once we
+            // move it into the ReadvAt struct.  Also, because sglist is already
+            // heap-allocated, so moving it won't change the data's address.
+            sglist.iter_mut()
+            .map(|b| {
+                let sl = mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..]);
+                IoSliceMut::new(sl)
+            }).collect::<Vec<_>>()
+            .into_boxed_slice()
+        };
+        let bufs: &'static mut [IoSliceMut<'static>] = unsafe {
+            // Safe because fut's lifetime will be equal to bufs's once we
+            // move it into the ReadvAt struct.  Also, because slies is already
+            // heap-allocated, so moving it won't change the data's address.
+            mem::transmute::<&mut[IoSliceMut<'static>],
+                             &'static mut [IoSliceMut<'static>]>(
+                &mut slices
+            )
+        };
+        let fut = self.file.readv_at(bufs, off).unwrap();
+        Box::pin(ReadvAt {
+            _sglist: sglist,
+            _slices: slices,
+            fut
+        })
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -485,7 +482,11 @@ impl VdevFile {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
-        self.write_at_unchecked(buf, lba)
+        if buf.len() % BYTES_PER_LBA != 0 {
+            self.writev_at_unchecked(vec![buf], lba)
+        } else {
+            self.write_at_unchecked(buf, lba)
+        }
     }
 
     fn write_at_unchecked(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
@@ -496,20 +497,14 @@ impl VdevFile {
             debug_assert!(b.len() % BYTES_PER_LBA == 0);
         }
 
-        let mut wa = Box::pin(WriteAt {
-            buf,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to buf's (or rather, it will
-            // be once we move it into the WriteAt struct
-            let buf: &'static [u8] = mem::transmute::<&[u8], &'static [u8]>(
-                wa.buf.as_ref()
-            );
-            let fut = self.file.write_at(buf, off).unwrap();
-            Pin::get_unchecked_mut(wa.as_mut()).fut = Some(fut);
-        }
-        wa
+        // Safe because fut's lifetime is equal to buf's (or rather, it will
+        // be once we move it into the WriteAt struct
+        let sbuf: &'static [u8] = unsafe {
+            mem::transmute::<&[u8], &'static [u8]>( buf.as_ref())
+        };
+        let fut = self.file.write_at(sbuf, off).unwrap();
+
+        Box::pin(WriteAt { _buf: buf, fut })
     }
 
     /// Asynchronously write this Vdev's label.
@@ -526,8 +521,8 @@ impl VdevFile {
         };
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
-        let v = label_writer.into_db();
-        self.write_at_unchecked(v, lba)
+        let sglist = label_writer.into_sglist();
+        self.writev_at_unchecked(sglist, lba)
     }
 
     /// Asynchronously write to the Vdev's spacemap area.
@@ -563,36 +558,87 @@ impl VdevFile {
         self.writev_at_unchecked(sglist, lba)
     }
 
-    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
+    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT)
+        -> Pin<Box<WritevAt>>
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
-        let mut wva = Box::pin(WritevAt {
-            sglist,
-            slices: None,
-            fut: None
-        });
-        unsafe {
-            // Safe because fut's lifetime is equal to slices' (or rather, it
-            // will be once we move it into the WriteAt struct
-            let slices: Box<[&'static [u8]]> =
-                wva.sglist.iter()
-                    .map(|b| {
+        let sglist = if sglist.iter().any(|db| db.len() % BYTES_PER_LBA != 0) {
+            // We must copy data to make all writes block-sized.  We do it here
+            // rather than upstack to minimize the time that the copied data
+            // must live.
+            // We must copy partial-block divbufs, rather than extend them,
+            // because we don't want to modify data that might be in the Cache.
+            let mut outlist = SGList::with_capacity(sglist.len());
+            let mut accumulator: Option<Vec<u8>> = None;
+            for mut db in sglist.into_iter() {
+                if db.len() % BYTES_PER_LBA == 0 {
+                    assert!(accumulator.is_none());
+                    outlist.push(db);
+                    continue
+                }
+                if let Some(ref mut accum) = accumulator {
+                    if db.len() > BYTES_PER_LBA {
+                        unimplemented!();
+                    }
+                    // Data copy
+                    accum.extend(&db[..]);
+                    if accum.len() % BYTES_PER_LBA == 0 {
+                        let dbs = DivBufShared::from(
+                            accumulator.take().unwrap()
+                        );
+                        let db = dbs.try_const().unwrap();
+                        outlist.push(db);
+                    }
+                } else {
+                    if db.len() > BYTES_PER_LBA {
+                        let wlen = db.len() & !(BYTES_PER_LBA - 1);
+                        outlist.push(db.split_to(wlen));
+                    }
+                    // Data copy
+                    accumulator = Some(Vec::from(&db[..]));
+                }
+            }
+            if let Some(ref mut accum) = accumulator {
+                // Must've been an incomplete block.  zero-pad the tail
+                let l = div_roundup(accum.len(), BYTES_PER_LBA) * BYTES_PER_LBA;
+                // Data copy
+                accum.resize(l, 0);
+                let dbs = DivBufShared::from(accumulator.take().unwrap());
+                let db = dbs.try_const().unwrap();
+                outlist.push(db);
+            }
+            outlist
+        } else {
+            sglist
+        };
+
+        let slices: Box<[IoSlice<'static>]> =
+            sglist.iter()
+                .map(|b| {
+                    // Safe because fut's lifetime is equal to slices' (or
+                    // rather, it will be once we move it into the WriteAt
+                    // struct
+                    let sb = unsafe {
                         mem::transmute::<&[u8], &'static [u8]>(&b[..])
-                    }).collect::<Vec<_>>()
-                    .into_boxed_slice();
-            Pin::get_unchecked_mut(wva.as_mut()).slices = Some(slices);
-            let fut = self.file.writev_at(wva.slices.as_ref().unwrap(), off)
-                .unwrap();
-            Pin::get_unchecked_mut(wva.as_mut()).fut = Some(fut);
-        }
-        wva
+                    };
+                    IoSlice::new(sb)
+                }).collect::<Vec<_>>()
+                .into_boxed_slice();
+        let fut = self.file.writev_at(&slices, off).unwrap();
+
+        Box::pin(WritevAt {
+            _sglist: sglist,
+            _slices: slices,
+            fut
+        })
     }
 }
 
 struct ReadAt {
-    buf: IoVecMut,
-    fut: Option<AioFut<'static>>
+    // Owns the buffer used by the Future
+    _buf: IoVecMut,
+    fut: tokio_file::ReadAt<'static>
 }
 
 impl Future for ReadAt {
@@ -605,7 +651,7 @@ impl Future for ReadAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -614,9 +660,10 @@ impl Future for ReadAt {
     }
 }
 
-struct WriteAt{
-    fut: Option<AioFut<'static>>,
-    buf: IoVec,
+struct WriteAt {
+    fut: tokio_file::WriteAt<'static>,
+    // Owns the buffer used by the Future
+    _buf: IoVec,
 }
 
 impl Future for WriteAt {
@@ -629,7 +676,7 @@ impl Future for WriteAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -638,10 +685,12 @@ impl Future for WriteAt {
     }
 }
 
-struct ReadvAt{
-    fut: Option<tokio_file::ReadvAt<'static>>,
-    slices: Option<Box<[&'static mut [u8]]>>,
-    sglist: SGListMut,
+struct ReadvAt {
+    fut: tokio_file::ReadvAt<'static>,
+    // Owns the pointer array used by the Future
+    _slices: Box<[IoSliceMut<'static>]>,
+    // Owns the buffers used by the Future
+    _sglist: SGListMut,
 }
 
 impl Future for ReadvAt {
@@ -654,7 +703,7 @@ impl Future for ReadvAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -664,9 +713,11 @@ impl Future for ReadvAt {
 }
 
 struct WritevAt{
-    fut: Option<tokio_file::WritevAt<'static>>,
-    slices: Option<Box<[&'static [u8]]>>,
-    sglist: SGList,
+    fut: tokio_file::WritevAt<'static>,
+    // Owns the pointer array used by the Future
+    _slices: Box<[IoSlice<'static>]>,
+    // Owns the buffers used by the Future
+    _sglist: SGList,
 }
 
 impl Future for WritevAt {
@@ -679,7 +730,7 @@ impl Future for WritevAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| s.fut.as_mut().unwrap()) };
+        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
         match f.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
@@ -736,6 +787,145 @@ mod label {
             spacemap_space: 0
         };
         format!("{:?}", label);
+    }
+}
+
+mod writev_at {
+    use super::super::*;
+    use divbuf::DivBufShared;
+    use rstest::{fixture, rstest};
+    use tokio::runtime::Runtime;
+
+    type Harness = (VdevFile, Runtime);
+
+    #[fixture]
+    fn harness() -> Harness {
+        let len = 1 << 26;  // 64MB
+        let mut tf = tempfile::NamedTempFile::new().unwrap();
+        tf.as_file_mut().set_len(len).unwrap();
+        let vd = VdevFile::create(tf.path(), None).unwrap();
+        let rt = Runtime::new().unwrap();
+        (vd, rt)
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 1);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_three_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 2050]);
+        let dbs2 = DivBufShared::from(vec![2u8; 1022]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 1);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..3074], &wbuf1[..]);
+        assert_eq!(&fut._sglist[0][3074..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_first_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let dbs2 = DivBufShared::from(vec![2u8; 4096]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
+        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
+        assert_eq!(&fut._sglist[1][..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_last_two_iovecs(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let dbs2 = DivBufShared::from(vec![2u8; 1024]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbuf2 = dbs2.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
+        assert_eq!(&fut._sglist[1][3072..], &wbuf2[..]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn accumulate_tail_of_iovec(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 5120]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..4096]);
+        assert_eq!(&fut._sglist[1][..1024], &wbuf0[4096..]);
+        assert_eq!(&fut._sglist[1][1024..], &wbuf1[..]);
+    }
+
+    #[rstest]
+    #[allow(clippy::async_yields_async)]
+    fn pad_large_tail(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 7168]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 3);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..], &wbuf1[..4096]);
+        let zbuf = ZERO_REGION.try_const().unwrap();
+        assert_eq!(&fut._sglist[2][..3072], &wbuf1[4096..]);
+        assert_eq!(&fut._sglist[2][3072..], &zbuf[..1024]);
+    }
+
+    #[allow(clippy::async_yields_async)]
+    #[rstest]
+    fn pad_small_tail(harness: Harness) {
+        let (vd, rt) = harness;
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let wbuf0 = dbs0.try_const().unwrap();
+        let wbuf1 = dbs1.try_const().unwrap();
+        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+        let fut = rt.block_on(async { vd.writev_at_unchecked(wbufs, 10)});
+        assert_eq!(fut._sglist.len(), 2);
+        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
+        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
+        let zbuf = ZERO_REGION.try_const().unwrap();
+        assert_eq!(&fut._sglist[1][3072..], &zbuf[..1024]);
     }
 }
 

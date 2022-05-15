@@ -10,3 +10,4 @@ lto = true
 members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 
 [patch.crates-io]
+nix = { git = "https://github.com/nix-rust/nix.git", rev = "69738c0fd03af19053c5701a984f923ecbbfada6" }

@@ -148,20 +148,6 @@ impl BlockOp {
         BlockOp { lba: end, cmd: Cmd::FinishZone(start), sender }
     }
 
-    pub fn len(&self) -> usize {
-        match self.cmd {
-            Cmd::WriteAt(ref iovec) => iovec.len(),
-            Cmd::ReadAt(ref iovec) => iovec.len(),
-            Cmd::WritevAt(ref sglist) => {
-                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
-            },
-            Cmd::ReadvAt(ref sglist) => {
-                sglist.iter().fold(0, |acc, iovec| acc + iovec.len())
-            },
-            _ => 0
-        }
-    }
-
     pub fn open_zone(lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::OpenZone, sender }
     }
@@ -658,8 +644,6 @@ impl VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::write_at(buf, lba, sender);
-        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
-            "VdevBlock does not support fragmentary writes");
         self.new_fut(block_op, receiver)
     }
 
@@ -695,8 +679,6 @@ impl VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
         let block_op = BlockOp::writev_at(bufs, lba, sender);
-        assert_eq!(block_op.len() % BYTES_PER_LBA, 0,
-            "VdevBlock does not support fragmentary writes");
         self.new_fut(block_op, receiver)
     }
 }
