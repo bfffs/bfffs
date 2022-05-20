@@ -103,7 +103,7 @@ struct BlockOp {
     pub lba: LbaT,
     pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
-    pub sender: oneshot::Sender<()>
+    pub senders: Vec<oneshot::Sender<()>>
 }
 
 impl Eq for BlockOp {
@@ -140,64 +140,68 @@ impl PartialOrd for BlockOp {
 impl BlockOp {
     pub fn erase_zone(start: LbaT, end: LbaT,
                       sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: end, cmd: Cmd::EraseZone(start), sender }
+        BlockOp { lba: end, cmd: Cmd::EraseZone(start), senders: vec![sender] }
     }
 
     pub fn finish_zone(start: LbaT, end: LbaT,
                        sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: end, cmd: Cmd::FinishZone(start), sender }
+        BlockOp { lba: end, cmd: Cmd::FinishZone(start), senders: vec![sender] }
     }
 
     pub fn open_zone(lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::OpenZone, sender }
+        BlockOp { lba, cmd: Cmd::OpenZone, senders: vec![sender] }
     }
 
     pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::ReadAt(buf), sender}
+        BlockOp { lba, cmd: Cmd::ReadAt(buf), senders: vec![sender]}
     }
 
     pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
                          sender: oneshot::Sender<()>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), sender}
+        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), senders: vec![sender]}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::ReadvAt(bufs), sender}
+        BlockOp { lba, cmd: Cmd::ReadvAt(bufs), senders: vec![sender]}
     }
 
     pub fn sync_all(sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: 0, cmd: Cmd::SyncAll, sender}
+        BlockOp { lba: 0, cmd: Cmd::SyncAll, senders: vec![sender]}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
+        BlockOp { lba, cmd: Cmd::WriteAt(buf), senders: vec![sender]}
     }
 
     pub fn write_label(labeller: LabelWriter,
                        sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), sender}
+        BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), senders: vec![sender]}
     }
 
     pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
                           sender: oneshot::Sender<()>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::WriteSpacemap(sglist, idx, block), sender}
+        BlockOp{
+            lba,
+            cmd: Cmd::WriteSpacemap(sglist, idx, block),
+            senders: vec![sender]
+        }
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
                      sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::WritevAt(bufs), sender}
+        BlockOp { lba, cmd: Cmd::WritevAt(bufs), senders: vec![sender]}
     }
 }
 
 struct Inner {
     /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
     /// future around instead of spawning it into the reactor.
-    delayed: Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>,
+    delayed: Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>,
 
     /// Max commands that will be simultaneously queued to the VdevLeaf
     optimum_queue_depth: u32,
@@ -243,15 +247,15 @@ impl Inner {
     fn issue_all(&mut self, cx: &mut Context) {
         while self.queue_depth < self.optimum_queue_depth {
             let delayed = self.delayed.take();
-            let (sender, fut) = if let Some((sender, fut)) = delayed {
-                (sender, fut)
+            let (senders, fut) = if let Some((senders, fut)) = delayed {
+                (senders, fut)
             } else if let Some(op) = self.pop_op() {
                 self.make_fut(op)
             } else {
                 // Ran out of pending operations
                 break;
             };
-            if let Some(d) = self.issue_fut(sender, fut, cx) {
+            if let Some(d) = self.issue_fut(senders, fut, cx) {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
                     // Can't issue any I/O at all!  This means that other
@@ -277,10 +281,10 @@ impl Inner {
     /// Returns a delayed operation if there were insufficient resources to
     /// immediately issue the future.
     fn issue_fut(&mut self,
-                 sender: oneshot::Sender<()>,
+                 senders: Vec<oneshot::Sender<()>>,
                  mut fut: Pin<Box<VdevFut>>,
                  cx: &mut Context)
-        -> Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>
+        -> Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>
     {
 
         let inner = self.weakself.upgrade().expect(
@@ -293,7 +297,7 @@ impl Inner {
         match fut.as_mut().poll(cx) {
             Poll::Ready(Err(Error::EAGAIN)) => {
                 // Out of resources to issue this future.  Delay it.
-                return Some((sender, fut));
+                return Some((senders, fut));
             },
             Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
             Poll::Pending => {
@@ -301,7 +305,9 @@ impl Inner {
                 tokio::spawn( async move {
                     let r = fut.await;
                     r.expect("Unhandled error");
-                    sender.send(()).unwrap();
+                    for sender in senders{
+                        sender.send(()).unwrap();
+                    }
                     inner.write().unwrap().queue_depth -= 1;
                     schfut.await
                 });
@@ -309,7 +315,9 @@ impl Inner {
             Poll::Ready(Ok(_)) => {
                 // This normally doesn't happen, but it can happen on a
                 // heavily laden system or one with very fast storage.
-                sender.send(()).unwrap();
+                for sender in senders {
+                    sender.send(()).unwrap();
+                }
                 self.queue_depth -= 1;
             }
         }
@@ -318,7 +326,7 @@ impl Inner {
 
     /// Create a future from a BlockOp, but don't spawn it yet
     fn make_fut(&mut self, block_op: BlockOp)
-        -> (oneshot::Sender<()>, Pin<Box<VdevFut>>) {
+        -> (Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>) {
 
         self.queue_depth += 1;
         let lba = block_op.lba;
@@ -340,7 +348,7 @@ impl Inner {
                 self.leaf.write_spacemap(sglist, idx, block),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
-        (block_op.sender, fut)
+        (block_op.senders, fut)
     }
 
     /// Get the next pending operation, if any
