@@ -385,6 +385,10 @@ impl VdevFile {
     ///
     /// Return the number of bytes actually read.
     pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+        // Unlike write_at, the upper layers will never read into a buffer that
+        // isn't a multiple of a block size.  DDML::read ensures that.
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
+
         let off = lba * (BYTES_PER_LBA as u64);
         let bufaddr: &'static mut [u8] = unsafe {
             // Safe because fut's lifetime will be equal to buf's once we move
@@ -428,7 +432,9 @@ impl VdevFile {
     ///                 whichever label is being used.
     pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         assert!(LbaT::from(idx) < LABEL_COUNT);
+
         let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         self.read_at(buf, lba)
     }
@@ -440,6 +446,9 @@ impl VdevFile {
     #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
     pub fn readv_at(&self, mut sglist: SGListMut, lba: LbaT) -> BoxVdevFut
     {
+        for iovec in sglist.iter() {
+            debug_assert_eq!(iovec.len() % BYTES_PER_LBA, 0);
+        }
         let off = lba * (BYTES_PER_LBA as u64);
         let mut slices: Box<[IoSliceMut<'static>]> = unsafe {
             // Safe because fut's lifetime will be equal to slices's once we
