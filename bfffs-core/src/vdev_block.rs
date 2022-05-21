@@ -1622,7 +1622,8 @@ mod t {
             /// VdevBlock::issue_all should do that, and only issue one
             /// operation to VdevFile
             #[rstest]
-            fn accumulate(mut leaf1: MockVdevFile) {
+            #[tokio::test]
+            async fn accumulate(mut leaf1: MockVdevFile) {
                 leaf1.expect_optimum_queue_depth()
                     .return_const(1u32);
                 let mut seq = Sequence::new();
@@ -1646,30 +1647,30 @@ mod t {
                 let rbuf1 = dbs1.try_mut().unwrap();
                 let rbuf2 = dbs2.try_mut().unwrap();
                 let vdev = VdevBlock::new(leaf1);
-                basic_runtime().block_on(async {
-                    let mut ctx = noop_context();
-                    // VdevBlock will issue the first operation immediately.
-                    // But it won't return immediately.
-                    let mut f0 = Box::pin(vdev.read_at(rbuf0, 1));
-                    assert!(f0.as_mut().poll(&mut ctx).is_pending());
-                    // Since the optimium queue depth is 1, the second two
-                    // operations will pile up in the queue.  When eventually
-                    // issued, they'll be accumulated.
-                    let mut f1 = Box::pin(vdev.read_at(rbuf1, 2));
-                    assert!(f1.as_mut().poll(&mut ctx).is_pending());
-                    let mut f2 = Box::pin(vdev.read_at(rbuf2, 3));
-                    assert!(f2.as_mut().poll(&mut ctx).is_pending());
-                    // Now that all Futures have been polled to get into the
-                    // scheduler loop, complete the first one.
-                    tx.send(()).unwrap();
-                    future::try_join3(f0, f1, f2).await
-                }).unwrap();
+
+                let mut ctx = noop_context();
+                // VdevBlock will issue the first operation immediately.
+                // But it won't return immediately.
+                let mut f0 = Box::pin(vdev.read_at(rbuf0, 1));
+                assert!(f0.as_mut().poll(&mut ctx).is_pending());
+                // Since the optimium queue depth is 1, the second two
+                // operations will pile up in the queue.  When eventually
+                // issued, they'll be accumulated.
+                let mut f1 = Box::pin(vdev.read_at(rbuf1, 2));
+                assert!(f1.as_mut().poll(&mut ctx).is_pending());
+                let mut f2 = Box::pin(vdev.read_at(rbuf2, 3));
+                assert!(f2.as_mut().poll(&mut ctx).is_pending());
+                // Now that all Futures have been polled to get into the
+                // scheduler loop, complete the first one.
+                tx.send(()).unwrap();
+                future::try_join3(f0, f1, f2).await.unwrap();
             }
 
             // Issueing an operation fails with EAGAIN.  This can happen if the
             // per-process or per-system AIO limits are reached
             #[rstest]
-            fn eagain(mut leaf: MockVdevFile) {
+            #[tokio::test]
+            async fn eagain(mut leaf: MockVdevFile) {
                 let mut seq0 = Sequence::new();
 
                 // The first operation succeeds asynchronously.  When it does,
@@ -1714,11 +1715,10 @@ mod t {
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
                 let vdev = VdevBlock::new(leaf);
-                basic_runtime().block_on(async {
-                    let f0 = vdev.read_at(rbuf0, 1);
-                    let f1 = vdev.read_at(rbuf1, 3);
-                    future::try_join(f0, f1).await
-                }).unwrap();
+
+                let f0 = vdev.read_at(rbuf0, 1);
+                let f1 = vdev.read_at(rbuf1, 3);
+                future::try_join(f0, f1).await.unwrap();
             }
 
             // Issueing an operation fails with EAGAIN, when the queue depth is
@@ -1726,7 +1726,8 @@ mod t {
             // are monopolized by other reactors.  In this case, we need a timer
             // to wake us up.
             #[rstest]
-            fn eagain_queue_depth_1(mut leaf: MockVdevFile) {
+            #[tokio::test]
+            async fn eagain_queue_depth_1(mut leaf: MockVdevFile) {
                 let mut seq0 = Sequence::new();
 
                 leaf.expect_read_at()
@@ -1749,15 +1750,15 @@ mod t {
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
                 let rbuf = dbs.try_mut().unwrap();
                 let vdev = VdevBlock::new(leaf);
-                basic_runtime().block_on(async {
-                    vdev.read_at(rbuf, 1).await
-                }).expect("test eagain_queue_depth_1");
+
+                vdev.read_at(rbuf, 1).await.unwrap();
             }
 
             // Multiple queued operations that cannot be accumulated will both
             // be issued separately and concurrently.
             #[rstest]
-            fn unaccumulatable(mut leaf: MockVdevFile) {
+            #[tokio::test]
+            async fn unaccumulatable(mut leaf: MockVdevFile) {
                 let mut seq = Sequence::new();
 
                 let (sender, receiver) = oneshot::channel::<()>();
@@ -1782,11 +1783,10 @@ mod t {
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
                 let vdev = VdevBlock::new(leaf);
-                basic_runtime().block_on(async {
-                    let f0 = vdev.read_at(rbuf0, 1);
-                    let f1 = vdev.read_at(rbuf1, 3);
-                    future::try_join(f0, f1).await
-                }).unwrap();
+
+                let f0 = vdev.read_at(rbuf0, 1);
+                let f1 = vdev.read_at(rbuf1, 3);
+                future::try_join(f0, f1).await.unwrap();
             }
 
             // Operations will be buffered after the max queue depth is reached
@@ -1794,7 +1794,8 @@ mod t {
             // in the order in which they are requested.  Subsequent operations
             // will be reordered into LBA order
             #[rstest]
-            fn queue_depth(mut leaf: MockVdevFile) {
+            #[tokio::test]
+            async fn queue_depth(mut leaf: MockVdevFile) {
                 let num_ops = leaf.optimum_queue_depth() + 2;
                 let mut seq = Sequence::new();
 
@@ -1831,89 +1832,88 @@ mod t {
                 let wbuf = dbs.try_const().unwrap();
                 let vdev = VdevBlock::new(leaf);
 
-                basic_runtime().block_on(async {
-                    let mut ctx = noop_context();
-                    // First schedule all operations.  There are too many to
-                    // issue them all immediately
-                    let futs = (1..num_ops - 1).rev().map(|i| {
-                        let mut fut = Box::pin(
-                            // Schedule in increasing but nonadjacent LBAs so
-                            // they can't be accumulated.
-                            vdev.write_at(wbuf.clone(), LbaT::from(i * 2))
-                        );
-                        // Manually poll so the VdevBlockFut will get scheduled
-                        assert!(fut.as_mut().poll(&mut ctx).is_pending());
-                        fut
-                    }).collect::<FuturesUnordered<_>>();
-                    let mut penultimate_fut = Box::pin(
-                        vdev.write_at(wbuf.clone(), LbaT::from(num_ops * 2))
+                let mut ctx = noop_context();
+                // First schedule all operations.  There are too many to
+                // issue them all immediately
+                let futs = (1..num_ops - 1).rev().map(|i| {
+                    let mut fut = Box::pin(
+                        // Schedule in increasing but nonadjacent LBAs so
+                        // they can't be accumulated.
+                        vdev.write_at(wbuf.clone(), LbaT::from(i * 2))
                     );
                     // Manually poll so the VdevBlockFut will get scheduled
-                    assert!(penultimate_fut
-                            .as_mut()
-                            .poll(&mut ctx)
-                            .is_pending()
-                    );
-                    futs.push(penultimate_fut);
-                    let mut final_fut = Box::pin(
-                        vdev.write_at(wbuf.clone(), LbaT::from(2 * num_ops - 2))
-                    );
-                    // Manually poll so the VdevBlockFut will get scheduled
-                    assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
-                    futs.push(final_fut);
-                    {
-                        // Verify that they weren't all issued
-                        let inner = vdev.inner.write().unwrap();
-                        assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
-                    }
-                    // Finally, complete the blocked operations
-                    for chan in senders {
-                        chan.send(()).unwrap();
-                    }
-                    futs.try_collect::<Vec<_>>().await
-                }).unwrap();
+                    assert!(fut.as_mut().poll(&mut ctx).is_pending());
+                    fut
+                }).collect::<FuturesUnordered<_>>();
+                let mut penultimate_fut = Box::pin(
+                    vdev.write_at(wbuf.clone(), LbaT::from(num_ops * 2))
+                );
+                // Manually poll so the VdevBlockFut will get scheduled
+                assert!(penultimate_fut
+                        .as_mut()
+                        .poll(&mut ctx)
+                        .is_pending()
+                );
+                futs.push(penultimate_fut);
+                let mut final_fut = Box::pin(
+                    vdev.write_at(wbuf.clone(), LbaT::from(2 * num_ops - 2))
+                );
+                // Manually poll so the VdevBlockFut will get scheduled
+                assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
+                futs.push(final_fut);
+                {
+                    // Verify that they weren't all issued
+                    let inner = vdev.inner.write().unwrap();
+                    assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
+                }
+                // Finally, complete the blocked operations
+                for chan in senders {
+                    chan.send(()).unwrap();
+                }
+                futs.try_collect::<Vec<_>>().await.unwrap();
             }
         }
 
         #[rstest]
-        fn erase_zone(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn erase_zone(mut leaf: MockVdevFile) {
             leaf.expect_erase_zone()
                 .with(eq(1))
                 .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.erase_zone(1, (1 << 16) - 1).await
-            }).unwrap();
+
+            vdev.erase_zone(1, (1 << 16) - 1).await.unwrap();
         }
 
         #[rstest]
-        fn finish_zone(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn finish_zone(mut leaf: MockVdevFile) {
             leaf.expect_finish_zone()
                 .with(eq(1))
                 .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.finish_zone(1, (1 << 16) - 1).await
-            }).unwrap();
+
+            vdev.finish_zone(1, (1 << 16) - 1).await.unwrap();
         }
 
         #[rstest]
-        fn open_zone(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn open_zone(mut leaf: MockVdevFile) {
             leaf.expect_open_zone()
                 .with(eq(1))
                 .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.open_zone(1).await
-            }).unwrap();
+
+            vdev.open_zone(1).await.unwrap();
         }
 
         // basic reading works
         #[rstest]
-        fn read_at(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn read_at(mut leaf: MockVdevFile) {
             leaf.expect_read_at()
                 .with(always(), eq(2))
                 .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -1921,14 +1921,14 @@ mod t {
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = dbs0.try_mut().unwrap();
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.read_at(rbuf0, 2).await
-            }).unwrap();
+
+            vdev.read_at(rbuf0, 2).await.unwrap();
         }
 
         // vectored reading works
         #[rstest]
-        fn readv_at(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn readv_at(mut leaf: MockVdevFile) {
             leaf.expect_readv_at()
                 .with(always(), eq(2))
                 .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -1936,9 +1936,8 @@ mod t {
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = vec![dbs0.try_mut().unwrap()];
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.readv_at(rbuf0, 2).await
-            }).unwrap();
+
+            vdev.readv_at(rbuf0, 2).await.unwrap();
         }
 
         /// Tests for Inner::sched
@@ -2203,19 +2202,20 @@ mod t {
 
         // sync_all works
         #[rstest]
-        fn sync_all(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn sync_all(mut leaf: MockVdevFile) {
             leaf.expect_sync_all()
                 .returning(|| Box::pin(future::ok::<(), Error>(())));
 
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.sync_all().await
-            }).unwrap();
+
+            vdev.sync_all().await.unwrap();
         }
 
         // Basic writing works
         #[rstest]
-        fn write_at(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn write_at(mut leaf: MockVdevFile) {
             leaf.expect_write_at()
                 .with(always(), eq(1))
                 .once()
@@ -2224,14 +2224,14 @@ mod t {
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = dbs.try_const().unwrap();
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.write_at(wbuf, 1).await
-            }).unwrap();
+
+            vdev.write_at(wbuf, 1).await.unwrap();
         }
 
         // vectored writing works
         #[rstest]
-        fn writev_at(mut leaf: MockVdevFile) {
+        #[tokio::test]
+        async fn writev_at(mut leaf: MockVdevFile) {
             leaf.expect_writev_at()
                 .with(always(), eq(1))
                 .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -2239,9 +2239,8 @@ mod t {
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = vec![dbs.try_const().unwrap()];
             let vdev = VdevBlock::new(leaf);
-            basic_runtime().block_on(async {
-                vdev.writev_at(wbuf, 1).await
-            }).unwrap();
+
+            vdev.writev_at(wbuf, 1).await.unwrap();
         }
     }
 }
