@@ -475,9 +475,7 @@ impl VdevBlock {
     fn check_sglist_bounds<T>(&self, lba: LbaT, bufs: &[T])
         where T: ops::Deref<Target=[u8]> {
 
-        let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
-            accumulator + buf.len() as u64
-        });
+        let len = sglist_len(bufs) as u64;
         let last_lba = lba + len / (BYTES_PER_LBA as u64);
         assert!(last_lba <= self.size as u64)
     }

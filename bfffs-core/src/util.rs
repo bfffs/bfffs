@@ -80,6 +80,15 @@ pub fn div_roundup<T>(dividend: T, divisor: T) -> T
 
 }
 
+/// Return the length of data in an sglist, not the number of iovecs
+pub fn sglist_len<T>(sglist: &[T]) -> usize
+    where T: std::ops::Deref<Target=[u8]>
+{
+    sglist.iter().fold(0usize, |accumulator, buf| {
+        accumulator + buf.len()
+    })
+}
+
 /// Create an SGList full of zeros, with the requested total length
 pub fn zero_sglist(len: usize) -> SGList {
     let zero_region_len = ZERO_REGION.len();
@@ -167,6 +176,14 @@ fn checksum_sglist_metrohash64() {
     use metrohash::MetroHash64;
 
     checksum_sglist_helper!(MetroHash64);
+}
+
+#[test]
+fn test_sglist_len() {
+    assert_eq!(0, sglist_len::<&[u8]>(&[]));
+    assert_eq!(0, sglist_len::<&[u8]>(&[&[][..]]));
+    assert_eq!(1, sglist_len(&[&[42u8][..]]));
+    assert_eq!(6, sglist_len(&[&[42u8, 43, 44, 45][..], &[46, 47][..]]));
 }
 
 #[test]
