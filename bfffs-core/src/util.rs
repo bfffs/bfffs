@@ -72,6 +72,63 @@ pub fn checksum_sglist<T, H>(sglist: &[T], hasher: &mut H)
     }
 }
 
+/// Prepare an sglist for writing by copying and padding the individual
+/// iovecs, if necessary, to ensure that each is a multiple of the
+/// blocksize.
+pub fn copy_and_pad_sglist(bufs: SGList) -> SGList {
+    if bufs.iter().any(|db| db.len() % BYTES_PER_LBA != 0) {
+        // We must copy data to make all writes block-sized.  We do it here
+        // rather than upstack to minimize the time that the copied data
+        // must live.  And we can't do it downstack, because it needs to
+        // happen prior to the scheduler's accumulation of adjacent
+        // operations.
+        // We must copy partial-block divbufs, rather than extend them,
+        // because we don't want to modify data that might be in the Cache.
+        let mut outlist = SGList::with_capacity(bufs.len());
+        let mut accumulator: Option<Vec<u8>> = None;
+        for mut db in bufs.into_iter() {
+            if db.len() % BYTES_PER_LBA == 0 {
+                assert!(accumulator.is_none());
+                outlist.push(db);
+                continue
+            }
+            if let Some(ref mut accum) = accumulator {
+                if db.len() > BYTES_PER_LBA {
+                    unimplemented!();
+                }
+                // Data copy
+                accum.extend(&db[..]);
+                if accum.len() % BYTES_PER_LBA == 0 {
+                    let dbs = DivBufShared::from(
+                        accumulator.take().unwrap()
+                    );
+                    let db = dbs.try_const().unwrap();
+                    outlist.push(db);
+                }
+            } else {
+                if db.len() > BYTES_PER_LBA {
+                    let wlen = db.len() & !(BYTES_PER_LBA - 1);
+                    outlist.push(db.split_to(wlen));
+                }
+                // Data copy
+                accumulator = Some(Vec::from(&db[..]));
+            }
+        }
+        if let Some(ref mut accum) = accumulator {
+            // Must've been an incomplete block.  zero-pad the tail
+            let l = div_roundup(accum.len(), BYTES_PER_LBA) * BYTES_PER_LBA;
+            // Data copy
+            accum.resize(l, 0);
+            let dbs = DivBufShared::from(accumulator.take().unwrap());
+            let db = dbs.try_const().unwrap();
+            outlist.push(db);
+        }
+        outlist
+    } else {
+        bufs
+    }
+}
+
 /// Divide two unsigned numbers (usually integers), rounding up.
 pub fn div_roundup<T>(dividend: T, divisor: T) -> T
     where T: Add<Output=T> + Copy + Div<Output=T> + From<u8> + RoundupAble +

@@ -75,6 +75,15 @@ impl Cmd {
     }
 
     #[cfg(test)]
+    fn as_write_spacemap(&self) -> (&SGList, &u32, &LbaT) {
+        if let Cmd::WriteSpacemap(sglist, idx, lba) = &self {
+            (sglist, idx, lba)
+        } else {
+            panic!("Not a Cmd::WriteSpacemap");
+        }
+    }
+
+    #[cfg(test)]
     fn as_writev_at(&self) -> &SGList {
         if let Cmd::WritevAt(sglist) = &self {
             sglist
@@ -940,6 +949,7 @@ impl VdevBlock {
         ->  VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
+        let sglist = copy_and_pad_sglist(sglist);
         // lba is for sorting purposes only.  It should sort after write_label,
         // but before any other write operation, and different write_spacemap
         // operations should sort in the same order as their true LBA order.
@@ -960,7 +970,8 @@ impl VdevBlock {
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::writev_at(bufs, lba, sender);
+        let sglist = copy_and_pad_sglist(bufs);
+        let block_op = BlockOp::writev_at(sglist, lba, sender);
         self.new_fut(block_op, receiver)
     }
 }
@@ -2241,6 +2252,194 @@ mod t {
             let vdev = VdevBlock::new(leaf);
 
             vdev.writev_at(wbuf, 1).await.unwrap();
+        }
+
+        mod write_spacemap {
+            use super::*;
+
+            /// Just like VdevBlock::writev_at, VdevBlock::write_spacemap will
+            /// ensure that all iovecs are a multiple of blocksize in size.
+            #[allow(clippy::async_yields_async)]
+            #[rstest]
+            #[tokio::test]
+            async fn pad_small_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.write_spacemap(wbufs, 0, 10);
+                let op = fut.block_op.unwrap();
+                let (sglist, _, _) = op.cmd.as_write_spacemap();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[1][3072..], &zbuf[..1024]);
+            }
+        }
+
+        mod writev_at {
+            use super::*;
+
+            /// VdevBlock::writev_at will copy two small iovecs into a new
+            /// buffer that is a multiple of a blocksize.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 1);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..], &wbuf1[..]);
+            }
+
+            /// VdevBlock::writev_at will copy three small iovecs into a new
+            /// buffer that is a multiple of a blocksize.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_three_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 2050]);
+                let dbs2 = DivBufShared::from(vec![2u8; 1022]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 1);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..3074], &wbuf1[..]);
+                assert_eq!(&sglist[0][3074..], &wbuf2[..]);
+            }
+
+            /// VdevBlock::writev_at will copy no more iovecs than is neccessary
+            /// into a new blocksize-multiple iovec.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_first_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let dbs2 = DivBufShared::from(vec![2u8; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wptr2 = &wbuf2[0] as *const _;
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..], &wbuf1[..]);
+                assert_eq!(&sglist[1][..], &wbuf2[..]);
+                assert_eq!(wptr2, &sglist[1][0]);
+            }
+
+            /// VdevBlock::writev_at will copy no more iovecs than is neccessary
+            /// into a new blocksize-multiple iovec.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_last_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let dbs2 = DivBufShared::from(vec![2u8; 1024]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wptr0 = &wbuf0[0] as *const _;
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(wptr0, &sglist[0][0]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                assert_eq!(&sglist[1][3072..], &wbuf2[..]);
+            }
+
+            /// VdevBlock::writev_at will copy the tail of a long iovec, if
+            /// necessary, but not copy the entire thing.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_tail_of_iovec(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 5120]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wptr0 = &wbuf0[0] as *const _;
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..4096]);
+                assert_eq!(wptr0, &sglist[0][0]);
+                assert_eq!(&sglist[1][..1024], &wbuf0[4096..]);
+                assert_eq!(&sglist[1][1024..], &wbuf1[..]);
+            }
+
+            /// VdevBlock::writev_at will zero-pad an operation's tail, if need
+            /// be, up to a multiple of an LBA.  But it won't copy more data
+            /// than is necessary, for iovecs > 1 LBA.
+            #[rstest]
+            #[tokio::test]
+            async fn pad_large_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 7168]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wptr1 = &wbuf1[0] as *const _;
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..], &wbuf1[..4096]);
+                assert_eq!(wptr1, &sglist[1][0]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[2][..3072], &wbuf1[4096..]);
+                assert_eq!(&sglist[2][3072..], &zbuf[..1024]);
+            }
+
+            /// VdevBlock::writev_at will zero-pad an operation's tail, if need
+            /// be, up to a multiple of an LBA.
+            #[allow(clippy::async_yields_async)]
+            #[rstest]
+            #[tokio::test]
+            async fn pad_small_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[1][3072..], &zbuf[..1024]);
+            }
         }
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     vdev::*
 };
 use cfg_if::cfg_if;
-use divbuf::{DivBufShared, DivBuf};
+use divbuf::DivBuf;
 use futures::{
     Future,
     FutureExt,
@@ -491,11 +491,8 @@ impl VdevFile {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
-        if buf.len() % BYTES_PER_LBA != 0 {
-            self.writev_at_unchecked(vec![buf], lba)
-        } else {
-            self.write_at_unchecked(buf, lba)
-        }
+        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
+        self.write_at_unchecked(buf, lba)
     }
 
     fn write_at_unchecked(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
@@ -531,6 +528,7 @@ impl VdevFile {
         label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
+        let sglist = copy_and_pad_sglist(sglist);
         self.writev_at_unchecked(sglist, lba)
     }
 
@@ -572,59 +570,10 @@ impl VdevFile {
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
-        let sglist = if sglist.iter().any(|db| db.len() % BYTES_PER_LBA != 0) {
-            // We must copy data to make all writes block-sized.  We do it here
-            // rather than upstack to minimize the time that the copied data
-            // must live.
-            // We must copy partial-block divbufs, rather than extend them,
-            // because we don't want to modify data that might be in the Cache.
-            let mut outlist = SGList::with_capacity(sglist.len());
-            let mut accumulator: Option<Vec<u8>> = None;
-            for mut db in sglist.into_iter() {
-                if db.len() % BYTES_PER_LBA == 0 {
-                    assert!(accumulator.is_none());
-                    outlist.push(db);
-                    continue
-                }
-                if let Some(ref mut accum) = accumulator {
-                    if db.len() > BYTES_PER_LBA {
-                        unimplemented!();
-                    }
-                    // Data copy
-                    accum.extend(&db[..]);
-                    if accum.len() % BYTES_PER_LBA == 0 {
-                        let dbs = DivBufShared::from(
-                            accumulator.take().unwrap()
-                        );
-                        let db = dbs.try_const().unwrap();
-                        outlist.push(db);
-                    }
-                } else {
-                    if db.len() > BYTES_PER_LBA {
-                        let wlen = db.len() & !(BYTES_PER_LBA - 1);
-                        outlist.push(db.split_to(wlen));
-                    }
-                    // Data copy
-                    accumulator = Some(Vec::from(&db[..]));
-                }
-            }
-            if let Some(ref mut accum) = accumulator {
-                // Must've been an incomplete block.  zero-pad the tail
-                let l = div_roundup(accum.len(), BYTES_PER_LBA) * BYTES_PER_LBA;
-                // Data copy
-                accum.resize(l, 0);
-                let dbs = DivBufShared::from(accumulator.take().unwrap());
-                let db = dbs.try_const().unwrap();
-                outlist.push(db);
-            }
-            outlist
-        } else {
-            sglist
-        };
-
         let slices: Box<[IoSlice<'static>]> =
             sglist.iter()
                 .map(|b| {
+                    debug_assert_eq!(b.len() % BYTES_PER_LBA, 0);
                     // Safe because fut's lifetime is equal to slices' (or
                     // rather, it will be once we move it into the WriteAt
                     // struct
@@ -784,8 +733,6 @@ mock!{
 #[cfg(test)]
 mod t {
     use super::*;
-    use divbuf::DivBufShared;
-    use rstest::{fixture, rstest};
 
 mod label {
     use super::*;
@@ -801,131 +748,5 @@ mod label {
         format!("{:?}", label);
     }
 }
-
-#[fixture]
-fn vd() -> VdevFile {
-    let len = 1 << 26;  // 64MB
-    let mut tf = tempfile::NamedTempFile::new().unwrap();
-    tf.as_file_mut().set_len(len).unwrap();
-    VdevFile::create(tf.path(), None).unwrap()
-}
-
-mod writev_at {
-    use super::*;
-
-    #[rstest]
-    #[tokio::test]
-    async fn accumulate_two_iovecs(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 1);
-        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn accumulate_three_iovecs(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
-        let dbs1 = DivBufShared::from(vec![1u8; 2050]);
-        let dbs2 = DivBufShared::from(vec![2u8; 1022]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbuf2 = dbs2.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 1);
-        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut._sglist[0][1024..3074], &wbuf1[..]);
-        assert_eq!(&fut._sglist[0][3074..], &wbuf2[..]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn accumulate_first_two_iovecs(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
-        let dbs2 = DivBufShared::from(vec![2u8; 4096]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbuf2 = dbs2.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 2);
-        assert_eq!(&fut._sglist[0][..1024], &wbuf0[..]);
-        assert_eq!(&fut._sglist[0][1024..], &wbuf1[..]);
-        assert_eq!(&fut._sglist[1][..], &wbuf2[..]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn accumulate_last_two_iovecs(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
-        let dbs2 = DivBufShared::from(vec![2u8; 1024]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbuf2 = dbs2.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 2);
-        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
-        assert_eq!(&fut._sglist[1][3072..], &wbuf2[..]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn accumulate_tail_of_iovec(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 5120]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 2);
-        assert_eq!(&fut._sglist[0][..], &wbuf0[..4096]);
-        assert_eq!(&fut._sglist[1][..1024], &wbuf0[4096..]);
-        assert_eq!(&fut._sglist[1][1024..], &wbuf1[..]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn pad_large_tail(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let dbs1 = DivBufShared::from(vec![1u8; 7168]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 3);
-        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut._sglist[1][..], &wbuf1[..4096]);
-        let zbuf = ZERO_REGION.try_const().unwrap();
-        assert_eq!(&fut._sglist[2][..3072], &wbuf1[4096..]);
-        assert_eq!(&fut._sglist[2][3072..], &zbuf[..1024]);
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn pad_small_tail(vd: VdevFile) {
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
-        let wbuf0 = dbs0.try_const().unwrap();
-        let wbuf1 = dbs1.try_const().unwrap();
-        let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        let fut = vd.writev_at_unchecked(wbufs, 10);
-        assert_eq!(fut._sglist.len(), 2);
-        assert_eq!(&fut._sglist[0][..], &wbuf0[..]);
-        assert_eq!(&fut._sglist[1][..3072], &wbuf1[..]);
-        let zbuf = ZERO_REGION.try_const().unwrap();
-        assert_eq!(&fut._sglist[1][3072..], &zbuf[..1024]);
-    }
-}
-
 }
 // LCOV_EXCL_STOP
