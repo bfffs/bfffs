@@ -61,7 +61,7 @@ fn serialize_reserved<S>(reserved: &[u8; 7], s: S)
 }
 
 /// A version of `Inner` that is serializable
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
 struct InnerOnDisk<A: Addr> {
     // 8 bits of tree height is sufficient for a tree that can contain more data
@@ -89,7 +89,7 @@ impl<A: Addr + Default> Default for InnerOnDisk<A> {
 }
 
 /// The serialized, on-disk representation of a `Tree`
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(bound(deserialize = "A: DeserializeOwned"))]
 #[cfg_attr(test, derive(Default))]
 pub struct TreeOnDisk<A: Addr>(InnerOnDisk<A>);

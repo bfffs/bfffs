@@ -14,7 +14,7 @@ pub const PROPERTY_OBJECT: u64 = 0;
 ///
 /// This enum is not used for User Properties.  User Properties are stored as
 /// extended attributes on inode 0.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum Property {
     /// Access time.
     ///
@@ -193,7 +193,7 @@ impl PropertyName {
 // Some(2)  -   Inherited from grandparent
 // ...
 // None     -   Default value
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PropertySource(pub(crate) Option<u8>);
 impl PropertySource {
     /// No value has been set for this property on this dataset or any of its

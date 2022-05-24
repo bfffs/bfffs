@@ -431,7 +431,7 @@ impl Mode {
 }
 
 /// File attributes, as returned by `getattr`
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct GetAttr {
     pub ino:        u64,
     /// File size in bytes
@@ -463,7 +463,7 @@ pub struct GetAttr {
 }
 
 /// File attributes, as set by `setattr`
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SetAttr {
     /// File size in bytes
     pub size:       Option<u64>,
