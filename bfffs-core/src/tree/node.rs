@@ -639,7 +639,7 @@ impl<K: Key, V: Value> Serialize for LeafData<K, V> {
 }
 
 /// Node size limits
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[cfg_attr(test, derive(Default))]
 pub struct Limits {
     /// Minimum interior node fanout.  Smaller nodes will be merged, or will

@@ -113,7 +113,7 @@ impl MinValue for ForestKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct Tree {
     parent: Option<TreeID>,
     tod: TreeOnDisk<RID>
@@ -125,7 +125,7 @@ impl Tree {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TreeEnt {
     /// ID of the tree
     pub tree_id:    TreeID,
@@ -135,7 +135,7 @@ pub struct TreeEnt {
 }
 
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 enum ForestValue {
     Tree(Tree),
     TreeEnt(TreeEnt)

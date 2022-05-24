@@ -26,7 +26,7 @@ mock! {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct NeedsDcloneV(u32);
 
 impl TypicalSize for NeedsDcloneV {

@@ -337,7 +337,7 @@ fn serialize_dirent_name<S>(name: &OsString, s: S)
 }
 
 /// In-memory representation of a directory entry
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Dirent {
     pub ino:    u64,
     // TODO: serialize as a string when dumping to YAML
@@ -396,7 +396,7 @@ impl TryFrom<FSValue> for Dirent {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DyingInode(u64);
 
 impl DyingInode {
@@ -412,7 +412,7 @@ impl From<u64> for DyingInode {
 }
 
 /// In-memory representation of a small extended attribute
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct InlineExtAttr {
     pub namespace: ExtAttrNamespace,
     pub name:   OsString,
@@ -448,7 +448,7 @@ impl InlineExtAttr {
 }
 
 /// In-memory representation of a large extended attribute
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlobExtAttr {
     pub namespace: ExtAttrNamespace,
     pub name:   OsString,
@@ -462,7 +462,7 @@ impl BlobExtAttr {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ExtAttr {
     Inline(InlineExtAttr),
     Blob(BlobExtAttr)
@@ -688,7 +688,7 @@ impl Serialize for Timespec {
 }
 
 /// In-memory representation of an Inode
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Inode {
     /// File size in bytes.
     pub size:       u64,
@@ -819,19 +819,21 @@ impl Default for InlineExtent {
     }
 }
 
+impl Eq for InlineExtent {}
+
 impl PartialEq for InlineExtent {
     fn eq(&self, other: &Self) -> bool {
         self.buf.try_const().unwrap() == other.buf.try_const().unwrap()
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlobExtent {
     pub lsize: u32,
     pub rid: RID,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Extent<'a> {
     Inline(&'a InlineExtent),
     Blob(&'a BlobExtent)
@@ -849,7 +851,7 @@ impl<'a> Extent<'a> {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Box<Inode>),
