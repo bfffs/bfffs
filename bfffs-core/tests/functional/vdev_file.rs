@@ -3,6 +3,7 @@
 
 mod basic {
     use bfffs_core::{
+        BYTES_PER_LBA,
         Error,
         vdev::*,
         vdev_file::*
@@ -153,19 +154,19 @@ mod basic {
         // Create the initial file
         let dir = t!(Builder::new().prefix("test_readv_at").tempdir());
         let path = dir.path().join("vdev");
-        let wbuf = (0..4096)
+        let wbuf = (0..8192)
             .map(|i| (i / 16) as u8)
             .collect::<Vec<_>>();
         {
             let mut f = t!(fs::File::create(&path));
-            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the labels
+            f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)).unwrap();
             t!(f.write_all(wbuf.as_slice()));
             t!(f.set_len(1 << 26));
         }
 
         // Run the test
-        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
-        let dbs1 = DivBufShared::from(vec![0u8; 3072]);
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![0u8; 4096]);
         let rbuf0 = dbs0.try_mut().unwrap();
         let rbuf1 = dbs1.try_mut().unwrap();
         let rbufs = vec![rbuf0, rbuf1];
@@ -174,8 +175,8 @@ mod basic {
         rt.block_on(async {
             vdev.readv_at(rbufs, 10).await
         }).unwrap();
-        assert_eq!(&dbs0.try_const().unwrap()[..], &wbuf[..1024]);
-        assert_eq!(&dbs1.try_const().unwrap()[..], &wbuf[1024..]);
+        assert_eq!(&dbs0.try_const().unwrap()[..], &wbuf[..4096]);
+        assert_eq!(&dbs1.try_const().unwrap()[..], &wbuf[4096..]);
     }
 
     #[rstest]
@@ -232,21 +233,21 @@ mod basic {
 
     #[rstest]
     fn writev_at(harness: Harness) {
-        let dbs0 = DivBufShared::from(vec![0u8; 1024]);
-        let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+        let dbs1 = DivBufShared::from(vec![1u8; 4096]);
         let wbuf0 = dbs0.try_const().unwrap();
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-        let mut rbuf = vec![0u8; 4096];
+        let mut rbuf = vec![0u8; 8192];
         let rt = runtime::Runtime::new().unwrap();
         rt.block_on(async {
             harness.0.writev_at(wbufs, 10).await
         }).unwrap();
         let mut f = t!(fs::File::open(harness.1));
-        t!(f.seek(SeekFrom::Start(10 * 4096)));
+        t!(f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(&rbuf[0..1024], wbuf0.deref().deref());
-        assert_eq!(&rbuf[1024..4096], wbuf1.deref().deref());
+        assert_eq!(&rbuf[0..4096], wbuf0.deref().deref());
+        assert_eq!(&rbuf[4096..8192], wbuf1.deref().deref());
     }
 
     #[rstest]

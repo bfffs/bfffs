@@ -482,6 +482,10 @@ impl<'a> FreeSpaceMap {
             }).collect::<Vec<_>>();
             let sod = SpacemapOnDisk::new(u64::from(block), v);
             let dbs = DivBufShared::from(bincode::serialize(&sod).unwrap());
+            // TODO: if dbs isn't a multiple of a blocksize, and it's the last
+            // block in the FSM, zero-extend it up to a full blocksize, so lower
+            // levels won't have to copy the data.  Then remove the zero-padding
+            // parts downstac,.
             (LbaT::from(block), dbs)
         })
     }
@@ -797,6 +801,9 @@ impl Cluster {
         let sm_futs = fsm.serialize()
         .map(|(block, dbs)| {
             let db = dbs.try_const().unwrap();
+            // TODO: copy the last block's worth of buffer, rather than merely
+            // pad it, so that vdev_block won't have to.  Better to do it here,
+            // because vdev_raid duplicates the command for each disk.
             let sglist = if db.len() % BYTES_PER_LBA != 0 {
                 // This can happen in the last block of the spacemap.  Pad out.
                 let padlen = BYTES_PER_LBA - db.len() % BYTES_PER_LBA;

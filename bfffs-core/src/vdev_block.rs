@@ -6,13 +6,15 @@ use futures::{
     channel::oneshot,
     task::{Context, Poll}
 };
+use lazy_static::lazy_static;
+use nix::unistd::{sysconf, SysconfVar};
 use std::{
     cmp::{Ord, Ordering, PartialOrd},
     collections::BinaryHeap,
     collections::VecDeque,
     io,
     mem,
-    num::NonZeroU64,
+    num::{NonZeroU64, NonZeroUsize},
     path::Path,
     pin::Pin,
     sync::{Arc, RwLock, Weak},
@@ -34,6 +36,17 @@ pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
 pub type VdevLeaf = VdevFile;
 
+lazy_static! {
+    static ref IOV_MAX: Option<NonZeroUsize> = {
+        sysconf(SysconfVar::IOV_MAX)
+            .unwrap()
+            .map(usize::try_from)
+            .map(std::result::Result::unwrap)
+            .map(NonZeroUsize::try_from)
+            .map(std::result::Result::unwrap)
+    };
+}
+
 #[derive(Debug)]
 enum Cmd {
     OpenZone,
@@ -52,6 +65,33 @@ enum Cmd {
 }
 
 impl Cmd {
+    #[cfg(test)]
+    fn as_readv_at(&self) -> &SGListMut {
+        if let Cmd::ReadvAt(sglist_mut) = &self {
+            sglist_mut
+        } else {
+            panic!("Not a Cmd::WriteAt");
+        }
+    }
+
+    #[cfg(test)]
+    fn as_write_spacemap(&self) -> (&SGList, &u32, &LbaT) {
+        if let Cmd::WriteSpacemap(sglist, idx, lba) = &self {
+            (sglist, idx, lba)
+        } else {
+            panic!("Not a Cmd::WriteSpacemap");
+        }
+    }
+
+    #[cfg(test)]
+    fn as_writev_at(&self) -> &SGList {
+        if let Cmd::WritevAt(sglist) = &self {
+            sglist
+        } else {
+            panic!("Not a Cmd::WriteAt");
+        }
+    }
+
     // Oh, this would be so much easier if only `std::mem::Discriminant`
     // implemented `Ord`!
     fn discriminant(&self) -> i32 {
@@ -68,6 +108,11 @@ impl Cmd {
             Cmd::WriteSpacemap(_, _, _) => 9,
             Cmd::SyncAll => 10,
         }
+    }
+
+    #[cfg(test)]
+    fn is_sync_all(&self) -> bool {
+        matches!(self, Cmd::SyncAll)
     }
 }
 
@@ -103,7 +148,9 @@ struct BlockOp {
     pub lba: LbaT,
     pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
-    pub sender: oneshot::Sender<()>
+    // Consider replacing with std::sync::Waker, which is smaller than oneshot
+    // Sender and Receiver.
+    pub senders: Vec<oneshot::Sender<()>>
 }
 
 impl Eq for BlockOp {
@@ -138,66 +185,254 @@ impl PartialOrd for BlockOp {
 }
 
 impl BlockOp {
+    pub fn can_accumulate(&self, other: &BlockOp) -> bool {
+
+        // Assuming everything else is ok, can two operations with the given
+        // LBA offsets and total byte lengths be accumulated?
+        let bytes_ok = |len0: usize, _len1: usize| {
+            other.lba == self.lba + (len0 / BYTES_PER_LBA) as LbaT
+        };
+        // Assuming everything else is ok, can two operations be accumulated
+        // without exceeding the operating system's IOV_MAX limitation?
+        fn iov_max_ok(len0: usize, len1: usize) -> bool {
+            match *IOV_MAX {
+                Some(iov_max) => usize::from(iov_max) >= len0 + len1,
+                None => true
+            }
+        }
+
+        match (&self.cmd, &other.cmd) {
+            // Adjacent reads may be combined
+            (Cmd::ReadAt(iovec0), Cmd::ReadAt(iovec1)) => {
+                bytes_ok(iovec0.len(), iovec1.len())
+            }
+            (Cmd::ReadAt(iovec0), Cmd::ReadvAt(sglist1)) => {
+                bytes_ok(iovec0.len(), sglist_len(sglist1)) &&
+                    iov_max_ok(1, sglist1.len())
+            }
+            (Cmd::ReadvAt(sglist0), Cmd::ReadAt(iovec1)) => {
+                bytes_ok(sglist_len(sglist0), iovec1.len()) &&
+                    iov_max_ok(sglist0.len(), 1)
+            }
+            (Cmd::ReadvAt(sglist0), Cmd::ReadvAt(sglist1)) => {
+                bytes_ok(sglist_len(sglist0), sglist_len(sglist1)) &&
+                    iov_max_ok(sglist0.len(), sglist1.len())
+            }
+            (Cmd::SyncAll, Cmd::SyncAll) => {
+                // There's no point to adjacent syncs.  Combine them
+                true
+            },
+            // Adjacent writes may be combined
+            (Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                bytes_ok(iovec0.len(), iovec1.len())
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WritevAt(sglist1)) => {
+                bytes_ok(iovec0.len(), sglist_len(sglist1)) &&
+                    iov_max_ok(1, sglist1.len())
+            }
+            (Cmd::WritevAt(sglist0), Cmd::WriteAt(iovec1)) => {
+                bytes_ok(sglist_len(sglist0), iovec1.len()) &&
+                    iov_max_ok(sglist0.len(), 1)
+            }
+            (Cmd::WritevAt(sglist0), Cmd::WritevAt(sglist1)) => {
+                bytes_ok(sglist_len(sglist0), sglist_len(sglist1)) &&
+                    iov_max_ok(sglist0.len(), sglist1.len())
+            }
+            _ => {
+                // Other pairs of commands never accumulate
+                false
+            }
+        }
+    }
+
+    //pub fn accumulate2(&mut self, mut other: BlockOp) {
+        //debug_assert_eq!(other.senders.len(), 1);
+        //self.senders.push(other.senders.pop().unwrap());
+        //self.cmd = match (self.cmd, other.cmd) {
+            //(Cmd::SyncAll, Cmd::SyncAll) => {
+                //// Nothing to do
+                //Cmd::SyncAll
+            //},
+            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                //Cmd::WritevAt(vec![iovec0, iovec1])
+            //}
+            //_ => todo!()
+        //};
+        //todo!()
+    //}
+
+    //pub fn accumulate3(&mut self, mut other: BlockOp) -> Option<BlockOp> {
+        //match (self.cmd, other.cmd) {
+            //(Cmd::SyncAll, Cmd::SyncAll) => {
+                //// Nothing to do
+            //},
+            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
+                //if other.lba == self.lba + len0 {
+                    //// Adjacent writes may be combined
+                    //self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
+                //} else {
+                    //return Some(other);
+                //}
+            //}
+            //_ => todo!()
+        //}
+        //debug_assert_eq!(other.senders.len(), 1);
+        //self.senders.push(other.senders.pop().unwrap());
+        //todo!()
+    //}
+
+    pub fn accumulate(self, mut other: BlockOp) -> BlockOp {
+        debug_assert!(self.can_accumulate(&other));
+
+        debug_assert_eq!(other.senders.len(), 1);
+        let mut senders = self.senders;
+        senders.push(other.senders.pop().unwrap());
+
+        let cmd = match (self.cmd, other.cmd) {
+            (Cmd::SyncAll, Cmd::SyncAll) => {
+                // Nothing to do
+                Cmd::SyncAll
+            },
+            (Cmd::ReadAt(iovec0), Cmd::ReadAt(iovec1)) => {
+                Cmd::ReadvAt(vec![iovec0, iovec1])
+            }
+            (Cmd::ReadAt(iovec0), Cmd::ReadvAt(sglist1)) => {
+                let mut sglist = Vec::with_capacity(sglist1.len() + 1);
+                sglist.push(iovec0);
+                sglist.extend(sglist1);
+                Cmd::ReadvAt(sglist)
+            }
+            (Cmd::ReadvAt(mut sglist0), Cmd::ReadAt(iovec1)) => {
+                sglist0.push(iovec1);
+                Cmd::ReadvAt(sglist0)
+            }
+            (Cmd::ReadvAt(mut sglist0), Cmd::ReadvAt(sglist1)) => {
+                sglist0.extend(sglist1);
+                Cmd::ReadvAt(sglist0)
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                Cmd::WritevAt(vec![iovec0, iovec1])
+            }
+            (Cmd::WriteAt(iovec0), Cmd::WritevAt(sglist1)) => {
+                let mut sglist = Vec::with_capacity(sglist1.len() + 1);
+                sglist.push(iovec0);
+                sglist.extend(sglist1);
+                Cmd::WritevAt(sglist)
+            }
+            (Cmd::WritevAt(mut sglist0), Cmd::WriteAt(iovec1)) => {
+                sglist0.push(iovec1);
+                Cmd::WritevAt(sglist0)
+            }
+            (Cmd::WritevAt(mut sglist0), Cmd::WritevAt(sglist1)) => {
+                sglist0.extend(sglist1);
+                Cmd::WritevAt(sglist0)
+            }
+            _ => todo!()
+        };
+
+        BlockOp {
+            lba: self.lba,
+            senders,
+            cmd
+        }
+    }
+
+    /// Attempt to merge the two BlockOps together.  If successful, the result
+    /// will be a single block op that spans the contiguous LBA range of the
+    /// originals and includes the buffers of both.  When complete, it will
+    /// signal notification to both originals' waiters.
+    //pub fn accumulate(&mut self, other: Option<&mut BlockOp>) -> bool {
+        //if let Some(other) = other {
+            //match (self.cmd, &other.cmd) {
+                //(Cmd::SyncAll, Cmd::SyncAll) => {
+                    //// There's no point to adjacent syncs.  Combine them
+                    ////true
+                //},
+                //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
+                    //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
+                    //if other.lba == self.lba + len0 {
+                        //// Adjacent writes may be combined
+                        ////self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
+                        ////true
+                    //} else {
+                        //return false;
+                    //}
+                //}
+                //_ => todo!()
+            //}
+            //debug_assert_eq!(other.senders.len(), 1);
+            //self.senders.push(other.senders.pop().unwrap());
+            //todo!()
+        //} else {
+            //return false;
+        //}
+    //}
+
     pub fn erase_zone(start: LbaT, end: LbaT,
                       sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: end, cmd: Cmd::EraseZone(start), sender }
+        BlockOp { lba: end, cmd: Cmd::EraseZone(start), senders: vec![sender] }
     }
 
     pub fn finish_zone(start: LbaT, end: LbaT,
                        sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: end, cmd: Cmd::FinishZone(start), sender }
+        BlockOp { lba: end, cmd: Cmd::FinishZone(start), senders: vec![sender] }
     }
 
     pub fn open_zone(lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::OpenZone, sender }
+        BlockOp { lba, cmd: Cmd::OpenZone, senders: vec![sender] }
     }
 
     pub fn read_at(buf: IoVecMut, lba: LbaT,
                    sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::ReadAt(buf), sender}
+        BlockOp { lba, cmd: Cmd::ReadAt(buf), senders: vec![sender]}
     }
 
     pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
                          sender: oneshot::Sender<()>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), sender}
+        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), senders: vec![sender]}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::ReadvAt(bufs), sender}
+        BlockOp { lba, cmd: Cmd::ReadvAt(bufs), senders: vec![sender]}
     }
 
     pub fn sync_all(sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: 0, cmd: Cmd::SyncAll, sender}
+        BlockOp { lba: 0, cmd: Cmd::SyncAll, senders: vec![sender]}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT,
                     sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::WriteAt(buf), sender}
+        BlockOp { lba, cmd: Cmd::WriteAt(buf), senders: vec![sender]}
     }
 
     pub fn write_label(labeller: LabelWriter,
                        sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), sender}
+        BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), senders: vec![sender]}
     }
 
     pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
                           sender: oneshot::Sender<()>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::WriteSpacemap(sglist, idx, block), sender}
+        BlockOp{
+            lba,
+            cmd: Cmd::WriteSpacemap(sglist, idx, block),
+            senders: vec![sender]
+        }
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
                      sender: oneshot::Sender<()>) -> BlockOp {
-        BlockOp { lba, cmd: Cmd::WritevAt(bufs), sender}
+        BlockOp { lba, cmd: Cmd::WritevAt(bufs), senders: vec![sender]}
     }
 }
 
 struct Inner {
     /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
     /// future around instead of spawning it into the reactor.
-    delayed: Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>,
+    delayed: Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>,
 
     /// Max commands that will be simultaneously queued to the VdevLeaf
     optimum_queue_depth: u32,
@@ -218,7 +453,7 @@ struct Inner {
     // Pending operations are stored in a pair of priority queues.  They _could_
     // be stored in a single queue, _if_ the priority queue's comparison
     // function were allowed to be stateful, as in C++'s STL.  However, Rust's
-    // standard library does not have any way to create a priority queueful with
+    // standard library does not have any way to create a priority queue with
     // a stateful comparison function.
     /// Pending operations ahead of the scheduler's current LBA.
     ahead: BinaryHeap<BlockOp>,
@@ -242,22 +477,63 @@ impl Inner {
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self, cx: &mut Context) {
         while self.queue_depth < self.optimum_queue_depth {
+            // TODO: accumulate adjacent reads and writes
+            // let (sender,fut) = if let Some(x)  = self.delayed.take() {
+            //     x
+            // } else {
+            //     let mut op = self.pop_op().unwrap_or(break);
+            //     while self.peek_op().map(|op| op.lba == self.lba).or(false) {
+            //         op.accumulate(self.pop_op())
+            //     }
+            // }
+            // or
+            // } else {
+            //     while self.peek_op().and_then(|op2| op.accumulate(op2)) {
+            //         self.pop_op()
+            //      }
+            // }
+            // or
+            // } else {
+            //     let op2 = loop {
+            //         match self.pop_op() {
+            //             None => break None,
+            //             Some(op2) => match op1.accumulate(op2) {
+            //                 None => continue,
+            //                 Some(op2) => break Some(op2)
+            //             }
+            //         }
+            //    }
+            //    self.next_op = Some(op2);
+            //    issue(op1);
+            // }
+            // or
+            // } else {
+            //     while self.peek_op().and_then(|op2| op.can_accumulate(op2)) {
+            //         op = op.accumulate(self.pop_op());
+            //     }
+            // }
             let delayed = self.delayed.take();
-            let (sender, fut) = if let Some((sender, fut)) = delayed {
-                (sender, fut)
-            } else if let Some(op) = self.pop_op() {
+            let (senders, fut) = if let Some((senders, fut)) = delayed {
+                (senders, fut)
+            } else if let Some(mut op) = self.pop_op() {
+                while self.peek_op()
+                    .map(|op2| op.can_accumulate(op2))
+                    .unwrap_or(false)
+                {
+                    op = op.accumulate(self.pop_op().unwrap());
+                }
                 self.make_fut(op)
             } else {
                 // Ran out of pending operations
                 break;
             };
-            if let Some(d) = self.issue_fut(sender, fut, cx) {
+            if let Some(d) = self.issue_fut(senders, fut, cx) {
                 self.delayed = Some(d);
                 if self.queue_depth == 1 {
                     // Can't issue any I/O at all!  This means that other
-                    // processes outside of bfffs's control are using too many
-                    // disk resources.  In this case, the only thing we can do
-                    // is sleep and try again later.
+                    // VdevBlocks or other processes outside of bfffs's control
+                    // are using too many disk resources.  In this case, the
+                    // only thing we can do is sleep and try again later.
                     let duration = time::Duration::from_millis(10);
                     let schfut = self.reschedule();
                     let delay_fut = tokio::time::sleep(duration)
@@ -277,10 +553,10 @@ impl Inner {
     /// Returns a delayed operation if there were insufficient resources to
     /// immediately issue the future.
     fn issue_fut(&mut self,
-                 sender: oneshot::Sender<()>,
+                 senders: Vec<oneshot::Sender<()>>,
                  mut fut: Pin<Box<VdevFut>>,
                  cx: &mut Context)
-        -> Option<(oneshot::Sender<()>, Pin<Box<VdevFut>>)>
+        -> Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>
     {
 
         let inner = self.weakself.upgrade().expect(
@@ -293,7 +569,7 @@ impl Inner {
         match fut.as_mut().poll(cx) {
             Poll::Ready(Err(Error::EAGAIN)) => {
                 // Out of resources to issue this future.  Delay it.
-                return Some((sender, fut));
+                return Some((senders, fut));
             },
             Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
             Poll::Pending => {
@@ -301,7 +577,9 @@ impl Inner {
                 tokio::spawn( async move {
                     let r = fut.await;
                     r.expect("Unhandled error");
-                    sender.send(()).unwrap();
+                    for sender in senders{
+                        sender.send(()).unwrap();
+                    }
                     inner.write().unwrap().queue_depth -= 1;
                     schfut.await
                 });
@@ -309,7 +587,9 @@ impl Inner {
             Poll::Ready(Ok(_)) => {
                 // This normally doesn't happen, but it can happen on a
                 // heavily laden system or one with very fast storage.
-                sender.send(()).unwrap();
+                for sender in senders {
+                    sender.send(()).unwrap();
+                }
                 self.queue_depth -= 1;
             }
         }
@@ -318,7 +598,7 @@ impl Inner {
 
     /// Create a future from a BlockOp, but don't spawn it yet
     fn make_fut(&mut self, block_op: BlockOp)
-        -> (oneshot::Sender<()>, Pin<Box<VdevFut>>) {
+        -> (Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>) {
 
         self.queue_depth += 1;
         let lba = block_op.lba;
@@ -340,7 +620,20 @@ impl Inner {
                 self.leaf.write_spacemap(sglist, idx, block),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
-        (block_op.sender, fut)
+        (block_op.senders, fut)
+    }
+
+    /// Get a reference to the next pending operation, if any
+    fn peek_op(&self) -> Option<&BlockOp> {
+        if let Some(op) = self.ahead.peek() {
+            Some(op)
+        } else if let Some(op) = self.behind.peek() {
+            Some(op)
+        } else if let Some(op) = self.after_sync.front() {
+            Some(op)
+        } else {
+            None
+        }
     }
 
     /// Get the next pending operation, if any
@@ -467,9 +760,7 @@ impl VdevBlock {
     fn check_sglist_bounds<T>(&self, lba: LbaT, bufs: &[T])
         where T: ops::Deref<Target=[u8]> {
 
-        let len : u64 = bufs.iter().fold(0, |accumulator, buf| {
-            accumulator + buf.len() as u64
-        });
+        let len = sglist_len(bufs) as u64;
         let last_lba = lba + len / (BYTES_PER_LBA as u64);
         assert!(last_lba <= self.size as u64)
     }
@@ -658,6 +949,7 @@ impl VdevBlock {
         ->  VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
+        let sglist = copy_and_pad_sglist(sglist);
         // lba is for sorting purposes only.  It should sort after write_label,
         // but before any other write operation, and different write_spacemap
         // operations should sort in the same order as their true LBA order.
@@ -678,7 +970,8 @@ impl VdevBlock {
     {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<()>();
-        let block_op = BlockOp::writev_at(bufs, lba, sender);
+        let sglist = copy_and_pad_sglist(bufs);
+        let block_op = BlockOp::writev_at(sglist, lba, sender);
         self.new_fut(block_op, receiver)
     }
 }
@@ -754,661 +1047,1400 @@ mock! {
 
 #[cfg(test)]
 mod t {
-
-use divbuf::DivBufShared;
-use super::*;
-
-// pet kcov
-#[test]
-fn debug_cmd() {
-    let dbs = DivBufShared::from(vec![0u8]);
-    {
-        let read_at = Cmd::ReadAt(dbs.try_mut().unwrap());
-        format!("{:?}", read_at);
-    }
-    {
-        let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
-        format!("{:?}", readv_at);
-    }
-    {
-        let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
-        format!("{:?}", read_spacemap);
-    }
-    let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
-    let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
-    let erase_zone = Cmd::EraseZone(0);
-    let finish_zone = Cmd::FinishZone(0);
-    let sync_all = Cmd::SyncAll;
-    let label_writer = LabelWriter::new(0);
-    let write_label = Cmd::WriteLabel(label_writer);
-    let write_spacemap = Cmd::WriteSpacemap(vec![dbs.try_const().unwrap()],
-                                            0, 0);
-    format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
-            erase_zone, finish_zone, sync_all, write_label, write_spacemap);
-}
-
-// pet kcov
-#[test]
-fn cmd_partial_cmp() {
-    let c0 = Cmd::SyncAll;
-    let c1 = Cmd::OpenZone;
-    assert_eq!(c0.partial_cmp(&c1), Some(Ordering::Greater));
-}
-
-// pet kcov
-#[test]
-#[allow(clippy::eq_op)]
-fn blockop_partial_eq() {
-    let (tx0, _rx) = oneshot::channel();
-    let (tx1, _rx) = oneshot::channel();
-    let (tx2, _rx) = oneshot::channel();
-    let bo0 = BlockOp::erase_zone(0, 100, tx0);
-    let bo1 = BlockOp::erase_zone(100, 200, tx1);
-    let bo2 = BlockOp::finish_zone(100, 200, tx2);
-    assert!(bo1 == bo1);
-    assert!(bo0 != bo1);
-    assert!(bo2 != bo1);
-}
-
-mod t {
     use divbuf::DivBufShared;
-    use futures::{
-        Future,
-        TryFutureExt,
-        TryStreamExt,
-        channel::oneshot,
-        future,
-        stream::FuturesUnordered,
-        task::{Context, Poll}
-    };
-    use futures_test::task::noop_context;
-    use mockall::*;
-    use mockall::predicate::*;
-    use mockall::PredicateBooleanExt;
-    use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
     use super::*;
 
-    mock!{
-        VdevFut {}
-        impl Future for VdevFut {
-            type Output = Result<()>;
-            fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>)
-                -> Poll<Result<()>>;
-        }
-    }
+    mod block_op {
+        use super::*;
 
-    #[fixture]
-    fn leaf() -> MockVdevFile {
-        let mut leaf = MockVdevFile::new();
-        leaf.expect_size()
-            .once()
-            .return_const(262_144u64);
-        leaf.expect_lba2zone()
-            .with(ge(1).and(lt(1<<16)))
-            .return_const(Some(0));
-        leaf.expect_optimum_queue_depth()
-            .return_const(10u32);
-        leaf.expect_spacemap_space()
-            .return_const(1u64);
-        leaf.expect_zone_limits()
-            .with(eq(0))
-            .return_const((1, 1 << 16));
-        leaf.expect_zone_limits()
-            .with(eq(1))
-            .return_const((1 << 16, 2 << 16));
-        leaf.expect_zone_limits()
-            .with(eq(2))
-            .return_const((2 << 16, 3 << 16));
-        leaf
-    }
+        mod accumulate {
+            use super::*;
 
-    // Issueing an operation fails with EAGAIN.  This can happen if the
-    // per-process or per-system AIO limits are reached
-    #[rstest]
-    fn issueing_eagain(mut leaf: MockVdevFile) {
-        let mut seq0 = Sequence::new();
-
-        // The first operation succeeds asynchronously.  When it does, that will
-        // cause the second to be reissued.
-        leaf.expect_read_at()
-            .with(always(), eq(1))
-            .once()
-            .in_sequence(&mut seq0)
-            .returning( move |_, _| {
-                let mut seq1 = Sequence::new();
-                let mut fut = MockVdevFut::new();
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Pending);
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Ready(Ok(())));
-                Box::pin(fut)
-            });
-
-        leaf.expect_read_at()
-            .with(always(), eq(2))
-            .once()
-            .in_sequence(&mut seq0)
-            .returning( move |_, _| {
-                let mut seq1 = Sequence::new();
-                let mut fut = MockVdevFut::new();
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Ready(Err(Error::EAGAIN)));
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Ready(Ok(())));
-                Box::pin(fut)
-            });
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let dbs1 = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf0 = dbs0.try_mut().unwrap();
-        let rbuf1 = dbs1.try_mut().unwrap();
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            let f0 = vdev.read_at(rbuf0, 1);
-            let f1 = vdev.read_at(rbuf1, 2);
-            future::try_join(f0, f1).await
-        }).unwrap();
-    }
-
-    // Issueing an operation fails with EAGAIN, when the queue depth is 1.  This
-    // can happen if the per-process or per-system AIO limits are monopolized by
-    // other reactors.  In this case, we need a timer to wake us up.
-    #[rstest]
-    fn issueing_eagain_queue_depth_1(mut leaf: MockVdevFile) {
-        let mut seq0 = Sequence::new();
-
-        leaf.expect_read_at()
-            .with(always(), eq(1))
-            .once()
-            .in_sequence(&mut seq0)
-            .returning(move |_, _| {
-                let mut seq1 = Sequence::new();
-                let mut fut = MockVdevFut::new();
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Ready(Err(Error::EAGAIN)));
-                fut.expect_poll()
-                    .once()
-                    .in_sequence(&mut seq1)
-                    .return_const(Poll::Ready(Ok(())));
-                Box::pin(fut)
-            });
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf = dbs.try_mut().unwrap();
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.read_at(rbuf, 1).await
-        }).expect("test eagain_queue_depth_1");
-    }
-
-    #[rstest]
-    fn basic_erase_zone(mut leaf: MockVdevFile) {
-        leaf.expect_erase_zone()
-            .with(eq(1))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
-
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.erase_zone(1, (1 << 16) - 1).await
-        }).unwrap();
-    }
-
-    #[rstest]
-    fn basic_finish_zone(mut leaf: MockVdevFile) {
-        leaf.expect_finish_zone()
-            .with(eq(1))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
-
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.finish_zone(1, (1 << 16) - 1).await
-        }).unwrap();
-    }
-
-    #[rstest]
-    fn basic_open_zone(mut leaf: MockVdevFile) {
-        leaf.expect_open_zone()
-            .with(eq(1))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
-
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.open_zone(1).await
-        }).unwrap();
-    }
-
-    // basic reading works
-    #[rstest]
-    fn basic_read_at(mut leaf: MockVdevFile) {
-        leaf.expect_read_at()
-            .with(always(), eq(2))
-            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
-
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf0 = dbs0.try_mut().unwrap();
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.read_at(rbuf0, 2).await
-        }).unwrap();
-    }
-
-    // vectored reading works
-    #[rstest]
-    fn basic_readv_at(mut leaf: MockVdevFile) {
-        leaf.expect_readv_at()
-            .with(always(), eq(2))
-            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
-
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf0 = vec![dbs0.try_mut().unwrap()];
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.readv_at(rbuf0, 2).await
-        }).unwrap();
-    }
-
-    // sync_all works
-    #[rstest]
-    fn basic_sync_all(mut leaf: MockVdevFile) {
-        leaf.expect_sync_all()
-            .returning(|| Box::pin(future::ok::<(), Error>(())));
-
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.sync_all().await
-        }).unwrap();
-    }
-
-    // data operations will be issued in C-LOOK order (from lowest LBA to
-    // highest, then start over at lowest)
-    #[rstest]
-    fn sched_data(leaf: MockVdevFile) {
-        let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.write().unwrap();
-        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy_buffer = dummy_dbs.try_const().unwrap();
-
-        // Start with some intermedia LBA and schedule some ops
-        let same_lba = 1000;
-        let just_after = 1001;
-        let just_after_dup = 1001;
-        let just_before = 999;
-        let min = 1;
-        let max = 16383;
-        let mut lbas = vec![same_lba, just_after, just_after_dup, just_before,
-                            min, max];
-        // Test scheduling the ops in all possible permutations
-        permutohedron::heap_recursive(&mut lbas, |permutation| {
-            inner.last_lba = 1000;
-            for lba in permutation {
-                let op = BlockOp::write_at(dummy_buffer.clone(), *lba,
-                    oneshot::channel::<()>().0);
-                inner.sched(op);
+            /// Can't accumulate because the second operation's LBA lies before
+            /// than the first.  This can happen, especially on a lightly-loaded
+            /// system, when the seek pointer wraps around.
+            #[test]
+            fn backwards_lba() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 999;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
             }
 
-            // Check that they're scheduled in the correct order
-            assert_eq!(inner.pop_op().unwrap().lba, 1000);
-            assert_eq!(inner.pop_op().unwrap().lba, 1001);
-            assert_eq!(inner.pop_op().unwrap().lba, 1001);
+            /// Can't accumulate because the commands are different
+            #[test]
+            fn different_cmds() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-            // Schedule two more operations behind the scheduler, but ahead of
-            // some already-scheduled ops, to make sure they get issued in the
-            // right order
-            let just_before2 = BlockOp::write_at(dummy_buffer.clone(), 1000,
-                oneshot::channel::<()>().0);
-            let well_before = BlockOp::write_at(dummy_buffer.clone(), 990,
-                oneshot::channel::<()>().0);
-            inner.sched(just_before2);
-            inner.sched(well_before);
+            /// Erase Zone commands never accumulate
+            // They could, when working with non-SMR drives, but the zones are
+            // so big that there would be little benefit.  With SMR drives they
+            // cannot accumulate, because the RESET_WRITE_POINTER operation
+            // works on only one zone at a time.
+            #[test]
+            fn erase_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0s = 1000;
+                let lba0e = 1009;
+                let lba1s = 1010;
+                let lba1e = 1019;
+                let op0 = BlockOp::erase_zone(lba0s, lba0e, tx0);
+                let op1 = BlockOp::erase_zone(lba1s, lba1e, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-            assert_eq!(inner.pop_op().unwrap().lba, 16383);
-            assert_eq!(inner.pop_op().unwrap().lba, 1);
-            assert_eq!(inner.pop_op().unwrap().lba, 990);
-            assert_eq!(inner.pop_op().unwrap().lba, 999);
-            assert_eq!(inner.pop_op().unwrap().lba, 1000);
-            assert!(inner.pop_op().is_none());
-        });
-    }
+            /// Finish Zone commands never accumulate.
+            // For non-SMR disks there is no point because the command is a
+            // no-op.  For SMR disks they cannot accumulate because the
+            // FINISH_ZONE command works on only one zone at a time.
+            #[test]
+            fn finish_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0s = 1000;
+                let lba0e = 1009;
+                let lba1s = 1010;
+                let lba1e = 1019;
+                let op0 = BlockOp::finish_zone(lba0s, lba0e, tx0);
+                let op1 = BlockOp::finish_zone(lba1s, lba1e, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-    // An erase zone command should be scheduled after any reads from that zone
-    #[rstest]
-    fn sched_erase_zone(leaf: MockVdevFile) {
-        let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.write().unwrap();
-        let dummy_dbs = DivBufShared::from(vec![0; 12288]);
-        let mut dummy = dummy_dbs.try_mut().unwrap();
+            /// Can't accumulate because both operations have the same LBA.
+            /// This ideally shouldn't happen, but it's possible, if two
+            /// processes try to read the same uncached block at the same time.
+            #[test]
+            fn identical_lba() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1000;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-        inner.last_lba = 1 << 16;   // In zone 1
-        // Read from zones that lie behind, around, and ahead of the scheduler,
-        // then erase them.  This simulates garbage collection.
-        let ez0 = BlockOp::erase_zone(0, (1 << 16) - 1,
-            oneshot::channel::<()>().0);
-        let ez_discriminant = mem::discriminant(&ez0.cmd);
-        inner.sched(ez0);
-        let r = BlockOp::read_at(dummy.split_to(4096), (1 << 16) - 1,
-            oneshot::channel::<()>().0);
-        let read_at_discriminant = mem::discriminant(&r.cmd);
-        inner.sched(r);
-        inner.sched(BlockOp::erase_zone(1 << 16, (2 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::read_at(dummy.split_to(4096), (2 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::erase_zone(2 << 16, (3 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::read_at(dummy, (3 << 16) - 1,
-            oneshot::channel::<()>().0));
+            /// read and write operations cannot accumulate if the resulting
+            /// length of iovec would exceed _SC_IOV_MAX.
+            #[test]
+            fn iov_max() {
+                let limit = match sysconf(SysconfVar::IOV_MAX).unwrap() {
+                    None => {
+                        // No such limit
+                        return;
+                    }
+                    Some(limit) => limit
+                };
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let dbs = DivBufShared::from(vec![0; 4096]);
+                let mut sglist0 = vec![];
+                let mut sglist1 = vec![];
+                let iovlen0 = limit / 2;
+                let iovlen1 = limit + 1 - iovlen0;
+                for _ in 0..iovlen0 {
+                    sglist0.push(dbs.try_const().unwrap());
+                }
+                for _ in 0..iovlen1 {
+                    sglist1.push(dbs.try_const().unwrap());
+                }
+                let lba0: LbaT = 1000;
+                let lba1: LbaT = lba0 + iovlen0 as LbaT;
 
-        let first = inner.pop_op().unwrap();
-        assert_eq!(first.lba, (2 << 16) - 1);
-        assert_eq!(mem::discriminant(&first.cmd), read_at_discriminant);
-        let second = inner.pop_op().unwrap();
-        assert_eq!(second.lba, (2 << 16) - 1);
-        assert_eq!(mem::discriminant(&second.cmd), ez_discriminant);
-        let third = inner.pop_op().unwrap();
-        assert_eq!(third.lba, (3 << 16) - 1);
-        assert_eq!(mem::discriminant(&third.cmd), read_at_discriminant);
-        let fourth = inner.pop_op().unwrap();
-        assert_eq!(fourth.lba, (3 << 16) - 1);
-        assert_eq!(mem::discriminant(&fourth.cmd), ez_discriminant);
-        let fifth = inner.pop_op().unwrap();
-        assert_eq!(fifth.lba, (1 << 16) - 1);
-        assert_eq!(mem::discriminant(&fifth.cmd), read_at_discriminant);
-        let sixth = inner.pop_op().unwrap();
-        assert_eq!(sixth.lba, (1 << 16) - 1);
-        assert_eq!(mem::discriminant(&sixth.cmd), ez_discriminant);
-    }
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-    // A finish zone command should be scheduled after any writes to that zone
-    #[rstest]
-    fn sched_finish_zone(leaf: MockVdevFile) {
-        let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.write().unwrap();
-        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy = dummy_dbs.try_const().unwrap();
+            /// Can't accumulate because of a gap in the LBA range
+            #[test]
+            fn lba_gap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-        inner.last_lba = 1 << 16;   // In zone 1
-        // Write to zones that lie behind, around, and ahead of the scheduler,
-        // then finish them.
-        let fz0 = BlockOp::finish_zone(0, (1 << 16) - 1,
-            oneshot::channel::<()>().0);
-        let fz_discriminant = mem::discriminant(&fz0.cmd);
-        inner.sched(fz0);
-        let r = BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
-            oneshot::channel::<()>().0);
-        let write_at_discriminant = mem::discriminant(&r.cmd);
-        inner.sched(r);
-        inner.sched(BlockOp::finish_zone(1 << 16, (2 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::finish_zone(2 << 16, (3 << 16) - 1,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
-            oneshot::channel::<()>().0));
+            /// OpenZone commands never accumulate
+            #[test]
+            fn open_zone() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let op0 = BlockOp::open_zone(lba0, tx0);
+                let op1 = BlockOp::open_zone(lba1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-        let first = inner.pop_op().unwrap();
-        assert_eq!(first.lba, (2 << 16) - 1);
-        assert_eq!(mem::discriminant(&first.cmd), write_at_discriminant);
-        let second = inner.pop_op().unwrap();
-        assert_eq!(second.lba, (2 << 16) - 1);
-        assert_eq!(mem::discriminant(&second.cmd), fz_discriminant);
-        let third = inner.pop_op().unwrap();
-        assert_eq!(third.lba, (3 << 16) - 1);
-        assert_eq!(mem::discriminant(&third.cmd), write_at_discriminant);
-        let fourth = inner.pop_op().unwrap();
-        assert_eq!(fourth.lba, (3 << 16) - 1);
-        assert_eq!(mem::discriminant(&fourth.cmd), fz_discriminant);
-        let fifth = inner.pop_op().unwrap();
-        assert_eq!(fifth.lba, (1 << 16) - 1);
-        assert_eq!(mem::discriminant(&fifth.cmd), write_at_discriminant);
-        let sixth = inner.pop_op().unwrap();
-        assert_eq!(sixth.lba, (1 << 16) - 1);
-        assert_eq!(mem::discriminant(&sixth.cmd), fz_discriminant);
-    }
+            /// Successfully accumulate two ReadAt operations
+            #[test]
+            fn read_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rptr1 = &rbuf1[0] as *const _;
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+            }
 
-    // An open zone command should be scheduled before any writes to that zone
-    #[rstest]
-    fn sched_open_zone(leaf: MockVdevFile) {
-        let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.write().unwrap();
-        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy = dummy_dbs.try_const().unwrap();
+            /// Successfully accumulate a ReadAt with a ReadvAt operation
+            #[test]
+            fn read_at_and_readv_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let dbs3 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rbuf3 = dbs3.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let rptr3 = &rbuf3[0] as *const _;
+                let op0 = BlockOp::read_at(rbuf0, lba0, tx0);
+                let op1 = BlockOp::readv_at(vec![rbuf2, rbuf3], lba1, tx1);
 
-        inner.last_lba = 1 << 16;   // In zone 1
-        // Open zones 0 and 2 and write to both.  Note that it is illegal for
-        // the scheduler's last_lba to lie within either of these zones, because
-        // that would imply that it had just performed an operation on an empty
-        // zone.
-        let w = BlockOp::write_at(dummy.clone(), 1, oneshot::channel::<()>().0);
-        let write_at_discriminant = mem::discriminant(&w.cmd);
-        inner.sched(w);
-        inner.sched(BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
-                    oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), 2,
-                    oneshot::channel::<()>().0));
-        let oz0 = BlockOp::open_zone(1, oneshot::channel::<()>().0);
-        let oz_discriminant = mem::discriminant(&oz0.cmd);
-        inner.sched(oz0);
-        inner.sched(BlockOp::open_zone(2 << 16, oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) + 1,
-                    oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy.clone(), 2 << 16,
-                    oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr2);
+                assert_eq!(&sglist[2][0] as *const _, rptr3);
+            }
 
-        let first = inner.pop_op().unwrap();
-        assert_eq!(first.lba, 2 << 16);
-        assert_eq!(mem::discriminant(&first.cmd), oz_discriminant);
-        let second = inner.pop_op().unwrap();
-        assert_eq!(second.lba, 2 << 16);
-        assert_eq!(mem::discriminant(&second.cmd), write_at_discriminant);
-        assert_eq!(inner.pop_op().unwrap().lba, (2 << 16) + 1);
-        assert_eq!(inner.pop_op().unwrap().lba, (3 << 16) - 1);
-        let fifth = inner.pop_op().unwrap();
-        assert_eq!(fifth.lba, 1);
-        assert_eq!(mem::discriminant(&fifth.cmd), oz_discriminant);
-        let sixth = inner.pop_op().unwrap();
-        assert_eq!(sixth.lba, 1);
-        assert_eq!(mem::discriminant(&sixth.cmd), write_at_discriminant);
-        assert_eq!(inner.pop_op().unwrap().lba, 2);
-        assert_eq!(inner.pop_op().unwrap().lba, (1 << 16) - 1);
-        assert!(inner.pop_op().is_none());
-    }
+            /// ReadSpacemap commands never accumulate
+            #[test]
+            fn read_spacemap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let op0 = BlockOp::read_spacemap(rbuf0, lba0, 0, tx0);
+                let op1 = BlockOp::read_spacemap(rbuf1, lba1, 0, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
 
-    // A sync_all command should be issued in strictly ordered mode; after all
-    // previous commands and before all subsequent commands
-    #[rstest]
-    fn sched_sync_all(leaf: MockVdevFile) {
-        let vdev = VdevBlock::new(leaf);
-        let mut inner = vdev.inner.write().unwrap();
-        let dummy_dbs = DivBufShared::from(vec![0; 4096]);
-        let dummy_buffer = dummy_dbs.try_const().unwrap();
+            /// Successfully accumulate two ReadvAt operations
+            #[test]
+            fn readv_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let dbs3 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rbuf3 = dbs3.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr1 = &rbuf1[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let rptr3 = &rbuf3[0] as *const _;
+                let op0 = BlockOp::readv_at(vec![rbuf0, rbuf1], lba0, tx0);
+                let op1 = BlockOp::readv_at(vec![rbuf2, rbuf3], lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 4);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+                assert_eq!(&sglist[2][0] as *const _, rptr2);
+                assert_eq!(&sglist[3][0] as *const _, rptr3);
+            }
 
-        // Start with some intermediate LBA and schedule ops both before and
-        // after
-        inner.last_lba = 1000;
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1001,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 999,
-            oneshot::channel::<()>().0));
-        // Now schedule a sync_all, too
-        inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
-        // Now schedule some more data ops both before and after the scheudler
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1002,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 998,
-            oneshot::channel::<()>().0));
-        // For good measure, schedule a second sync and some more data after
-        // that
-        inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1003,
-            oneshot::channel::<()>().0));
-        inner.sched(BlockOp::write_at(dummy_buffer, 997,
-            oneshot::channel::<()>().0));
+            /// Successfully accumulate a ReadvAt with a ReadAt operation
+            #[test]
+            fn readv_at_and_read_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![0; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let rptr0 = &rbuf0[0] as *const _;
+                let rptr1 = &rbuf1[0] as *const _;
+                let rptr2 = &rbuf2[0] as *const _;
+                let op0 = BlockOp::readv_at(vec![rbuf0, rbuf1], lba0, tx0);
+                let op1 = BlockOp::read_at(rbuf2, lba1, tx1);
 
-        // All pre-sync operations should be issued, then the sync, then the
-        // post-sync operations
-        assert_eq!(inner.pop_op().unwrap().lba, 1001);
-        assert_eq!(inner.pop_op().unwrap().lba, 999);
-        assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
-        assert_eq!(inner.pop_op().unwrap().lba, 1002);
-        assert_eq!(inner.pop_op().unwrap().lba, 998);
-        assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
-        assert_eq!(inner.pop_op().unwrap().lba, 1003);
-        assert_eq!(inner.pop_op().unwrap().lba, 997);
-    }
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_readv_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][0] as *const _, rptr0);
+                assert_eq!(&sglist[1][0] as *const _, rptr1);
+                assert_eq!(&sglist[2][0] as *const _, rptr2);
+            }
 
-    // Queued operations will both complete
-    #[rstest]
-    fn issueing_queued(mut leaf: MockVdevFile) {
-        let mut seq = Sequence::new();
+            /// Successfully accumulate two SyncAll operations
+            #[test]
+            fn sync_all() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let op0 = BlockOp::sync_all(tx0);
+                let op1 = BlockOp::sync_all(tx1);
+                let opa = op0.accumulate(op1);
+                assert!(opa.cmd.is_sync_all());
+            }
 
-        let (sender, receiver) = oneshot::channel::<()>();
-        let e = Error::EPIPE;
-        let fut0 = Box::pin(receiver.map_err(move |_| e));
-        let fut1 = Box::pin(future::ok::<(), Error>(()));
-        leaf.expect_read_at()
-            .with(always(), eq(1))
-            .once()
-            .in_sequence(&mut seq)
-            .return_once(move |_, _| fut0);
-        leaf.expect_read_at()
-            .with(always(), eq(2))
-            .once()
-            .in_sequence(&mut seq)
-            .return_once(move |_, _| {
-                sender.send(()).unwrap();
-                fut1
-            });
-        let dbs0 = DivBufShared::from(vec![0u8; 4096]);
-        let dbs1 = DivBufShared::from(vec![0u8; 4096]);
-        let rbuf0 = dbs0.try_mut().unwrap();
-        let rbuf1 = dbs1.try_mut().unwrap();
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            let f0 = vdev.read_at(rbuf0, 1);
-            let f1 = vdev.read_at(rbuf1, 2);
-            future::try_join(f0, f1).await
-        }).unwrap();
-    }
+            /// Successfully accumulate two WriteAt operations
+            #[test]
+            fn write_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::write_at(wbuf0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+            }
 
-    // Operations will be buffered after the max queue depth is reached
-    // The first MAX_QUEUE_DEPTH operations will be issued immediately, in the
-    // order in which they are requested.  Subsequent operations will be
-    // reordered into LBA order
-    #[rstest]
-    fn issueing_queue_depth(mut leaf: MockVdevFile) {
-        let num_ops = leaf.optimum_queue_depth() + 2;
-        let mut seq = Sequence::new();
+            /// Successfully accumulate a WriteAt and a WritevAt operation
+            #[test]
+            fn write_at_and_writev_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let dbs3 = DivBufShared::from(vec![3; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbuf3 = dbs3.try_const().unwrap();
+                let sglist1 = vec![wbuf2, wbuf3];
+                let op0 = BlockOp::write_at(wbuf0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs2.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs3.try_const().unwrap()[..]);
+            }
 
-        let channels = (0..num_ops - 2).map(|_| oneshot::channel::<()>());
-        let (receivers, senders) : (Vec<_>, Vec<_>) = channels.map(|chan| {
-            let e = Error::EPIPE;
-            (chan.1.map_err(move |_| e), chan.0)
-        })
-        .unzip();
-        for (i, r) in receivers.into_iter().enumerate().rev() {
-            leaf.expect_write_at()
-                .with(always(), eq(i as LbaT + 1))
-                .once()
-                .in_sequence(&mut seq)
-                .return_once(|_, _| Box::pin(r));
+            /// WriteLabel commands never accumulate
+            #[test]
+            fn write_label() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lw0 = LabelWriter::new(0);
+                let lw1 = LabelWriter::new(1);
+                let op0 = BlockOp::write_label(lw0, tx0);
+                let op1 = BlockOp::write_label(lw1, tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// WriteSpacemap commands never accumulate
+            #[test]
+            fn write_spacemap() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1001;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![0; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, 0, 10,
+                                                      tx0);
+                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, 0, 11,
+                                                  tx1);
+                assert!(!op0.can_accumulate(&op1));
+            }
+
+            /// Successfully accumulate two WritevAt operations
+            #[test]
+            fn writev_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let dbs3 = DivBufShared::from(vec![3; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbuf3 = dbs3.try_const().unwrap();
+                let sglist0 = vec![wbuf0, wbuf1];
+                let sglist1 = vec![wbuf2, wbuf3];
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::writev_at(sglist1, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 4);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
+                assert_eq!(&sglist[3][..], &dbs3.try_const().unwrap()[..]);
+            }
+
+            /// Successfully accumulate a WritevAt and a WriteAt operation
+            #[test]
+            fn writev_at_and_write_at() {
+                let (tx0, _rx) = oneshot::channel();
+                let (tx1, _rx) = oneshot::channel();
+                let lba0 = 1000;
+                let lba1 = 1002;
+                let dbs0 = DivBufShared::from(vec![0; 4096]);
+                let dbs1 = DivBufShared::from(vec![1; 4096]);
+                let dbs2 = DivBufShared::from(vec![2; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let sglist0 = vec![wbuf0, wbuf1];
+                let op0 = BlockOp::writev_at(sglist0, lba0, tx0);
+                let op1 = BlockOp::write_at(wbuf2, lba1, tx1);
+                let opa = op0.accumulate(op1);
+                assert_eq!(opa.lba, lba0);
+                let sglist = opa.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &dbs0.try_const().unwrap()[..]);
+                assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
+                assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
+            }
+
+            // TODO: test cases for
+            // [✓] None
+            // [✓] read_at
+            // [✓] write_at
+            // [✓] writev_at
+            // [✓] readv_at
+            // [✓] read_at + readv_at
+            // [✓] write_at + writev_at
+            // [✓] readv_at + read_at
+            // [✓] writev_at + write_at
+            // [✓] gap in lba range: can't accumulate
+            // [✓] identical lba.  Can't accumulate
+            // [✓] backwards lba.  Can't accumulate
+            // [ ] left side's buffer only partially fills lba: can accumulate:
+            //   [ ] write_at
+            //   [ ] read_at
+            //   [ ] writev_at
+            //   [ ] readv_at
+            // [✓] Different cmds.  Can't accumulate
+            // [✓] Non-accumulatable commands:
+            //   [✓] OpenZone
+            //   [✓] ReadSpacemap
+            //   [✓] WriteLabel
+            //   [✓] WriteSpacemap
+            //   [✓] EraseZone
+            //   [✓] FinishZone
+            // [✓] SyncAll.
+            // [✓] Total iovec length would exceed _SC_IOV_MAX.  Can't accumulate.
+            // [✓] Total iovec byte length would exceed maxphys.  Can't
+            // accumulate
         }
-        // Schedule the final two operations in reverse LBA order, but verify
-        // that they get issued in actual LBA order
-        let final_fut = future::ok::<(), Error>(());
-        leaf.expect_write_at()
-            .with(always(), eq(LbaT::from(num_ops) - 1))
-            .once()
-            .in_sequence(&mut seq)
-            .return_once(|_, _| Box::pin(final_fut));
-        let penultimate_fut = future::ok::<(), Error>(());
-        leaf.expect_write_at()
-            .with(always(), eq(LbaT::from(num_ops)))
-            .once()
-            .in_sequence(&mut seq)
-            .return_once(|_, _| Box::pin(penultimate_fut));
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try_const().unwrap();
-        let vdev = VdevBlock::new(leaf);
 
-        basic_runtime().block_on(async {
-            let mut ctx = noop_context();
-            // First schedule all operations.  There are too many to issue them
-            // all immediately
-            let futs = (1..num_ops - 1).rev().map(|i| {
-                let mut fut = Box::pin(
-                    vdev.write_at(wbuf.clone(), LbaT::from(i))
+        // pet kcov
+        #[test]
+        #[allow(clippy::eq_op)]
+        fn partial_eq() {
+            let (tx0, _rx) = oneshot::channel();
+            let (tx1, _rx) = oneshot::channel();
+            let (tx2, _rx) = oneshot::channel();
+            let bo0 = BlockOp::erase_zone(0, 100, tx0);
+            let bo1 = BlockOp::erase_zone(100, 200, tx1);
+            let bo2 = BlockOp::finish_zone(100, 200, tx2);
+            assert!(bo1 == bo1);
+            assert!(bo0 != bo1);
+            assert!(bo2 != bo1);
+        }
+    }
+
+    mod cmd {
+        use super::*;
+
+        // pet kcov
+        #[test]
+        fn debug() {
+            let dbs = DivBufShared::from(vec![0u8]);
+            {
+                let read_at = Cmd::ReadAt(dbs.try_mut().unwrap());
+                format!("{:?}", read_at);
+            }
+            {
+                let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
+                format!("{:?}", readv_at);
+            }
+            {
+                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
+                format!("{:?}", read_spacemap);
+            }
+            let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
+            let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
+            let erase_zone = Cmd::EraseZone(0);
+            let finish_zone = Cmd::FinishZone(0);
+            let sync_all = Cmd::SyncAll;
+            let label_writer = LabelWriter::new(0);
+            let write_label = Cmd::WriteLabel(label_writer);
+            let write_spacemap = Cmd::WriteSpacemap(
+                vec![dbs.try_const().unwrap()], 0, 0);
+            format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
+                    erase_zone, finish_zone, sync_all, write_label,
+                    write_spacemap);
+        }
+
+        // pet kcov
+        #[test]
+        fn partial_cmp() {
+            let c0 = Cmd::SyncAll;
+            let c1 = Cmd::OpenZone;
+            assert_eq!(c0.partial_cmp(&c1), Some(Ordering::Greater));
+        }
+    }
+
+    mod vdev_block {
+        use divbuf::DivBufShared;
+        use futures::{
+            Future,
+            TryFutureExt,
+            TryStreamExt,
+            channel::oneshot,
+            future,
+            stream::FuturesUnordered,
+            task::{Context, Poll}
+        };
+        use futures_test::task::noop_context;
+        use mockall::*;
+        use mockall::predicate::*;
+        use mockall::PredicateBooleanExt;
+        use rstest::{fixture, rstest};
+        use super::*;
+
+        mock!{
+            VdevFut {}
+            impl Future for VdevFut {
+                type Output = Result<()>;
+                fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>)
+                    -> Poll<Result<()>>;
+            }
+        }
+
+        fn partial_leaf() -> MockVdevFile {
+            let mut leaf = MockVdevFile::new();
+            leaf.expect_size()
+                .once()
+                .return_const(262_144u64);
+            leaf.expect_lba2zone()
+                .with(ge(1).and(lt(1<<16)))
+                .return_const(Some(0));
+            leaf.expect_spacemap_space()
+                .return_const(1u64);
+            leaf.expect_zone_limits()
+                .with(eq(0))
+                .return_const((1, 1 << 16));
+            leaf.expect_zone_limits()
+                .with(eq(1))
+                .return_const((1 << 16, 2 << 16));
+            leaf.expect_zone_limits()
+                .with(eq(2))
+                .return_const((2 << 16, 3 << 16));
+            leaf
+        }
+
+        #[fixture]
+        fn leaf() -> MockVdevFile {
+            let mut leaf = partial_leaf();
+            leaf.expect_optimum_queue_depth()
+                .return_const(10u32);
+            leaf
+        }
+
+        #[fixture]
+        fn leaf1() -> MockVdevFile {
+            let mut leaf = partial_leaf();
+            leaf.expect_optimum_queue_depth()
+                .return_const(1u32);
+            leaf
+        }
+
+        mod issue_all {
+            use super::*;
+            use pretty_assertions::assert_eq;
+
+            /// The upper layer creates two operations that can be accumulated.
+            /// VdevBlock::issue_all should do that, and only issue one
+            /// operation to VdevFile
+            #[rstest]
+            #[tokio::test]
+            async fn accumulate(mut leaf1: MockVdevFile) {
+                leaf1.expect_optimum_queue_depth()
+                    .return_const(1u32);
+                let mut seq = Sequence::new();
+
+                let (tx, rx) = oneshot::channel::<()>();
+                leaf1.expect_read_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+                leaf1.expect_readv_at()
+                    .withf(|iovec, lba| {
+                        *lba == 2 && iovec.len() == 2
+                    }).once()
+                    .in_sequence(&mut seq)
+                    .returning(|_, _| Box::pin(future::ok(())));
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs2 = DivBufShared::from(vec![0u8; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let rbuf2 = dbs2.try_mut().unwrap();
+                let vdev = VdevBlock::new(leaf1);
+
+                let mut ctx = noop_context();
+                // VdevBlock will issue the first operation immediately.
+                // But it won't return immediately.
+                let mut f0 = Box::pin(vdev.read_at(rbuf0, 1));
+                assert!(f0.as_mut().poll(&mut ctx).is_pending());
+                // Since the optimium queue depth is 1, the second two
+                // operations will pile up in the queue.  When eventually
+                // issued, they'll be accumulated.
+                let mut f1 = Box::pin(vdev.read_at(rbuf1, 2));
+                assert!(f1.as_mut().poll(&mut ctx).is_pending());
+                let mut f2 = Box::pin(vdev.read_at(rbuf2, 3));
+                assert!(f2.as_mut().poll(&mut ctx).is_pending());
+                // Now that all Futures have been polled to get into the
+                // scheduler loop, complete the first one.
+                tx.send(()).unwrap();
+                future::try_join3(f0, f1, f2).await.unwrap();
+            }
+
+            // Issueing an operation fails with EAGAIN.  This can happen if the
+            // per-process or per-system AIO limits are reached
+            #[rstest]
+            #[tokio::test]
+            async fn eagain(mut leaf: MockVdevFile) {
+                let mut seq0 = Sequence::new();
+
+                // The first operation succeeds asynchronously.  When it does,
+                // that will cause the second to be reissued.
+                leaf.expect_read_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .in_sequence(&mut seq0)
+                    .returning( move |_, _| {
+                        let mut seq1 = Sequence::new();
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Pending);
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Ready(Ok(())));
+                        Box::pin(fut)
+                    });
+
+                leaf.expect_read_at()
+                    .with(always(), eq(3))
+                    .once()
+                    .in_sequence(&mut seq0)
+                    .returning( move |_, _| {
+                        let mut seq1 = Sequence::new();
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Ready(Err(Error::EAGAIN)));
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Ready(Ok(())));
+                        Box::pin(fut)
+                    });
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let vdev = VdevBlock::new(leaf);
+
+                let f0 = vdev.read_at(rbuf0, 1);
+                let f1 = vdev.read_at(rbuf1, 3);
+                future::try_join(f0, f1).await.unwrap();
+            }
+
+            // Issueing an operation fails with EAGAIN, when the queue depth is
+            // 1.  This can happen if the per-process or per-system AIO limits
+            // are monopolized by other reactors.  In this case, we need a timer
+            // to wake us up.
+            #[rstest]
+            #[tokio::test]
+            async fn eagain_queue_depth_1(mut leaf: MockVdevFile) {
+                let mut seq0 = Sequence::new();
+
+                leaf.expect_read_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .in_sequence(&mut seq0)
+                    .returning(move |_, _| {
+                        let mut seq1 = Sequence::new();
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Ready(Err(Error::EAGAIN)));
+                        fut.expect_poll()
+                            .once()
+                            .in_sequence(&mut seq1)
+                            .return_const(Poll::Ready(Ok(())));
+                        Box::pin(fut)
+                    });
+                let dbs = DivBufShared::from(vec![0u8; 4096]);
+                let rbuf = dbs.try_mut().unwrap();
+                let vdev = VdevBlock::new(leaf);
+
+                vdev.read_at(rbuf, 1).await.unwrap();
+            }
+
+            // Multiple queued operations that cannot be accumulated will both
+            // be issued separately and concurrently.
+            #[rstest]
+            #[tokio::test]
+            async fn unaccumulatable(mut leaf: MockVdevFile) {
+                let mut seq = Sequence::new();
+
+                let (sender, receiver) = oneshot::channel::<()>();
+                let e = Error::EPIPE;
+                let fut0 = Box::pin(receiver.map_err(move |_| e));
+                let fut1 = Box::pin(future::ok::<(), Error>(()));
+                leaf.expect_read_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(move |_, _| fut0);
+                leaf.expect_read_at()
+                    .with(always(), eq(3))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(move |_, _| {
+                        sender.send(()).unwrap();
+                        fut1
+                    });
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![0u8; 4096]);
+                let rbuf0 = dbs0.try_mut().unwrap();
+                let rbuf1 = dbs1.try_mut().unwrap();
+                let vdev = VdevBlock::new(leaf);
+
+                let f0 = vdev.read_at(rbuf0, 1);
+                let f1 = vdev.read_at(rbuf1, 3);
+                future::try_join(f0, f1).await.unwrap();
+            }
+
+            // Operations will be buffered after the max queue depth is reached
+            // The first MAX_QUEUE_DEPTH operations will be issued immediately,
+            // in the order in which they are requested.  Subsequent operations
+            // will be reordered into LBA order
+            #[rstest]
+            #[tokio::test]
+            async fn queue_depth(mut leaf: MockVdevFile) {
+                let num_ops = leaf.optimum_queue_depth() + 2;
+                let mut seq = Sequence::new();
+
+                let channels = (0..num_ops - 2)
+                    .map(|_| oneshot::channel::<()>());
+                let (receivers, senders): (Vec<_>, Vec<_>) = channels
+                .map(|chan| {
+                    let e = Error::EPIPE;
+                    (chan.1.map_err(move |_| e), chan.0)
+                })
+                .unzip();
+                for (i, r) in receivers.into_iter().enumerate().rev() {
+                    leaf.expect_write_at()
+                        .with(always(), eq((2 * i) as LbaT + 2))
+                        .once()
+                        .in_sequence(&mut seq)
+                        .return_once(|_, _| Box::pin(r));
+                }
+                // Schedule the final two operations in reverse LBA order, but
+                // verify that they get issued in actual LBA order
+                let final_fut = future::ok::<(), Error>(());
+                leaf.expect_write_at()
+                    .with(always(), eq(LbaT::from(2 * num_ops) - 2))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(|_, _| Box::pin(final_fut));
+                let penultimate_fut = future::ok::<(), Error>(());
+                leaf.expect_write_at()
+                    .with(always(), eq(LbaT::from(2 * num_ops)))
+                    .once()
+                    .in_sequence(&mut seq)
+                    .return_once(|_, _| Box::pin(penultimate_fut));
+                let dbs = DivBufShared::from(vec![0u8; 4096]);
+                let wbuf = dbs.try_const().unwrap();
+                let vdev = VdevBlock::new(leaf);
+
+                let mut ctx = noop_context();
+                // First schedule all operations.  There are too many to
+                // issue them all immediately
+                let futs = (1..num_ops - 1).rev().map(|i| {
+                    let mut fut = Box::pin(
+                        // Schedule in increasing but nonadjacent LBAs so
+                        // they can't be accumulated.
+                        vdev.write_at(wbuf.clone(), LbaT::from(i * 2))
+                    );
+                    // Manually poll so the VdevBlockFut will get scheduled
+                    assert!(fut.as_mut().poll(&mut ctx).is_pending());
+                    fut
+                }).collect::<FuturesUnordered<_>>();
+                let mut penultimate_fut = Box::pin(
+                    vdev.write_at(wbuf.clone(), LbaT::from(num_ops * 2))
                 );
                 // Manually poll so the VdevBlockFut will get scheduled
-                assert!(fut.as_mut().poll(&mut ctx).is_pending());
-                fut
-            }).collect::<FuturesUnordered<_>>();
-            let mut penultimate_fut = Box::pin(
-                vdev.write_at(wbuf.clone(), LbaT::from(num_ops))
-            );
-            // Manually poll so the VdevBlockFut will get scheduled
-            assert!(penultimate_fut.as_mut().poll(&mut ctx).is_pending());
-            futs.push(penultimate_fut);
-            let mut final_fut = Box::pin(
-                vdev.write_at(wbuf.clone(), LbaT::from(num_ops - 1))
-            );
-            // Manually poll so the VdevBlockFut will get scheduled
-            assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
-            futs.push(final_fut);
-            {
-                // Verify that they weren't all issued
-                let inner = vdev.inner.write().unwrap();
-                assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
+                assert!(penultimate_fut
+                        .as_mut()
+                        .poll(&mut ctx)
+                        .is_pending()
+                );
+                futs.push(penultimate_fut);
+                let mut final_fut = Box::pin(
+                    vdev.write_at(wbuf.clone(), LbaT::from(2 * num_ops - 2))
+                );
+                // Manually poll so the VdevBlockFut will get scheduled
+                assert!(final_fut.as_mut().poll(&mut ctx).is_pending());
+                futs.push(final_fut);
+                {
+                    // Verify that they weren't all issued
+                    let inner = vdev.inner.write().unwrap();
+                    assert_eq!(inner.ahead.len() + inner.behind.len(), 2);
+                }
+                // Finally, complete the blocked operations
+                for chan in senders {
+                    chan.send(()).unwrap();
+                }
+                futs.try_collect::<Vec<_>>().await.unwrap();
             }
-            // Finally, complete the blocked operations
-            for chan in senders {
-                chan.send(()).unwrap();
+        }
+
+        #[rstest]
+        #[tokio::test]
+        async fn erase_zone(mut leaf: MockVdevFile) {
+            leaf.expect_erase_zone()
+                .with(eq(1))
+                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.erase_zone(1, (1 << 16) - 1).await.unwrap();
+        }
+
+        #[rstest]
+        #[tokio::test]
+        async fn finish_zone(mut leaf: MockVdevFile) {
+            leaf.expect_finish_zone()
+                .with(eq(1))
+                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.finish_zone(1, (1 << 16) - 1).await.unwrap();
+        }
+
+        #[rstest]
+        #[tokio::test]
+        async fn open_zone(mut leaf: MockVdevFile) {
+            leaf.expect_open_zone()
+                .with(eq(1))
+                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.open_zone(1).await.unwrap();
+        }
+
+        // basic reading works
+        #[rstest]
+        #[tokio::test]
+        async fn read_at(mut leaf: MockVdevFile) {
+            leaf.expect_read_at()
+                .with(always(), eq(2))
+                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+            let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+            let rbuf0 = dbs0.try_mut().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.read_at(rbuf0, 2).await.unwrap();
+        }
+
+        // vectored reading works
+        #[rstest]
+        #[tokio::test]
+        async fn readv_at(mut leaf: MockVdevFile) {
+            leaf.expect_readv_at()
+                .with(always(), eq(2))
+                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+            let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+            let rbuf0 = vec![dbs0.try_mut().unwrap()];
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.readv_at(rbuf0, 2).await.unwrap();
+        }
+
+        /// Tests for Inner::sched
+        mod sched {
+            use super::*;
+            use pretty_assertions::assert_eq;
+
+            // data operations will be issued in C-LOOK order (from lowest LBA
+            // to highest, then start over at lowest)
+            #[rstest]
+            fn data(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let mut inner = vdev.inner.write().unwrap();
+                let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+                let dummy_buffer = dummy_dbs.try_const().unwrap();
+
+                // Start with some intermedia LBA and schedule some ops
+                let same_lba = 1000;
+                let just_after = 1001;
+                let just_after_dup = 1001;
+                let just_before = 999;
+                let min = 1;
+                let max = 16383;
+                let mut lbas = vec![same_lba, just_after, just_after_dup,
+                                    just_before, min, max];
+                // Test scheduling the ops in all possible permutations
+                permutohedron::heap_recursive(&mut lbas, |permutation| {
+                    inner.last_lba = 1000;
+                    for lba in permutation {
+                        let op = BlockOp::write_at(dummy_buffer.clone(), *lba,
+                            oneshot::channel::<()>().0);
+                        inner.sched(op);
+                    }
+
+                    // Check that they're scheduled in the correct order
+                    assert_eq!(inner.pop_op().unwrap().lba, 1000);
+                    assert_eq!(inner.pop_op().unwrap().lba, 1001);
+                    assert_eq!(inner.pop_op().unwrap().lba, 1001);
+
+                    // Schedule two more operations behind the scheduler, but
+                    // ahead of some already-scheduled ops, to make sure they
+                    // get issued in the right order
+                    let just_before2 = BlockOp::write_at(dummy_buffer.clone(),
+                        1000,
+                        oneshot::channel::<()>().0);
+                    let well_before = BlockOp::write_at(dummy_buffer.clone(),
+                        990,
+                        oneshot::channel::<()>().0);
+                    inner.sched(just_before2);
+                    inner.sched(well_before);
+
+                    assert_eq!(inner.pop_op().unwrap().lba, 16383);
+                    assert_eq!(inner.pop_op().unwrap().lba, 1);
+                    assert_eq!(inner.pop_op().unwrap().lba, 990);
+                    assert_eq!(inner.pop_op().unwrap().lba, 999);
+                    assert_eq!(inner.pop_op().unwrap().lba, 1000);
+                    assert!(inner.pop_op().is_none());
+                });
             }
-            futs.try_collect::<Vec<_>>().await
-        }).unwrap();
+
+            // An erase zone command should be scheduled after any reads from
+            // that zone
+            #[rstest]
+            fn erase_zone(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let mut inner = vdev.inner.write().unwrap();
+                let dummy_dbs = DivBufShared::from(vec![0; 12288]);
+                let mut dummy = dummy_dbs.try_mut().unwrap();
+
+                inner.last_lba = 1 << 16;   // In zone 1
+                // Read from zones that lie behind, around, and ahead of the
+                // scheduler, then erase them.  This simulates garbage
+                // collection.
+                let ez0 = BlockOp::erase_zone(0, (1 << 16) - 1,
+                    oneshot::channel::<()>().0);
+                let ez_discriminant = mem::discriminant(&ez0.cmd);
+                inner.sched(ez0);
+                let r = BlockOp::read_at(dummy.split_to(4096), (1 << 16) - 1,
+                    oneshot::channel::<()>().0);
+                let read_at_discriminant = mem::discriminant(&r.cmd);
+                inner.sched(r);
+                inner.sched(BlockOp::erase_zone(1 << 16, (2 << 16) - 1,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::read_at(dummy.split_to(4096),
+                    (2 << 16) - 1, oneshot::channel::<()>().0));
+                inner.sched(BlockOp::erase_zone(2 << 16, (3 << 16) - 1,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::read_at(dummy, (3 << 16) - 1,
+                    oneshot::channel::<()>().0));
+
+                let first = inner.pop_op().unwrap();
+                assert_eq!(first.lba, (2 << 16) - 1);
+                assert_eq!(mem::discriminant(&first.cmd), read_at_discriminant);
+                let second = inner.pop_op().unwrap();
+                assert_eq!(second.lba, (2 << 16) - 1);
+                assert_eq!(mem::discriminant(&second.cmd), ez_discriminant);
+                let third = inner.pop_op().unwrap();
+                assert_eq!(third.lba, (3 << 16) - 1);
+                assert_eq!(mem::discriminant(&third.cmd), read_at_discriminant);
+                let fourth = inner.pop_op().unwrap();
+                assert_eq!(fourth.lba, (3 << 16) - 1);
+                assert_eq!(mem::discriminant(&fourth.cmd), ez_discriminant);
+                let fifth = inner.pop_op().unwrap();
+                assert_eq!(fifth.lba, (1 << 16) - 1);
+                assert_eq!(mem::discriminant(&fifth.cmd), read_at_discriminant);
+                let sixth = inner.pop_op().unwrap();
+                assert_eq!(sixth.lba, (1 << 16) - 1);
+                assert_eq!(mem::discriminant(&sixth.cmd), ez_discriminant);
+            }
+
+            // A finish zone command should be scheduled after any writes to
+            // that zone
+            #[rstest]
+            fn finish_zone(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let mut inner = vdev.inner.write().unwrap();
+                let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+                let dummy = dummy_dbs.try_const().unwrap();
+
+                inner.last_lba = 1 << 16;   // In zone 1
+                // Write to zones that lie behind, around, and ahead of the
+                // scheduler, then finish them.
+                let fz0 = BlockOp::finish_zone(0, (1 << 16) - 1,
+                    oneshot::channel::<()>().0);
+                let fz_discriminant = mem::discriminant(&fz0.cmd);
+                inner.sched(fz0);
+                let r = BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
+                    oneshot::channel::<()>().0);
+                let write_at_discriminant = mem::discriminant(&r.cmd);
+                inner.sched(r);
+                inner.sched(BlockOp::finish_zone(1 << 16, (2 << 16) - 1,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) - 1,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::finish_zone(2 << 16, (3 << 16) - 1,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
+                    oneshot::channel::<()>().0));
+
+                let first = inner.pop_op().unwrap();
+                assert_eq!(first.lba, (2 << 16) - 1);
+                assert_eq!(mem::discriminant(&first.cmd),
+                           write_at_discriminant);
+                let second = inner.pop_op().unwrap();
+                assert_eq!(second.lba, (2 << 16) - 1);
+                assert_eq!(mem::discriminant(&second.cmd), fz_discriminant);
+                let third = inner.pop_op().unwrap();
+                assert_eq!(third.lba, (3 << 16) - 1);
+                assert_eq!(mem::discriminant(&third.cmd),
+                           write_at_discriminant);
+                let fourth = inner.pop_op().unwrap();
+                assert_eq!(fourth.lba, (3 << 16) - 1);
+                assert_eq!(mem::discriminant(&fourth.cmd), fz_discriminant);
+                let fifth = inner.pop_op().unwrap();
+                assert_eq!(fifth.lba, (1 << 16) - 1);
+                assert_eq!(mem::discriminant(&fifth.cmd),
+                           write_at_discriminant);
+                let sixth = inner.pop_op().unwrap();
+                assert_eq!(sixth.lba, (1 << 16) - 1);
+                assert_eq!(mem::discriminant(&sixth.cmd), fz_discriminant);
+            }
+
+            // An open zone command should be scheduled before any writes to
+            // that zone
+            #[rstest]
+            fn open_zone(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let mut inner = vdev.inner.write().unwrap();
+                let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+                let dummy = dummy_dbs.try_const().unwrap();
+
+                inner.last_lba = 1 << 16;   // In zone 1
+                // Open zones 0 and 2 and write to both.  Note that it is
+                // illegal for the scheduler's last_lba to lie within either of
+                // these zones, because that would imply that it had just
+                // performed an operation on an empty zone.
+                let w = BlockOp::write_at(dummy.clone(), 1,
+                    oneshot::channel::<()>().0);
+                let write_at_discriminant = mem::discriminant(&w.cmd);
+                inner.sched(w);
+                inner.sched(BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
+                            oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy.clone(), 2,
+                            oneshot::channel::<()>().0));
+                let oz0 = BlockOp::open_zone(1, oneshot::channel::<()>().0);
+                let oz_discriminant = mem::discriminant(&oz0.cmd);
+                inner.sched(oz0);
+                inner.sched(BlockOp::open_zone(2 << 16,
+                                               oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) + 1,
+                            oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy.clone(), 2 << 16,
+                            oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
+                            oneshot::channel::<()>().0));
+
+                let first = inner.pop_op().unwrap();
+                assert_eq!(first.lba, 2 << 16);
+                assert_eq!(mem::discriminant(&first.cmd), oz_discriminant);
+                let second = inner.pop_op().unwrap();
+                assert_eq!(second.lba, 2 << 16);
+                assert_eq!(mem::discriminant(&second.cmd),
+                           write_at_discriminant);
+                assert_eq!(inner.pop_op().unwrap().lba, (2 << 16) + 1);
+                assert_eq!(inner.pop_op().unwrap().lba, (3 << 16) - 1);
+                let fifth = inner.pop_op().unwrap();
+                assert_eq!(fifth.lba, 1);
+                assert_eq!(mem::discriminant(&fifth.cmd), oz_discriminant);
+                let sixth = inner.pop_op().unwrap();
+                assert_eq!(sixth.lba, 1);
+                assert_eq!(mem::discriminant(&sixth.cmd),
+                           write_at_discriminant);
+                assert_eq!(inner.pop_op().unwrap().lba, 2);
+                assert_eq!(inner.pop_op().unwrap().lba, (1 << 16) - 1);
+                assert!(inner.pop_op().is_none());
+            }
+
+            // A sync_all command should be issued in strictly ordered mode;
+            // after all previous commands and before all subsequent commands
+            #[rstest]
+            fn sync_all(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let mut inner = vdev.inner.write().unwrap();
+                let dummy_dbs = DivBufShared::from(vec![0; 4096]);
+                let dummy_buffer = dummy_dbs.try_const().unwrap();
+
+                // Start with some intermediate LBA and schedule ops both before
+                // and after
+                inner.last_lba = 1000;
+                inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1001,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy_buffer.clone(), 999,
+                    oneshot::channel::<()>().0));
+                // Now schedule a sync_all, too
+                inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+                // Now schedule some more data ops both before and after the
+                // scheudler
+                inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1002,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy_buffer.clone(), 998,
+                    oneshot::channel::<()>().0));
+                // For good measure, schedule a second sync and some more data
+                // after that
+                inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1003,
+                    oneshot::channel::<()>().0));
+                inner.sched(BlockOp::write_at(dummy_buffer, 997,
+                    oneshot::channel::<()>().0));
+
+                // All pre-sync operations should be issued, then the sync, then
+                // the post-sync operations
+                assert_eq!(inner.pop_op().unwrap().lba, 1001);
+                assert_eq!(inner.pop_op().unwrap().lba, 999);
+                assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
+                assert_eq!(inner.pop_op().unwrap().lba, 1002);
+                assert_eq!(inner.pop_op().unwrap().lba, 998);
+                assert_eq!(inner.pop_op().unwrap().cmd, Cmd::SyncAll);
+                assert_eq!(inner.pop_op().unwrap().lba, 1003);
+                assert_eq!(inner.pop_op().unwrap().lba, 997);
+            }
+        }
+
+        // sync_all works
+        #[rstest]
+        #[tokio::test]
+        async fn sync_all(mut leaf: MockVdevFile) {
+            leaf.expect_sync_all()
+                .returning(|| Box::pin(future::ok::<(), Error>(())));
+
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.sync_all().await.unwrap();
+        }
+
+        // Basic writing works
+        #[rstest]
+        #[tokio::test]
+        async fn write_at(mut leaf: MockVdevFile) {
+            leaf.expect_write_at()
+                .with(always(), eq(1))
+                .once()
+                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let wbuf = dbs.try_const().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.write_at(wbuf, 1).await.unwrap();
+        }
+
+        // vectored writing works
+        #[rstest]
+        #[tokio::test]
+        async fn writev_at(mut leaf: MockVdevFile) {
+            leaf.expect_writev_at()
+                .with(always(), eq(1))
+                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let wbuf = vec![dbs.try_const().unwrap()];
+            let vdev = VdevBlock::new(leaf);
+
+            vdev.writev_at(wbuf, 1).await.unwrap();
+        }
+
+        mod write_spacemap {
+            use super::*;
+
+            /// Just like VdevBlock::writev_at, VdevBlock::write_spacemap will
+            /// ensure that all iovecs are a multiple of blocksize in size.
+            #[allow(clippy::async_yields_async)]
+            #[rstest]
+            #[tokio::test]
+            async fn pad_small_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.write_spacemap(wbufs, 0, 10);
+                let op = fut.block_op.unwrap();
+                let (sglist, _, _) = op.cmd.as_write_spacemap();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[1][3072..], &zbuf[..1024]);
+            }
+        }
+
+        mod writev_at {
+            use super::*;
+
+            /// VdevBlock::writev_at will copy two small iovecs into a new
+            /// buffer that is a multiple of a blocksize.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 1);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..], &wbuf1[..]);
+            }
+
+            /// VdevBlock::writev_at will copy three small iovecs into a new
+            /// buffer that is a multiple of a blocksize.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_three_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 2050]);
+                let dbs2 = DivBufShared::from(vec![2u8; 1022]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 1);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..3074], &wbuf1[..]);
+                assert_eq!(&sglist[0][3074..], &wbuf2[..]);
+            }
+
+            /// VdevBlock::writev_at will copy no more iovecs than is neccessary
+            /// into a new blocksize-multiple iovec.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_first_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 1024]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let dbs2 = DivBufShared::from(vec![2u8; 4096]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wptr2 = &wbuf2[0] as *const _;
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..1024], &wbuf0[..]);
+                assert_eq!(&sglist[0][1024..], &wbuf1[..]);
+                assert_eq!(&sglist[1][..], &wbuf2[..]);
+                assert_eq!(wptr2, &sglist[1][0]);
+            }
+
+            /// VdevBlock::writev_at will copy no more iovecs than is neccessary
+            /// into a new blocksize-multiple iovec.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_last_two_iovecs(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let dbs2 = DivBufShared::from(vec![2u8; 1024]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wptr0 = &wbuf0[0] as *const _;
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbuf2 = dbs2.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(wptr0, &sglist[0][0]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                assert_eq!(&sglist[1][3072..], &wbuf2[..]);
+            }
+
+            /// VdevBlock::writev_at will copy the tail of a long iovec, if
+            /// necessary, but not copy the entire thing.
+            #[rstest]
+            #[tokio::test]
+            async fn copy_tail_of_iovec(leaf: MockVdevFile) {
+                let vd = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 5120]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wptr0 = &wbuf0[0] as *const _;
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vd.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..4096]);
+                assert_eq!(wptr0, &sglist[0][0]);
+                assert_eq!(&sglist[1][..1024], &wbuf0[4096..]);
+                assert_eq!(&sglist[1][1024..], &wbuf1[..]);
+            }
+
+            /// VdevBlock::writev_at will zero-pad an operation's tail, if need
+            /// be, up to a multiple of an LBA.  But it won't copy more data
+            /// than is necessary, for iovecs > 1 LBA.
+            #[rstest]
+            #[tokio::test]
+            async fn pad_large_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 7168]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wptr1 = &wbuf1[0] as *const _;
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 3);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..], &wbuf1[..4096]);
+                assert_eq!(wptr1, &sglist[1][0]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[2][..3072], &wbuf1[4096..]);
+                assert_eq!(&sglist[2][3072..], &zbuf[..1024]);
+            }
+
+            /// VdevBlock::writev_at will zero-pad an operation's tail, if need
+            /// be, up to a multiple of an LBA.
+            #[allow(clippy::async_yields_async)]
+            #[rstest]
+            #[tokio::test]
+            async fn pad_small_tail(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+                let dbs1 = DivBufShared::from(vec![1u8; 3072]);
+                let wbuf0 = dbs0.try_const().unwrap();
+                let wbuf1 = dbs1.try_const().unwrap();
+                let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
+                let fut = vdev.writev_at(wbufs, 10);
+                let op = fut.block_op.unwrap();
+                let sglist = op.cmd.as_writev_at();
+                assert_eq!(sglist.len(), 2);
+                assert_eq!(&sglist[0][..], &wbuf0[..]);
+                assert_eq!(&sglist[1][..3072], &wbuf1[..]);
+                let zbuf = ZERO_REGION.try_const().unwrap();
+                assert_eq!(&sglist[1][3072..], &zbuf[..1024]);
+            }
+        }
     }
-
-    // Basic writing works
-    #[rstest]
-    fn basic_write_at(mut leaf: MockVdevFile) {
-        leaf.expect_write_at()
-            .with(always(), eq(1))
-            .once()
-            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
-
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = dbs.try_const().unwrap();
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.write_at(wbuf, 1).await
-        }).unwrap();
-    }
-
-    // vectored writing works
-    #[rstest]
-    fn basic_writev_at(mut leaf: MockVdevFile) {
-        leaf.expect_writev_at()
-            .with(always(), eq(1))
-            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
-
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let wbuf = vec![dbs.try_const().unwrap()];
-        let vdev = VdevBlock::new(leaf);
-        basic_runtime().block_on(async {
-            vdev.writev_at(wbuf, 1).await
-        }).unwrap();
-    }
-}
 }
 // LCOV_EXCL_STOP
