@@ -1079,7 +1079,7 @@ dependencies = [
 [[package]]
 name = "nix"
 version = "0.24.1"
-source = "git+https://github.com/nix-rust/nix.git?rev=69738c0fd03af19053c5701a984f923ecbbfada6#69738c0fd03af19053c5701a984f923ecbbfada6"
+source = "git+http://github.com/nix-rust/nix?rev=69738c0fd03af19053c5701a984f923ecbbfada6#69738c0fd03af19053c5701a984f923ecbbfada6"
 dependencies = [
  "bitflags",
  "cfg-if 1.0.0",

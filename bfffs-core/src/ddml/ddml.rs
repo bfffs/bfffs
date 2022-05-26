@@ -466,88 +466,93 @@ mod ddml {
             .unwrap();
     }
 
-    #[test]
-    fn get_hot() {
-        let pba = PBA::default();
-        let drp = DRP{pba, compressed: false, lsize: 4096,
-                      csize: 4096, checksum: 0};
-        let dbs = DivBufShared::from(vec![0u8; 4096]);
-        let mut cache = Cache::default();
-        let pool = Pool::default();
-        cache.expect_get()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .returning(move |_| {
-                Some(Box::new(dbs.try_const().unwrap()))
-            });
+    mod get {
+        use super::*;
+        use pretty_assertions::assert_eq;
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        ddml.get::<DivBufShared, DivBuf>(&drp)
-            .now_or_never().unwrap()
-            .unwrap();
-    }
+        #[test]
+        fn hot() {
+            let pba = PBA::default();
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: 4096, checksum: 0};
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let mut cache = Cache::default();
+            let pool = Pool::default();
+            cache.expect_get()
+                .once()
+                .with(eq(Key::PBA(pba)))
+                .returning(move |_| {
+                    Some(Box::new(dbs.try_const().unwrap()))
+                });
 
-    #[test]
-    fn get_cold() {
-        let mut seq = Sequence::new();
-        let pba = PBA::default();
-        let drp = DRP{pba, compressed: false, lsize: 4096,
-                      csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
-        let owned_by_cache = Arc::new(
-            Mutex::new(Vec::<Box<dyn Cacheable>>::new())
-        );
-        let owned_by_cache2 = owned_by_cache.clone();
-        let mut cache = Cache::default();
-        let mut pool = Pool::default();
-        cache.expect_get::<DivBuf>()
-            .once()
-            .in_sequence(&mut seq)
-            .with(eq(Key::PBA(pba)))
-            .return_const(None);
-        pool.expect_read()
-            .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
-            .once()
-            .in_sequence(&mut seq)
-            .returning(|mut dbm, _pba| {
-                for x in dbm.iter_mut() {
-                    *x = 0;
-                }
-                Box::pin(future::ok::<(), Error>(()))
-            });
-        cache.expect_insert()
-            .once()
-            .in_sequence(&mut seq)
-            .with(eq(Key::PBA(pba)), always())
-            .return_once(move |_, dbs| {
-                owned_by_cache2.lock().unwrap().push(dbs);
-            });
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap();
+        }
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        ddml.get::<DivBufShared, DivBuf>(&drp)
-            .now_or_never().unwrap()
-            .unwrap();
-    }
+        #[test]
+        fn cold() {
+            let mut seq = Sequence::new();
+            let pba = PBA::default();
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
+            let owned_by_cache = Arc::new(
+                Mutex::new(Vec::<Box<dyn Cacheable>>::new())
+            );
+            let owned_by_cache2 = owned_by_cache.clone();
+            let mut cache = Cache::default();
+            let mut pool = Pool::default();
+            cache.expect_get::<DivBuf>()
+                .once()
+                .in_sequence(&mut seq)
+                .with(eq(Key::PBA(pba)))
+                .return_const(None);
+            pool.expect_read()
+                .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+                .once()
+                .in_sequence(&mut seq)
+                .returning(|mut dbm, _pba| {
+                    for x in dbm.iter_mut() {
+                        *x = 0;
+                    }
+                    Box::pin(future::ok::<(), Error>(()))
+                });
+            cache.expect_insert()
+                .once()
+                .in_sequence(&mut seq)
+                .with(eq(Key::PBA(pba)), always())
+                .return_once(move |_, dbs| {
+                    owned_by_cache2.lock().unwrap().push(dbs);
+                });
 
-    #[test]
-    fn get_ecksum() {
-        let pba = PBA::default();
-        let drp = DRP{pba, compressed: false, lsize: 4096,
-                      csize: 1, checksum: 0xdead_beef_dead_beef};
-        let mut cache = Cache::default();
-        let mut pool = Pool::default();
-        cache.expect_get::<DivBuf>()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .return_const(None);
-        pool.expect_read()
-            .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
-            .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap();
+        }
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
-        let err = ddml.get::<DivBufShared, DivBuf>(&drp)
-            .now_or_never().unwrap()
-            .unwrap_err();
-        assert_eq!(err, Error::EINTEGRITY);
+        #[test]
+        fn ecksum() {
+            let pba = PBA::default();
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: 1, checksum: 0xdead_beef_dead_beef};
+            let mut cache = Cache::default();
+            let mut pool = Pool::default();
+            cache.expect_get::<DivBuf>()
+                .once()
+                .with(eq(Key::PBA(pba)))
+                .return_const(None);
+            pool.expect_read()
+                .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            let err = ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap_err();
+            assert_eq!(err, Error::EINTEGRITY);
+        }
     }
 
     #[test]
