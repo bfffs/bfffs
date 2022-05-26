@@ -890,6 +890,7 @@ impl VdevBlock {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
+    #[tracing::instrument(skip(self, buf))]
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_iovec_bounds(lba, &buf);
@@ -900,6 +901,7 @@ impl VdevBlock {
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
     /// read, and should match whichever label is being read concurrently.
+    #[tracing::instrument(skip(self, buf))]
     pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> VdevBlockFut
     {
         let (sender, receiver) = oneshot::channel::<()>();
@@ -919,6 +921,7 @@ impl VdevBlock {
     ///
     /// * `bufs`    Scatter-gather list of buffers to receive data
     /// * `lba`     LBA from which to read
+    #[tracing::instrument(skip(self, bufs))]
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_sglist_bounds(lba, &bufs);

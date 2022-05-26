@@ -419,6 +419,9 @@ impl<K: Key, V: Value> LeafData<K, V> {
     }
 
     /// Like [`range_delete`], but for nodes that may be dirty yet unaccredited.
+    // XXX This causes a huge quantity of duplicate cache insertions.
+    // https://github.com/bfffs/bfffs/issues/198
+    #[tracing::instrument(skip(self, dml, range))]
     pub fn range_delete_unaccredited<D, R, T>(
         &mut self,
         dml: &D,
