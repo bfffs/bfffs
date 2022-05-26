@@ -1,6 +1,6 @@
 // vim: tw=80
 use crate::{
-    cache::{Cache, Cacheable, CacheRef, Key},
+    cache::{self, Cache, Cacheable, CacheRef, Key},
     dml::*,
     label::*,
     pool::ClosedZone,
@@ -10,11 +10,13 @@ use crate::{
     writeback::Credit
 };
 use divbuf::DivBufShared;
-use futures::{Future, TryFutureExt, future};
+use futures::{Future, FutureExt, TryFutureExt, future};
+//use futures::{Future, FutureExt, TryFutureExt, channel::oneshot, future};
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::mock;
 use std::{
     borrow,
+    //collections::BTreeMap,
     hash::Hasher,
     iter,
     mem,
@@ -35,6 +37,9 @@ pub struct DDML {
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
     cache: Arc<Mutex<Cache>>,
+    // TODO: consider moving pending_insertions into cache to share its
+    // Arc<Mutex<_>>
+    //pending_insertions: Arc<Mutex<BTreeMap<PBA, Vec<oneshot::Sender<()>>>>>,
     pool: Arc<Pool>,
 }
 
@@ -59,18 +64,28 @@ impl DDML {
     }
 
     pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+        //let pending_insertions = Default::default();
         DDML{pool: Arc::new(pool), cache}
+        //DDML{pool: Arc::new(pool), cache, pending_insertions}
     }
 
     /// Get directly from disk, bypassing cache
     #[instrument(skip(self, drp))]
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> impl Future<Output=Result<Box<T>>> + Send
+        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
     {
         self.read(*drp).map_ok(move |dbs| {
             Box::new(T::deserialize(dbs))
-        })
+        }).boxed()
     }
+
+    //fn get_direct_selfless<T: Cacheable>(pool: Arc<Pool>, drp: &DRP)
+        //-> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
+    //{
+        //Self::read_selfless(pool, *drp).map_ok(move |dbs| {
+            //Box::new(T::deserialize(dbs))
+        //}).boxed()
+    //}
 
     /// List all closed zones in the `DDML` in no particular order
     pub fn list_closed_zones(&self)
@@ -137,6 +152,45 @@ impl DDML {
         )
     }
 
+    //fn read_selfless(pool: Arc<Pool>, drp: DRP)
+        //-> impl Future<Output=Result<DivBufShared>> + Send
+    //{
+        //// Outline
+        //// 1) Read
+        //// 2) Truncate
+        //// 3) Verify checksum
+        //// 4) Decompress
+        //let len = drp.asize() as usize * BYTES_PER_LBA;
+        //let dbs = DivBufShared::uninitialized(len);
+        //Box::pin(
+            //// Read
+            //pool.read(dbs.try_mut().unwrap(), drp.pba)
+            //.and_then(move |_| {
+                ////Truncate
+                //let mut dbm = dbs.try_mut().unwrap();
+                //dbm.try_truncate(drp.csize as usize).unwrap();
+                //let db = dbm.freeze();
+
+                //// Verify checksum
+                //let mut hasher = MetroHash64::new();
+                //checksum_iovec(&db, &mut hasher);
+                //let checksum = hasher.finish();
+                //if checksum == drp.checksum {
+                    //// Decompress
+                    //let db = dbs.try_const().unwrap();
+                    //if drp.is_compressed() {
+                        //future::ok(Compression::decompress(&db))
+                    //} else {
+                        //future::ok(dbs)
+                    //}
+                //} else {
+                    //tracing::warn!("Checksum mismatch");
+                    //future::err(Error::EINTEGRITY)
+                //}
+            //})
+        //)
+    //}
+
     /// Open an existing `DDML` from its underlying `Pool`.
     ///
     /// # Parameters
@@ -144,7 +198,9 @@ impl DDML {
     /// * `cache`:      An already constructed `Cache`
     /// * `pool`:       An already constructed `Pool`
     pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+        //let pending_insertions = Default::default();
         DDML{pool: Arc::new(pool), cache}
+        //DDML{pool: Arc::new(pool), cache, pending_insertions}
     }
 
     /// Read a record and return ownership of it, bypassing Cache
@@ -248,20 +304,14 @@ impl DML for DDML {
     {
         // Outline:
         // 1) Fetch from cache, or
-        // 2) Read from disk, then insert into cache
+        // 2) Wait on any pending cache insertions, or
+        // 3) Read from disk, then insert into cache, then notify waiters
         let pba = drp.pba;
-        self.cache.lock().unwrap().get::<R>(&Key::PBA(pba)).map(|t| {
-            Box::pin(future::ok::<Box<R>, Error>(t)) as Pin<Box<_>>
-        }).unwrap_or_else(|| {
-            let cache2 = self.cache.clone();
-            Box::pin(
-                self.get_direct(drp).map_ok(move |cacheable: Box<T>| {
-                    let r = cacheable.make_ref();
-                    cache2.lock().unwrap().insert(Key::PBA(pba), cacheable);
-                    r.downcast::<R>().unwrap()
-                }).in_current_span()
-            ) as Pin<Box<_>>
-        })
+        let key = Key::PBA(pba);
+
+        cache::get_or_insert!(T, R, &self.cache, key,
+            self.get_direct(drp)
+        )
     }
 
     fn pop<T: Cacheable, R: CacheRef>(&self, drp: &DRP, _txg: TxgT)
@@ -391,7 +441,11 @@ mod drp {
 mod ddml {
     use super::super::*;
     use divbuf::{DivBuf, DivBufShared};
-    use futures::{FutureExt, future};
+    use futures::{
+        FutureExt,
+        future,
+        channel::oneshot
+    };
     use mockall::{
         self,
         Sequence,
@@ -465,6 +519,36 @@ mod ddml {
     mod get {
         use super::*;
         use pretty_assertions::assert_eq;
+
+        /// Near-simultaneous get requests should not result in multiple reads
+        /// from disk.
+        #[tokio::test]
+        async fn duplicate() {
+            let pba = PBA::default();
+            let key = Key::PBA(pba);
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
+            let (tx, rx) = oneshot::channel::<()>();
+            let cache = Cache::with_capacity(1_048_576);
+            let mut pool = Pool::default();
+            pool.expect_read()
+                .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+                .once()
+                .return_once(move |mut dbm, _pba| {
+                    for x in dbm.iter_mut() {
+                        *x = 0;
+                    }
+                    Box::pin(rx.map_err(Error::unhandled_error))
+                });
+
+            let amcache = Arc::new(Mutex::new(cache));
+            let ddml = DDML::new(pool, amcache.clone());
+            let fut1 = ddml.get::<DivBufShared, DivBuf>(&drp);
+            let fut2 = ddml.get::<DivBufShared, DivBuf>(&drp);
+            tx.send(()).unwrap();
+            future::try_join(fut1, fut2).await.unwrap();
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
+        }
 
         #[test]
         fn hot() {

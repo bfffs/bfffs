@@ -3,7 +3,7 @@
 use crate::{
     dml::*,
     ddml::*,
-    cache::{Cache, Cacheable, CacheRef, Key},
+    cache::{self, Cache, Cacheable, CacheRef, Key},
     label::*,
     tree::TreeOnDisk,
     types::*,
@@ -521,26 +521,19 @@ impl DML for IDML {
         -> Pin<Box<dyn Future<Output=Result<Box<R>>> + Send>>
     {
         let rid = *ridp;
-        self.cache.lock().unwrap().get::<R>(&Key::Rid(rid)).map(|t| {
-            future::ok::<Box<R>, Error>(t).boxed()
-        }).unwrap_or_else(|| {
-            let cache2 = self.cache.clone();
-            let ddml2 = self.ddml.clone();
-            let fut = self.ridt.get(rid)
-                .map(|r| match r {
-                    Ok(None) => Err(Error::ENOENT),
-                    Ok(Some(entry)) => Ok(entry),
-                    Err(e) => Err(e)
-                }).and_then(move |entry| {
-                    ddml2.get_direct(&entry.drp)
-                }).map_ok(move |cacheable: Box<T>| {
-                    let r = cacheable.make_ref();
-                    let key = Key::Rid(rid);
-                    cache2.lock().unwrap().insert(key, cacheable);
-                    r.downcast::<R>().unwrap()
-                }).in_current_span();
-            Box::pin(fut)
-        })
+        cache::get_or_insert!(T, R, &self.cache, Key::Rid(rid),
+            {
+                let ddml2 = self.ddml.clone();
+                self.ridt.get(rid)
+                    .map(|r| match r {
+                        Ok(None) => Err(Error::ENOENT),
+                        Ok(Some(entry)) => Ok(entry),
+                        Err(e) => Err(e)
+                    }).and_then(move |entry| {
+                        ddml2.get_direct::<T>(&entry.drp)
+                    }).in_current_span()
+            }
+        )
     }
 
     #[instrument(skip(self))]
@@ -721,7 +714,7 @@ mod t {
     use super::*;
     use crate::tree;
     use divbuf::{DivBuf, DivBufShared};
-    use futures::future;
+    use futures::{channel::oneshot, future};
     use pretty_assertions::assert_eq;
     use mockall::{Sequence, predicate::*};
     use std::sync::Mutex;
@@ -958,6 +951,35 @@ mod t {
 
     mod get {
         use super::*;
+
+        /// Near-simultaneous get requests should not result in multiple reads
+        /// from disk.
+        #[tokio::test]
+        async fn duplicate() {
+            let rid = RID(42);
+            let key = Key::Rid(rid);
+            let drp = DRP::random(Compression::None, 4096);
+            let cache = Cache::with_capacity(1_048_576);
+            let (tx, rx) = oneshot::channel();
+            let mut ddml = mock_ddml();
+            ddml.expect_get_direct::<DivBufShared>()
+                .once()
+                .with(eq(drp))
+                .return_once(move |_| {
+                    Box::pin(rx.map_err(Error::unhandled_error))
+                });
+            let arc_ddml = Arc::new(ddml);
+            let amcache = Arc::new(Mutex::new(cache));
+            let idml = IDML::create(arc_ddml, amcache.clone());
+            inject_record(&idml, rid, &drp, 1);
+
+            let fut1 = idml.get::<DivBufShared, DivBuf>(&rid);
+            let fut2 = idml.get::<DivBufShared, DivBuf>(&rid);
+            tx.send(Box::new(DivBufShared::from(vec![0u8; 4096])))
+                .unwrap();
+            future::try_join(fut1, fut2).await.unwrap();
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
+        }
 
         #[test]
         fn hot() {
