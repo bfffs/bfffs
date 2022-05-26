@@ -47,8 +47,6 @@ mock! {
     {
         pub fn borrow_credit(&self, _size: usize)
             -> impl Future<Output=Credit> + Send;
-        pub fn delete_blob(&self, rid: RID)
-            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn insert(&self, k: K, v: V)
             -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>;
         pub fn last_key(&self)

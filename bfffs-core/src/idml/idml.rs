@@ -175,6 +175,7 @@ impl<'a> IDML {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
+    #[tracing::instrument(skip(self))]
     pub fn check(&self) -> impl Future<Output=Result<bool>> {
         future::try_join3(self.alloct.clone().check(),
                           self.ridt.clone().check(),
@@ -183,6 +184,7 @@ impl<'a> IDML {
     }
 
     /// Clean `zone` by moving all of its records to other zones.
+    #[tracing::instrument(skip(self))]
     pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send
     {
@@ -264,6 +266,7 @@ impl<'a> IDML {
     ///
     /// `idx`, if provided, is the index of the label to sync to disk.  If not
     /// provided, no label will be synced.
+    #[tracing::instrument(skip(self))]
     pub fn flush(&self, idx: Option<u32>, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send
     {
@@ -278,6 +281,7 @@ impl<'a> IDML {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub fn list_closed_zones(&self)
         -> impl Iterator<Item=ClosedZone> + Send
     {
@@ -433,6 +437,7 @@ impl<'a> IDML {
     }
 
     /// Finish the current transaction group and start a new one.
+    #[tracing::instrument(skip(self, f))]
     pub fn advance_transaction<B, F>(&self, f: F)
         -> impl Future<Output=Result<()>> + Send + 'a
         where F: FnOnce(TxgT) -> B + Send + 'a,
@@ -447,6 +452,7 @@ impl<'a> IDML {
     }
 
     /// Asynchronously write this `IDML`'s label to its `Pool`
+    #[tracing::instrument(skip(self, labeller))]
     pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send
     {
@@ -476,6 +482,7 @@ impl<'a> IDML {
 impl DML for IDML {
     type Addr = RID;
 
+    #[tracing::instrument(skip(self))]
     fn delete(&self, ridp: &Self::Addr, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
     {
@@ -512,6 +519,7 @@ impl DML for IDML {
         Box::pin(fut)
     }
 
+    #[tracing::instrument(skip(self))]
     fn evict(&self, rid: &Self::Addr) {
         self.cache.lock().unwrap().remove(&Key::Rid(*rid));
     }

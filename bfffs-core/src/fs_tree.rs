@@ -1020,6 +1020,7 @@ impl Value for FSValue {
         }
     }
 
+    #[tracing::instrument(skip(self, dml, txg))]
     fn ddrop<D>(&self, dml: &D, txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<()>> + Send>>
         where D: DML + 'static, D::Addr: 'static
