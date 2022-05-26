@@ -25,12 +25,6 @@ struct Dataset<K: Key, V: Value>  {
 }
 
 impl<K: Key, V: Value> Dataset<K, V> {
-    fn delete_blob(&self, rid: RID, txg: TxgT)
-        -> impl Future<Output=Result<()>>
-    {
-        self.idml.delete(&rid, txg)
-    }
-
     fn get(&self, k: K) -> impl Future<Output=Result<Option<V>>>
     {
         self.tree.get(k)
@@ -157,12 +151,6 @@ pub struct ReadWriteDataset<K: Key, V: Value>  {
 }
 
 impl<K: Key, V: Value> ReadWriteDataset<K, V> {
-    pub fn delete_blob(&self, rid: RID)
-        -> impl Future<Output=Result<()>> + Send
-    {
-        self.dataset.delete_blob(rid, self.txg)
-    }
-
     pub fn insert(&self, k: K, v: V)
         -> impl Future<Output=Result<Option<V>>> + Send
     {
