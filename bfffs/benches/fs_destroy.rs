@@ -264,15 +264,16 @@ fn fs_destroy(
     let mut after = geom::Snapshot::new().unwrap();
 
     println!(
-        "fs_destroy: {}/s for {}",
+        "fs_destroy: {}/s in {} s for {}",
         bibytes(fsize as f64 / elapsed.as_secs_f64()),
+        elapsed.as_secs_f64(),
         bibytes(fsize as f64)
     );
 
     let etime = f64::from(after.timestamp() - before.timestamp());
     let mut tree = geom::Tree::new().unwrap();
     if use_libgeom {
-        println!("name     L(q)     ops    kb/t   ms/t    reads  writes  %b");
+        println!("name         ops    kb/t    ms/t   reads  writes  %b");
         for (afterstat, beforestat) in after.iter_pair(Some(&mut before)) {
             let stats = geom::Statistics::compute(afterstat, beforestat, etime);
             if let Some(gident) = tree.lookup(afterstat.id()) {
@@ -285,15 +286,13 @@ fn fs_destroy(
                         continue;
                     }
                     println!(
-                        "{:8} {:>4} {:>7.0} {:>7.0} {:>7.0} {:>7.0} {:>7.0} \
-                         {:>3.0}",
+                        "{:8} {:>7.0} {:>7.0} {:>7.0} {:>7.0} {:>7.0} {:>3.0}",
                         ident,
-                        stats.queue_length(),
                         stats.total_transfers(),
                         stats.kb_per_transfer_read(),
                         stats.ms_per_transaction_read(),
-                        stats.total_blocks_read(),
-                        stats.total_blocks_write(),
+                        stats.total_transfers_read(),
+                        stats.total_transfers_write(),
                         stats.busy_pct()
                     );
                 }
