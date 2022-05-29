@@ -252,6 +252,11 @@ impl<'a> IDML {
         IDML{cache, ddml, next_rid, transaction, alloct, ridt, writeback}
     }
 
+    /// Drop all data from the cache, for testing or benchmarking purposes
+    pub fn drop_cache(&self) {
+        self.cache.lock().unwrap().drop_cache()
+    }
+
     pub async fn dump_alloct(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.alloct.dump(f).await
@@ -661,6 +666,7 @@ mock!{
         pub fn clean_zone(&self, zone: ClosedZone, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn create(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>) -> Self;
+        pub fn drop_cache(&self);
         pub fn dump_alloct(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
         pub fn dump_ridt(&self, f: &mut dyn io::Write)

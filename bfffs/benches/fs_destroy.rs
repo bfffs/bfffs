@@ -39,6 +39,8 @@ struct Cli {
         value_delimiter(',')
     )]
     devices:    Vec<String>,
+    #[clap(long, help = "Drop the cache after fill and before destroy")]
+    drop_cache: bool,
     #[clap(
         long,
         help = "Time to spend filling file system in seconds",
@@ -177,6 +179,7 @@ fn fs_destroy(
     options: Option<String>,
     properties: Option<String>,
     flamegraph: Option<PathBuf>,
+    drop_cache: bool,
 ) -> Result<()> {
     const BSIZE: usize = 1 << 17;
     let sdevs = devices
@@ -238,6 +241,16 @@ fn fs_destroy(
         .arg("testpool/testfs")
         .assert()
         .success();
+
+    if drop_cache {
+        bfffs()
+            .arg("--sock")
+            .arg(harness.sockpath.to_str().unwrap())
+            .arg("debug")
+            .arg("drop-cache")
+            .assert()
+            .success();
+    }
 
     let doit = || {
         let start = Instant::now();
@@ -318,6 +331,7 @@ async fn main() -> Result<()> {
         cli.options,
         cli.properties,
         cli.flamegraph,
+        cli.drop_cache,
     )?;
 
     Ok(())
