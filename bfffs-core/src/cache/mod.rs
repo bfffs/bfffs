@@ -6,15 +6,12 @@
 use crate::types::{PBA, RID};
 use divbuf::{DivBuf, DivBufShared};
 use downcast::*;
-use mockall_double::*;
 use std::{
     borrow::Borrow,
     fmt::Debug,
 };
 
 mod cache;
-
-#[double]
 pub use self::cache::Cache;
 
 /// Key types used by `Cache`

@@ -404,17 +404,12 @@ mod ddml {
     #[test]
     fn delete_hot() {
         let mut seq = Sequence::new();
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
         let pba = PBA::default();
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let mut cache = Cache::default();
-        cache.expect_remove()
-            .once()
-            .in_sequence(&mut seq)
-            .with(eq(Key::PBA(pba)))
-            .return_once(
-                |_| Some(Box::new(DivBufShared::from(vec![0u8;4096])))
-            );
+        let mut cache = Cache::with_capacity(1_048_576);
+        cache.insert(Key::PBA(pba), Box::new(dbs));
         let mut pool = Pool::default();
         pool.expect_free()
             .with(eq(pba), eq(1))
@@ -431,17 +426,18 @@ mod ddml {
     #[test]
     fn evict() {
         let pba = PBA::default();
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let key = Key::PBA(pba);
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let mut cache = Cache::default();
-        cache.expect_remove()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .return_once(|_| None);
+        let mut cache = Cache::with_capacity(1_048_576);
+        cache.insert(Key::PBA(pba), Box::new(dbs));
         let pool = Pool::default();
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         ddml.evict(&drp);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
     }
 
     #[test]
@@ -449,7 +445,7 @@ mod ddml {
         let pba = PBA::default();
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
         pool.expect_read()
             .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
@@ -476,14 +472,9 @@ mod ddml {
             let drp = DRP{pba, compressed: false, lsize: 4096,
                           csize: 4096, checksum: 0};
             let dbs = DivBufShared::from(vec![0u8; 4096]);
-            let mut cache = Cache::default();
+            let mut cache = Cache::with_capacity(1_048_576);
+            cache.insert(Key::PBA(pba), Box::new(dbs));
             let pool = Pool::default();
-            cache.expect_get()
-                .once()
-                .with(eq(Key::PBA(pba)))
-                .returning(move |_| {
-                    Some(Box::new(dbs.try_const().unwrap()))
-                });
 
             let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
             ddml.get::<DivBufShared, DivBuf>(&drp)
@@ -495,19 +486,11 @@ mod ddml {
         fn cold() {
             let mut seq = Sequence::new();
             let pba = PBA::default();
+            let key = Key::PBA(pba);
             let drp = DRP{pba, compressed: false, lsize: 4096,
                           csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
-            let owned_by_cache = Arc::new(
-                Mutex::new(Vec::<Box<dyn Cacheable>>::new())
-            );
-            let owned_by_cache2 = owned_by_cache.clone();
-            let mut cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut pool = Pool::default();
-            cache.expect_get::<DivBuf>()
-                .once()
-                .in_sequence(&mut seq)
-                .with(eq(Key::PBA(pba)))
-                .return_const(None);
             pool.expect_read()
                 .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
                 .once()
@@ -518,18 +501,13 @@ mod ddml {
                     }
                     Box::pin(future::ok::<(), Error>(()))
                 });
-            cache.expect_insert()
-                .once()
-                .in_sequence(&mut seq)
-                .with(eq(Key::PBA(pba)), always())
-                .return_once(move |_, dbs| {
-                    owned_by_cache2.lock().unwrap().push(dbs);
-                });
 
-            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            let amcache = Arc::new(Mutex::new(cache));
+            let ddml = DDML::new(pool, amcache.clone());
             ddml.get::<DivBufShared, DivBuf>(&drp)
                 .now_or_never().unwrap()
                 .unwrap();
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
         }
 
         #[test]
@@ -537,12 +515,8 @@ mod ddml {
             let pba = PBA::default();
             let drp = DRP{pba, compressed: false, lsize: 4096,
                           csize: 1, checksum: 0xdead_beef_dead_beef};
-            let mut cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut pool = Pool::default();
-            cache.expect_get::<DivBuf>()
-                .once()
-                .with(eq(Key::PBA(pba)))
-                .return_const(None);
             pool.expect_read()
                 .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
                 .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -557,7 +531,7 @@ mod ddml {
 
     #[test]
     fn list_closed_zones() {
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
 
         // The first cluster has two closed zones
@@ -609,22 +583,21 @@ mod ddml {
         let pba = PBA::default();
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 4096, checksum: 0};
-        let mut cache = Cache::default();
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let key = Key::PBA(pba);
+        let mut cache = Cache::with_capacity(1_048_576);
+        cache.insert(Key::PBA(pba), Box::new(dbs));
         let mut pool = Pool::default();
-        cache.expect_remove()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .returning(|_| {
-                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
-            });
         pool.expect_free()
             .with(eq(pba), eq(1))
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
             .now_or_never().unwrap()
             .unwrap();
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
 
     }
 
@@ -634,12 +607,8 @@ mod ddml {
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let mut seq = Sequence::new();
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
-        cache.expect_remove()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .return_once(|_| None);
         pool.expect_read()
             .with(always(), eq(pba))
             .once()
@@ -667,12 +636,8 @@ mod ddml {
         let pba = PBA::default();
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
-        cache.expect_remove()
-            .once()
-            .with(eq(Key::PBA(pba)))
-            .return_once(|_| None);
         pool.expect_read()
             .with(always(), eq(pba))
             .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
@@ -690,7 +655,7 @@ mod ddml {
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xe7f_1596_6a3d_61f8};
         let mut seq = Sequence::new();
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
         pool.expect_read()
             .with(always(), eq(pba))
@@ -716,18 +681,16 @@ mod ddml {
 
     #[test]
     fn put() {
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let pba = PBA::default();
-        cache.expect_insert()
-            .once()
-            .with(eq(Key::PBA(pba)), always())
-            .return_const(());
+        let key = Key::PBA(pba);
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
             .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let drp = ddml.put(dbs, Compression::None, TxgT::from(42))
             .now_or_never().unwrap()
@@ -736,23 +699,22 @@ mod ddml {
         assert_eq!(drp.csize, 4096);
         assert_eq!(drp.lsize, 4096);
         assert_eq!(drp.pba, pba);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
     }
 
     /// With compression enabled, compressible data should be compressed
     #[test]
     fn put_compressible() {
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let pba = PBA::default();
-        cache.expect_insert()
-            .once()
-            .with(eq(Key::PBA(pba)), always())
-            .return_const(());
+        let key = Key::PBA(pba);
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
             .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         let dbs = DivBufShared::from(vec![42u8; 8192]);
         let drp = ddml.put(dbs, Compression::Zstd(None), TxgT::from(42))
             .now_or_never().unwrap()
@@ -761,24 +723,23 @@ mod ddml {
         assert!(drp.csize < 8192);
         assert_eq!(drp.lsize, 8192);
         assert_eq!(drp.pba, pba);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
     }
 
     /// Incompressible data should not be compressed, even when compression is
     /// enabled.
     #[test]
     fn put_incompressible() {
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let pba = PBA::default();
-        cache.expect_insert()
-            .once()
-            .with(eq(Key::PBA(pba)), always())
-            .return_const(());
+        let key = Key::PBA(pba);
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
             .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         let mut rng = XorShiftRng::seed_from_u64(12345);
         let mut v = vec![0u8; 8192];
         rng.fill_bytes(&mut v[..]);
@@ -790,22 +751,21 @@ mod ddml {
         assert_eq!(drp.csize, 8192);
         assert_eq!(drp.lsize, 8192);
         assert_eq!(drp.pba, pba);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
     }
 
     #[test]
     fn put_partial_lba() {
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let pba = PBA::default();
-        cache.expect_insert()
-            .once()
-            .with(eq(Key::PBA(pba)), always())
-            .return_const(());
+        let key = Key::PBA(pba);
         let mut pool = Pool::default();
         pool.expect_write()
             .with(always(), eq(TxgT::from(42)))
             .return_once(move |_, _| Box::pin(future::ok::<PBA, Error>(pba)));
 
-        let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let ddml = DDML::new(pool, amcache.clone());
         let dbs = DivBufShared::from(vec![42u8; 1024]);
         let drp = ddml.put(dbs, Compression::None, TxgT::from(42))
             .now_or_never().unwrap()
@@ -813,11 +773,12 @@ mod ddml {
         assert_eq!(drp.pba, pba);
         assert_eq!(drp.csize, 1024);
         assert_eq!(drp.lsize, 1024);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
     }
 
     #[test]
     fn put_direct() {
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let pba = PBA::default();
         let mut pool = Pool::default();
         let txg = TxgT::from(42);
@@ -838,7 +799,7 @@ mod ddml {
 
     #[test]
     fn sync_all() {
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut pool = Pool::default();
         pool.expect_sync_all()
             .return_once(|| Box::pin(future::ok::<(), Error>(())));

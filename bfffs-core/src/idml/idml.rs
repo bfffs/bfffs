@@ -777,7 +777,7 @@ mod t {
         async fn ok() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_used().return_const(1u64);
             let arc_ddml = Arc::new(ddml);
@@ -791,7 +791,7 @@ mod t {
         async fn allocation_mismatch() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_used().return_const(42u64);
             let arc_ddml = Arc::new(ddml);
@@ -805,7 +805,7 @@ mod t {
         async fn extraneous_alloct() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_used().return_const(1u64);
             let arc_ddml = Arc::new(ddml);
@@ -823,7 +823,7 @@ mod t {
         async fn extraneous_ridt() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_used().return_const(1u64);
             let arc_ddml = Arc::new(ddml);
@@ -843,7 +843,7 @@ mod t {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
             let drp2 = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_used().return_const(1u64);
             let arc_ddml = Arc::new(ddml);
@@ -872,7 +872,7 @@ mod t {
         #[should_panic(expected = "Double delete")]
         fn double() {
             let rid = RID(42);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let ddml = mock_ddml();
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -884,21 +884,19 @@ mod t {
         #[test]
         fn last() {
             let rid = RID(42);
+            let key = Key::Rid(rid);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
-            cache.expect_remove()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(|_| {
-                    Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
-                });
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let mut cache = Cache::with_capacity(1_048_576);
+            cache.insert(key, Box::new(dbs));
             let mut ddml = mock_ddml();
             ddml.expect_delete_direct()
                 .once()
                 .with(eq(drp), eq(TxgT::from(42)))
                 .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
             let arc_ddml = Arc::new(ddml);
-            let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+            let amcache = Arc::new(Mutex::new(cache));
+            let idml = IDML::create(arc_ddml, amcache.clone());
             inject_record(&idml, rid, &drp, 1);
 
             idml.delete(&rid, TxgT::from(42))
@@ -912,13 +910,15 @@ mod t {
                 .now_or_never().unwrap()
                 .unwrap();
             assert!(alloc_rec.is_none());
+            // Finally, the cahce entry should be gone
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
         }
 
         #[test]
         fn notlast() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let ddml = mock_ddml();
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -943,18 +943,17 @@ mod t {
     #[test]
     fn evict() {
         let rid = RID(42);
-        let mut cache = Cache::default();
-        cache.expect_remove()
-            .once()
-            .with(eq(Key::Rid(RID(42))))
-            .returning(|_| {
-                Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
-            });
+        let key = Key::Rid(rid);
+        let dbs = DivBufShared::from(vec![0u8; 4096]);
+        let mut cache = Cache::with_capacity(1_048_576);
+        cache.insert(key, Box::new(dbs));
         let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
-        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let idml = IDML::create(arc_ddml, amcache.clone());
 
         idml.evict(&rid);
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
     }
 
     mod get {
@@ -963,14 +962,10 @@ mod t {
         #[test]
         fn hot() {
             let rid = RID(42);
-            let mut cache = Cache::default();
+            let key = Key::Rid(rid);
+            let mut cache = Cache::with_capacity(1_048_576);
             let dbs = DivBufShared::from(vec![0u8; 4096]);
-            cache.expect_get()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(move |_| {
-                    Some(Box::new(dbs.try_const().unwrap()))
-                });
+            cache.insert(key, Box::new(dbs));
             let ddml = mock_ddml();
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -982,26 +977,10 @@ mod t {
 
         #[test]
         fn cold() {
-            let mut seq = Sequence::new();
             let rid = RID(42);
+            let key = Key::Rid(rid);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
-            let owned_by_cache = Arc::new(
-                Mutex::new(Vec::<Box<dyn Cacheable>>::new())
-            );
-            let owned_by_cache2 = owned_by_cache.clone();
-            cache.expect_get::<DivBuf>()
-                .once()
-                .in_sequence(&mut seq)
-                .with(eq(Key::Rid(RID(42))))
-                .returning(move |_| None);
-            cache.expect_insert()
-                .once()
-                .in_sequence(&mut seq)
-                .with(eq(Key::Rid(RID(42))), always())
-                .returning(move |_, dbs| {
-                    owned_by_cache2.lock().unwrap().push(dbs);
-                });
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_get_direct::<DivBufShared>()
                 .once()
@@ -1011,12 +990,14 @@ mod t {
                     Box::pin(future::ok::<Box<DivBufShared>, Error>(dbs))
                 });
             let arc_ddml = Arc::new(ddml);
-            let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+            let amcache = Arc::new(Mutex::new(cache));
+            let idml = IDML::create(arc_ddml, amcache.clone());
             inject_record(&idml, rid, &drp, 1);
 
             idml.get::<DivBufShared, DivBuf>(&rid)
                 .now_or_never().unwrap()
                 .unwrap();
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
         }
     }
 
@@ -1025,7 +1006,7 @@ mod t {
         let txgs = TxgT::from(0)..TxgT::from(2);
         let cz = ClosedZone{pba: PBA::new(0, 100), total_blocks: 100, zid: 0,
                             freed_blocks: 50, txgs};
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -1069,16 +1050,13 @@ mod t {
             let v = vec![42u8; 4096];
             let dbs = DivBufShared::from(v);
             let rid = RID(1);
+            let key = Key::Rid(rid);
             let drp0 = DRP::random(Compression::None, 4096);
             let drp1 = DRP::random(Compression::None, 4096);
             let drp1_c = drp1;
             let mut seq = Sequence::new();
-            let mut cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            cache.expect_get_ref()
-                .once()
-                .with(eq(Key::Rid(rid)))
-                .returning(|_| None);
             ddml.expect_get_direct()
                 .once()
                 .in_sequence(&mut seq)
@@ -1103,7 +1081,8 @@ mod t {
                     Box::pin(future::ok::<(), Error>(()))
                 });
             let arc_ddml = Arc::new(ddml);
-            let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+            let amcache = Arc::new(Mutex::new(cache));
+            let idml = IDML::create(arc_ddml, amcache.clone());
             inject_record(&idml, rid, &drp0, 1);
 
             IDML::move_record(&idml.cache, idml.ridt.clone(), idml.alloct.clone(),
@@ -1120,6 +1099,9 @@ mod t {
             let alloc_rec = idml.alloct.get(drp1_c.pba())
                 .now_or_never().unwrap().unwrap();
             assert_eq!(alloc_rec.unwrap(), rid);
+
+            // Moving a record should not result in a cache insertion
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
         }
 
         /// When moving compressed records, the cache should be bypassed
@@ -1132,7 +1114,7 @@ mod t {
             let drp1 = DRP::random(Compression::Zstd(None), 4096);
             let drp1_c = drp1;
             let mut seq = Sequence::new();
-            let cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
             ddml.expect_get_direct()
                 .once()
@@ -1180,18 +1162,13 @@ mod t {
             let v = vec![42u8; 4096];
             let dbs = DivBufShared::from(v);
             let rid = RID(1);
+            let key = Key::Rid(rid);
             let drp0 = DRP::random(Compression::None, 4096);
             let drp1 = DRP::random(Compression::None, 4096);
             let mut seq = Sequence::new();
-            let mut cache = Cache::default();
+            let mut cache = Cache::with_capacity(1_048_576);
+            cache.insert(key, Box::new(dbs));
             let mut ddml = mock_ddml();
-            cache.expect_get_ref()
-                .once()
-                .in_sequence(&mut seq)
-                .with(eq(Key::Rid(rid)))
-                .returning(move |_| {
-                    Some(Box::new(dbs.try_const().unwrap()))
-                });
             ddml.expect_put_direct::<DivBuf>()
                 .once()
                 .in_sequence(&mut seq)
@@ -1231,21 +1208,19 @@ mod t {
         #[test]
         fn hot_last() {
             let rid = RID(42);
+            let key = Key::Rid(rid);
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
+            let mut cache = Cache::with_capacity(1_048_576);
+            cache.insert(key, Box::new(dbs));
             let mut ddml = mock_ddml();
-            cache.expect_remove()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(|_| {
-                    Some(Box::new(DivBufShared::from(vec![0u8; 4096])))
-                });
             ddml.expect_delete()
                 .once()
                 .with(eq(drp), eq(TxgT::from(42)))
                 .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
             let arc_ddml = Arc::new(ddml);
-            let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+            let amcache = Arc::new(Mutex::new(cache));
+            let idml = IDML::create(arc_ddml, amcache.clone());
             inject_record(&idml, rid, &drp, 1);
 
             idml.pop::<DivBufShared, DivBuf>(&rid, TxgT::from(42))
@@ -1259,20 +1234,18 @@ mod t {
                 .now_or_never().unwrap()
                 .unwrap();
             assert!(alloc_rec.is_none());
+            // It should be gone from the cache, too
+            assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_none());
         }
 
         #[test]
         fn hot_notlast() {
             let dbs = DivBufShared::from(vec![42u8; 4096]);
             let rid = RID(42);
+            let key = Key::Rid(rid);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
-            cache.expect_get()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(move |_| {
-                    Some(Box::new(dbs.try_const().unwrap()))
-                });
+            let mut cache = Cache::with_capacity(1_048_576);
+            cache.insert(key, Box::new(dbs));
             let ddml = mock_ddml();
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
@@ -1297,12 +1270,8 @@ mod t {
         fn cold_last() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            cache.expect_remove()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(|_| None);
             ddml.expect_pop_direct::<DivBufShared>()
                 .once()
                 .with(eq(drp))
@@ -1333,12 +1302,8 @@ mod t {
         fn cold_notlast() {
             let rid = RID(42);
             let drp = DRP::random(Compression::None, 4096);
-            let mut cache = Cache::default();
+            let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            cache.expect_get::<DivBuf>()
-                .once()
-                .with(eq(Key::Rid(RID(42))))
-                .returning(|_| None);
             ddml.expect_get_direct()
                 .once()
                 .with(eq(drp))
@@ -1368,22 +1333,20 @@ mod t {
 
     #[test]
     fn put() {
-        let mut cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut ddml = mock_ddml();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
         let rid = RID(0);
-        cache.expect_insert()
-            .once()
-            .with(eq(Key::Rid(rid)), always())
-            .return_const(());
+        let key = Key::Rid(rid);
         ddml.expect_put_direct::<Box<dyn CacheRef>>()
             .once()
             .returning(move |_, _, _|
                        Box::pin(future::ok(drp))
             );
         let arc_ddml = Arc::new(ddml);
-        let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
+        let amcache = Arc::new(Mutex::new(cache));
+        let idml = IDML::create(arc_ddml, amcache.clone());
 
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let actual_rid = idml.put(dbs, Compression::None, TxgT::from(0))
@@ -1401,12 +1364,14 @@ mod t {
             .now_or_never().unwrap()
             .unwrap();
         assert_eq!(alloc_rec.unwrap(), actual_rid);
+        // It should be added to the cache, too
+        assert!(amcache.lock().unwrap().get::<DivBuf>(&key).is_some());
     }
 
     #[test]
     fn sync_all() {
         let rid = RID(42);
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let mut ddml = mock_ddml();
         let drp = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
                            0xdead_beef);
@@ -1437,7 +1402,7 @@ mod t {
 
     #[test]
     fn advance_transaction() {
-        let cache = Cache::default();
+        let cache = Cache::with_capacity(1_048_576);
         let ddml = mock_ddml();
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
