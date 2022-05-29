@@ -1,6 +1,5 @@
 // vim: tw=80
 use metrohash::{MetroBuildHasher, MetroHash64};
-#[cfg(test)] use mockall::automock;
 use std::{
     collections::HashMap,
     fmt::{self, Debug},
@@ -24,14 +23,10 @@ impl Debug for LruEntry {
     }
 }
 
-/// Basic read-only block cache.
-///
-/// Caches on-disk blocks by either their address (cluster and LBA pair), or
-/// their Record ID.  The cache is read-only because any attempt to change a
-/// block would also require changing either its address or record ID.
+/// Basic LRU cache.
 #[derive(Debug)]
-pub struct Cache {
-    /// Capacity of the `Cache` in bytes, not number of entries
+pub struct LruCache {
+    /// Capacity of the `LruCache` in bytes, not number of entries
     capacity: usize,
     /// Pointer to the least recently used entry
     lru: Option<Key>,
@@ -43,16 +38,11 @@ pub struct Cache {
     store: HashMap<Key, LruEntry, BuildHasherDefault<MetroHash64>>,
 }
 
-#[cfg_attr(test, automock)]
-impl Cache {
-    /// Get the maximum memory consumption of the cache, in bytes.
+impl LruCache {
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// Drop all data from the cache, for testing or benchmarking purposes
-    // NB: this should be called "drop", but that conflicts with
-    // "std::Drop::drop"
     pub fn drop_cache(&mut self) {
         self.store = HashMap::with_hasher(MetroBuildHasher::default());
         self.lru = None;
@@ -69,9 +59,6 @@ impl Cache {
         self.remove(&key.unwrap());
     }
 
-    /// Get a read-only reference to a cached block.
-    ///
-    /// The block will be marked as the most recently used.
     pub fn get<T: CacheRef>(&mut self, key: &Key) -> Option<Box<T>> {
         if self.mru == Some(*key) {
             Some(self.store[key].buf.make_ref().downcast::<T>().unwrap())
@@ -102,21 +89,12 @@ impl Cache {
         }
     }
 
-    /// Get a read-only generic reference to a cached block.
-    ///
-    /// The returned reference will not be downcastted to a concrete type, and
-    /// the cache's internal state will not be updated.  That is, this method
-    /// does not count as an access for the cache replacement algorithm.
     pub fn get_ref(&self, key: &Key) -> Option<Box<dyn CacheRef>> {
         self.store.get(key).map(|v| {
             v.buf.make_ref()
         })
     }
 
-    /// Add a new block to the cache.
-    ///
-    /// The block will be marked as the most recently used.
-    #[tracing::instrument(skip(self, buf))]
     pub fn insert(&mut self, key: Key, buf: Box<dyn Cacheable>) {
         let cache_space = buf.cache_space();
         assert!(cache_space <= self.capacity);
@@ -152,10 +130,6 @@ impl Cache {
         }
     }
 
-    /// Remove a block from the cache.
-    ///
-    /// Unlike `get`, the block will be returned in an owned form, if it was
-    /// present at all.
     pub fn remove(&mut self, key: &Key) -> Option<Box<dyn Cacheable>> {
         self.store.remove(key).map(|v| {
             self.size -= v.buf.cache_space();
@@ -175,18 +149,13 @@ impl Cache {
         })
     }
 
-    /// Get the current memory consumption of the cache, in bytes.
-    ///
-    /// Only the cached blocks themselves are included, not the overhead of
-    /// managing them.
     pub fn size(&self) -> usize {
         self.size
     }
 
-    /// Create a new cache with the given capacity, in bytes.
     pub fn with_capacity(capacity: usize) -> Self {
         let store = HashMap::with_hasher(MetroBuildHasher::default());
-        Cache{capacity, lru: None, mru: None, size: 0, store}
+        LruCache{capacity, lru: None, mru: None, size: 0, store}
     }
 }
 
@@ -201,7 +170,7 @@ use divbuf::{DivBuf, DivBufShared};
 // pet kcov
 #[test]
 fn debug() {
-    let cache = Cache::with_capacity(100);
+    let cache = LruCache::with_capacity(100);
     format!("{:?}", cache);
     assert_eq!(100, cache.capacity());
     let dbs = DivBufShared::from(Vec::new());
@@ -211,7 +180,7 @@ fn debug() {
 
 #[test]
 fn test_drop_cache() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let key3 = Key::Rid(RID(3));
@@ -232,7 +201,7 @@ fn test_drop_cache() {
 
 #[test]
 fn test_get_lru() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
@@ -258,7 +227,7 @@ fn test_get_lru() {
 /// Get an entry which is neither the MRU nor LRU
 #[test]
 fn test_get_middle() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let key3 = Key::Rid(RID(3));
@@ -290,7 +259,7 @@ fn test_get_middle() {
 /// On insertion, old entries should be expired to prevent overflow
 #[test]
 fn test_expire_one() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 53]));
@@ -305,7 +274,7 @@ fn test_expire_one() {
 /// expire multiple entries if necessary
 #[test]
 fn test_expire_two() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let key3 = Key::Rid(RID(3));
@@ -324,7 +293,7 @@ fn test_expire_two() {
 /// Get the most recently used entry
 #[test]
 fn test_get_mru() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
@@ -348,7 +317,7 @@ fn test_get_mru() {
 /// Get multiple references to the same entry, which isn't the MRU
 #[test]
 fn test_get_multiple() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
@@ -369,16 +338,16 @@ fn test_get_multiple() {
 /// Get a nonexistent key
 #[test]
 fn test_get_nonexistent() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key = Key::Rid(RID(0));
     assert!(cache.get::<DivBuf>(&key).is_none());
 }
 
-/// Cache::get_ref on an entry in the middle.  Its position in the list should
-/// not be changed.
+/// LruCache::get_ref on an entry in the middle.  Its position in the list
+/// should not be changed.
 #[test]
 fn test_get_ref_middle() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let key3 = Key::Rid(RID(3));
@@ -410,7 +379,7 @@ fn test_get_ref_middle() {
 
 #[test]
 fn test_get_ref_nonexistent() {
-    let cache = Cache::with_capacity(100);
+    let cache = LruCache::with_capacity(100);
     let key = Key::Rid(RID(0));
     assert!(cache.get_ref(&key).is_none());
 }
@@ -419,7 +388,7 @@ fn test_get_ref_nonexistent() {
 #[test]
 #[should_panic(expected = "Conflicting value cached with key=Rid(RID(0))")]
 fn test_insert_dup_key() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let dbs1 = Box::new(DivBufShared::from(vec![0u8; 6]));
     let dbs2 = Box::new(DivBufShared::from(vec![0u8; 11]));
     let key = Key::Rid(RID(0));
@@ -430,7 +399,7 @@ fn test_insert_dup_key() {
 /// Insert the same key/value pair twice
 #[test]
 fn test_insert_dup_value() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let len = 6;
     let dbs1 = Box::new(DivBufShared::from(vec![0u8; len]));
     let dbs2 = Box::new(DivBufShared::from(vec![0u8; len]));
@@ -454,7 +423,7 @@ fn test_insert_dup_value() {
 /// Insert the first value into an empty cache
 #[test]
 fn test_insert_empty() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let dbs = Box::new(DivBufShared::from(vec![0u8; 6]));
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs);
@@ -472,7 +441,7 @@ fn test_insert_empty() {
 /// Insert into a cache that already has 1 item.
 #[test]
 fn test_insert_one() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
@@ -493,7 +462,7 @@ fn test_insert_one() {
 /// Remove a nonexistent key.  Unlike inserting a dup, this is not an error
 #[test]
 fn test_remove_nonexistent() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key = Key::Rid(RID(0));
     assert!(cache.remove(&key).is_none());
 }
@@ -501,7 +470,7 @@ fn test_remove_nonexistent() {
 /// Remove the last key from a cache
 #[test]
 fn test_remove_last() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let dbs = Box::new(DivBufShared::from(vec![0u8; 6]));
     let key = Key::Rid(RID(0));
     cache.insert(key, dbs);
@@ -515,7 +484,7 @@ fn test_remove_last() {
 /// Remove the least recently used entry
 #[test]
 fn test_remove_lru() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
@@ -536,7 +505,7 @@ fn test_remove_lru() {
 /// Remove an entry which is neither the MRU nor the LRU
 #[test]
 fn test_remove_middle() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let key3 = Key::Rid(RID(3));
@@ -565,7 +534,7 @@ fn test_remove_middle() {
 /// Remove the most recently used entry
 #[test]
 fn test_remove_mru() {
-    let mut cache = Cache::with_capacity(100);
+    let mut cache = LruCache::with_capacity(100);
     let key1 = Key::Rid(RID(1));
     let key2 = Key::Rid(RID(2));
     let dbs = Box::new(DivBufShared::from(vec![0u8; 5]));
