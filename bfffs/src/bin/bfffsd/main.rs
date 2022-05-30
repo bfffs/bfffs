@@ -237,6 +237,14 @@ impl Bfffsd {
         creds: UCred,
     ) -> rpc::Response {
         match req {
+            rpc::Request::DebugDropCache => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsMount(Err(Error::EPERM))
+                } else {
+                    self.controller.drop_cache();
+                    rpc::Response::DebugDropCache(Ok(()))
+                }
+            }
             rpc::Request::FsCreate(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsMount(Err(Error::EPERM))

@@ -1,4 +1,8 @@
-use std::{path::PathBuf, process::exit, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    process::exit,
+    sync::Arc,
+};
 
 use bfffs::{Bfffs, Result};
 use bfffs_core::{
@@ -46,6 +50,17 @@ impl Check {
         db.check().await.unwrap();
         // TODO: the other checks
         Ok(())
+    }
+}
+
+#[derive(Parser, Clone, Debug)]
+/// Drop all in-memory caches, for testing or benchmark purposes.
+struct DropCache {}
+
+impl DropCache {
+    async fn main(self, sock: &Path) -> Result<()> {
+        let bfffs = Bfffs::new(sock).await.unwrap();
+        bfffs.drop_cache().await
     }
 }
 
@@ -148,12 +163,11 @@ impl Dump {
 #[derive(Parser, Clone, Debug)]
 /// Debugging tools
 enum DebugCmd {
+    DropCache(DropCache),
     Dump(Dump),
 }
 
 mod fs {
-    use std::path::Path;
-
     use super::*;
 
     /// Create a new file system
@@ -282,7 +296,7 @@ mod fs {
 }
 
 mod pool {
-    use std::{num::NonZeroU64, path::Path, sync::Mutex};
+    use std::{num::NonZeroU64, sync::Mutex};
 
     use bfffs_core::{
         cache::Cache,
@@ -529,6 +543,7 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Unmount(unmount)) => {
             unmount.main(&cli.sock).await
         }
+        SubCommand::Debug(DebugCmd::DropCache(dc)) => dc.main(&cli.sock).await,
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
         SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
@@ -539,8 +554,6 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod t {
-    use std::path::Path;
-
     use clap::ErrorKind::*;
     use rstest::rstest;
 
@@ -580,6 +593,13 @@ mod t {
 
     mod debug {
         use super::*;
+
+        #[test]
+        fn drop_cache() {
+            let args = vec!["bfffs", "debug", "drop-cache"];
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(cli.cmd, SubCommand::Debug(_)));
+        }
 
         #[test]
         fn dump_fsm() {

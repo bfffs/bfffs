@@ -102,6 +102,7 @@ pub mod pool {
 /// An RPC request from bfffs to bfffsd
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Request {
+    DebugDropCache,
     FsCreate(fs::Create),
     FsDestroy(fs::Destroy),
     FsList(fs::List),
@@ -112,6 +113,7 @@ pub enum Request {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub enum Response {
+    DebugDropCache(Result<()>),
     FsCreate(Result<TreeID>),
     FsDestroy(Result<()>),
     FsList(Result<Vec<fs::DsInfo>>),
@@ -121,6 +123,13 @@ pub enum Response {
 }
 
 impl Response {
+    pub fn into_debug_drop_cache(self) -> Result<()> {
+        match self {
+            Response::DebugDropCache(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
     pub fn into_fs_create(self) -> Result<TreeID> {
         match self {
             Response::FsCreate(r) => r,

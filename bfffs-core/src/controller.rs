@@ -116,6 +116,11 @@ impl Controller {
         }
     }
 
+    /// Drop all data from the cache, for testing or benchmarking purposes
+    pub fn drop_cache(&self) {
+        self.db.drop_cache()
+    }
+
     /// Dump a YAMLized representation of the Forest in text format.
     pub async fn dump_forest(&self, f: &mut dyn io::Write) -> Result<()>
     {

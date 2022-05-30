@@ -23,6 +23,12 @@ impl Bfffs {
         Self::new(Path::new("/var/run/bfffsd.sock")).await.unwrap()
     }
 
+    /// Drop all in-memory caches, for testing or debugging purposes
+    pub async fn drop_cache(&self) -> Result<()> {
+        let req = rpc::Request::DebugDropCache;
+        self.call(req).await.unwrap().into_debug_drop_cache()
+    }
+
     /// Create a new file system
     ///
     /// # Arguments
