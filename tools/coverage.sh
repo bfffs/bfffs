@@ -12,11 +12,16 @@
 
 export LLVM_PROFILE_FILE="bfffs-%p-%m.profraw"
 export RUSTFLAGS="-Zinstrument-coverage"
-cargo build --all-features
-cargo test --all-features
+# Lock toolchain due to https://github.com/rust-lang/rust/issues/94616
+# Also, grcov must be run on FreeBSD 13.1 or earlier, because the version of
+# LLVM in FreeBSD 14 isn't compatible with the .profraw files produced by this
+# rustc version.
+TOOLCHAIN=nightly-2021-11-14-unknown-freebsd
+cargo +$TOOLCHAIN build --all-features
+cargo +$TOOLCHAIN test --all-features
 
 truncate -s 1g /tmp/bfffs.img
-cargo run --all-features --bin bfffs -- pool create testpool /tmp/bfffs.img
+cargo +$TOOLCHAIN run --all-features --bin bfffs -- pool create testpool /tmp/bfffs.img
 fio bfffs-fio/data/ci.fio
 
 grcov . --binary-path $PWD/target/debug -s . -t html --branch \
