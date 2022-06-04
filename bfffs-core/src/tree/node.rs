@@ -324,11 +324,11 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
             }).collect::<FuturesOrdered<_>>()
-            .try_collect::<Vec<_>>()
+            .try_collect::<BTreeMap<_, _>>()
             .map_ok(|items| {
                 let ld = LeafData{
                     credit: Credit::null(),
-                    items: items.into_iter().collect()
+                    items
                 };
                 (ld, credit)
             }).boxed()
