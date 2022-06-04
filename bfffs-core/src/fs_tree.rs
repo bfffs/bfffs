@@ -478,6 +478,8 @@ pub struct BlobExtAttr {
     pub extent: BlobExtent
 }
 
+// TODO: consider flattening this into FSValue to reduce the in-memory size of
+// FSValue.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum ExtAttr {
     Inline(InlineExtAttr),
@@ -1284,6 +1286,7 @@ fn fsvalue_variant_size() {
     println!("DirEntries:   {} bytes", mem::size_of::<Vec<Dirent>>());
     println!("Property:     {} bytes", mem::size_of::<Property>());
     println!("DyingInode:   {} bytes", mem::size_of::<DyingInode>());
+    println!("FSValue:      {} bytes", mem::size_of::<FSValue>());
 }
 
 /// Long InlineExtAttrs should be converted to BlobExtAttrs during flush
