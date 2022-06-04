@@ -5,6 +5,9 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let utsname = uname().unwrap();
+    // XXX: this only checks kernel version, so it doesn't work properly in a
+    // jail.  Checking userland would be more accurate, but that would pull in
+    // bindgen with all its many dependencies.
     if utsname.sysname() == "FreeBSD" {
         let major = utsname.release()
             .to_str()
