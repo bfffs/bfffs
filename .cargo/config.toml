@@ -1,0 +1,3 @@
+[build]
+# Needed so that dtrace's ustack() function can unwind stack frames.
+rustflags = ["-C", "force-frame-pointers"]
