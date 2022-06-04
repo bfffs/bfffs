@@ -166,7 +166,7 @@ pub extern "C" fn rust_ctor() {
 
 lazy_static! {
     static ref RUNTIME: RwLock<Runtime> = RwLock::new(
-        Builder::new_multi_thread()
+        Builder::new_current_thread()
             .enable_time()
             .enable_io()
             .build()
