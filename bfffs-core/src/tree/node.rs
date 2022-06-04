@@ -323,7 +323,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
             self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
-            }).collect::<FuturesOrdered<_>>()
+            }).collect::<FuturesUnordered<_>>()
             .try_collect::<BTreeMap<_, _>>()
             .map_ok(|items| {
                 let ld = LeafData{
