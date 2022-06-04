@@ -469,7 +469,7 @@ impl Bfffsd {
     }
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
     tracing_subscriber::fmt()
         .pretty()
