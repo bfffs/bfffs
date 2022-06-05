@@ -14,9 +14,10 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::{FuturesOrdered, FuturesUnordered}
+    stream::{FuturesOrdered, FuturesUnordered, TryCollect}
 };
 use futures_locks::*;
+use pin_project::pin_project;
 use serde::{
     ser::{Serialize, Serializer},
     de::{self, Deserialize, DeserializeOwned, Deserializer, SeqAccess, Visitor},
@@ -34,7 +35,8 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-    }
+    },
+    task::{Context, Poll}
 };
 
 use tracing::instrument;
@@ -277,6 +279,36 @@ mod node_serializer {
     }
 }
 
+#[pin_project]
+struct LeafDataFlush<K: Key, V> {
+    credit: Credit,
+    #[pin]
+    inner: TryCollect<
+        FuturesUnordered<Pin<Box<dyn Future<Output = Result<(K, V)>> + Send>>>,
+        BTreeMap<K, V>
+    >,
+}
+
+impl<K: Key, V> Future for LeafDataFlush<K, V> {
+    type Output = Result<(LeafData<K, V>, Credit)>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let proj = self.project();
+        match proj.inner.poll(cx) {
+            Poll::Pending => {
+                Poll::Pending
+            },
+            Poll::Ready(Err(e)) => {
+                Poll::Ready(Err(e))
+            },
+            Poll::Ready(Ok(items)) => {
+                let ld = LeafData{credit: Credit::null(), items};
+                Poll::Ready(Ok((ld, proj.credit.take())))
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct LeafData<K: Key, V> {
     /// WriteBack credit, if this `LeafData` is dirty.  Anytime the node is
@@ -320,18 +352,13 @@ impl<K: Key, V: Value> LeafData<K, V> {
     {
         let credit = self.credit.take();
         if V::NEEDS_FLUSH {
-            self.items.into_iter().map(|(k, v)| {
+            let inner = self.items.into_iter().map(|(k, v)| {
                 v.flush(d, txg)
                 .map_ok(move |v| (k, v))
+                .boxed()
             }).collect::<FuturesUnordered<_>>()
-            .try_collect::<BTreeMap<_, _>>()
-            .map_ok(|items| {
-                let ld = LeafData{
-                    credit: Credit::null(),
-                    items
-                };
-                (ld, credit)
-            }).boxed()
+            .try_collect::<BTreeMap<_, _>>();
+            LeafDataFlush{credit: credit, inner}.boxed()
         } else {
             future::ok((self, credit)).boxed()
         }
