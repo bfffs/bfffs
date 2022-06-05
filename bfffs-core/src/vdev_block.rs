@@ -477,41 +477,6 @@ impl Inner {
     // in LBA order will also be issued in LBA order.
     fn issue_all(&mut self, cx: &mut Context) {
         while self.queue_depth < self.optimum_queue_depth {
-            // TODO: accumulate adjacent reads and writes
-            // let (sender,fut) = if let Some(x)  = self.delayed.take() {
-            //     x
-            // } else {
-            //     let mut op = self.pop_op().unwrap_or(break);
-            //     while self.peek_op().map(|op| op.lba == self.lba).or(false) {
-            //         op.accumulate(self.pop_op())
-            //     }
-            // }
-            // or
-            // } else {
-            //     while self.peek_op().and_then(|op2| op.accumulate(op2)) {
-            //         self.pop_op()
-            //      }
-            // }
-            // or
-            // } else {
-            //     let op2 = loop {
-            //         match self.pop_op() {
-            //             None => break None,
-            //             Some(op2) => match op1.accumulate(op2) {
-            //                 None => continue,
-            //                 Some(op2) => break Some(op2)
-            //             }
-            //         }
-            //    }
-            //    self.next_op = Some(op2);
-            //    issue(op1);
-            // }
-            // or
-            // } else {
-            //     while self.peek_op().and_then(|op2| op.can_accumulate(op2)) {
-            //         op = op.accumulate(self.pop_op());
-            //     }
-            // }
             let delayed = self.delayed.take();
             let (senders, fut) = if let Some((senders, fut)) = delayed {
                 (senders, fut)
