@@ -280,7 +280,7 @@ mod node_serializer {
 }
 
 #[pin_project]
-struct LeafDataFlush<K: Key, V> {
+pub(super) struct LeafDataFlush<K: Key, V> {
     credit: Credit,
     #[pin]
     inner: TryCollect<
@@ -346,8 +346,8 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Flush all items to stable storage.
     ///
     /// For most item types, this is a nop.
-    pub fn flush<A, D>(mut self, d: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(Self, Credit)>> + Send>>
+    pub(super) fn flush<A, D>(mut self, d: &D, txg: TxgT)
+        -> LeafDataFlush<K, V>
         where D: DML<Addr=A> + 'static, A: 'static
     {
         let credit = self.credit.take();
@@ -358,9 +358,9 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 .boxed()
             }).collect::<FuturesUnordered<_>>()
             .try_collect::<BTreeMap<_, _>>();
-            LeafDataFlush{credit: credit, inner}.boxed()
+            LeafDataFlush{credit: credit, inner}
         } else {
-            future::ok((self, credit)).boxed()
+            unreachable!()
         }
     }
 
@@ -544,6 +544,15 @@ impl<K: Key, V: Value> LeafData<K, V> {
         let txgs = txg..txg + 1;
         let node = Box::new(Node::new(NodeData::Leaf(ld)));
         (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(node)))
+    }
+
+    /// Take all of this LeafData's Credit.
+    ///
+    /// After this, the caller is responsible for ensuring that the credit must
+    /// be repayed after self is dropped or written to disk
+    fn take_credit(&mut self) -> Credit {
+        debug_assert!(!V::NEEDS_FLUSH);
+        self.credit.take()
     }
 
     fn wb_space(&self) -> usize {
@@ -1292,6 +1301,13 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
+    fn take_credit(&mut self) -> Credit {
+        match self {
+            NodeData::Leaf(ld) => ld.take_credit(),
+            NodeData::Int(_) => unimplemented!()
+        }
+    }
+
     /// Take `other`'s highest keys and merge them into ourself
     pub fn take_high_keys(&mut self, other: &mut NodeData<A, K, V>) {
         // Try to even out the nodes, but always steal at least 1
@@ -1453,6 +1469,14 @@ pub struct Node<A, K, V> (
 impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     pub fn new(node_data: NodeData<A, K, V>) -> Self {
         Node(RwLock::new(node_data))
+    }
+
+    /// Take all of this Node's Credit.
+    ///
+    /// After this, the caller is responsible for ensuring that the credit must
+    /// be repayed after self is dropped or written to disk
+    pub fn take_credit(&mut self) -> Credit {
+        self.0.get_mut().unwrap().take_credit()
     }
 
     /// Attempt to unwrap Self into a [`NodeData`].

@@ -24,6 +24,7 @@ use futures::{
 };
 use futures_locks::*;
 #[cfg(test)] use mockall::automock;
+use pin_project::pin_project;
 #[cfg(test)] use serde_derive::Deserialize;
 use serde_derive::Serialize;
 use serde::ser::Serialize;
@@ -382,6 +383,56 @@ type CheckR<K> = Pin<Box<dyn Future<
     Output=Result<(bool, RangeInclusive<K>, Range<TxgT>)>>
     + Send>>;
 
+/// The return type of `Tree::write_leaf`
+#[pin_project(project = WriteLeafProj)]
+enum WriteLeaf<A: Addr, D: DML<Addr=A> + 'static, K: Key, V: Value> {
+    Ldf(
+            #[pin]crate::tree::node::LeafDataFlush<K, V>,
+            Arc<D>,
+            Compression,
+            TxgT
+    ),
+    Dp(
+            #[pin]Pin<Box<dyn Future<Output = Result<D::Addr>> + Send>>,
+            Arc<D>,
+            Credit
+    ),
+    Empty
+}
+
+impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Future for WriteLeaf<A, D, K, V>
+{
+    type Output = Result<A>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        Poll::Ready(loop {
+            match self.as_mut().project() {
+                WriteLeafProj::Ldf(ldf, dml, compressor, txg) => {
+                    let r = futures::ready!(ldf.poll(cx));
+                    if let Err(e) = r {
+                        break Err(e);
+                    }
+                    let (ld, credit) = r.unwrap();
+                    let node = Node::new(NodeData::Leaf(ld));
+                    let arc: Arc<Node<A, K, V>> = Arc::new(node);
+                    let dp = dml.put(arc, *compressor, *txg);
+                    // TODO: figure out how to eliminate the clone
+                    let dml2 = dml.clone();
+                    self.set(WriteLeaf::Dp(dp, dml2, credit));
+                }
+                WriteLeafProj::Dp(dp, dml, credit) => {
+                    let r = futures::ready!(dp.poll(cx));
+                    if r.is_ok() {
+                        dml.repay(credit.take());
+                    }
+                    self.set(Self::Empty);
+                    break r;
+                }
+                WriteLeafProj::Empty => panic!("Polled after completion")
+            }
+        })
+    }
+}
 
 /// In-memory representation of a COW B+-Tree
 ///
@@ -2130,22 +2181,23 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     // Clippy has a false positive on `node`
     #[allow(clippy::needless_pass_by_value)]
-    async fn write_leaf(
+    fn write_leaf(
         dml: Arc<D>,
         compressor: Compression,
-        node: Node<A, K, V>,
+        mut node: Node<A, K, V>,
         txg: TxgT)
-        -> Result<A>
+        -> WriteLeaf<A, D, K, V>
     {
-        let leaf_data = node.0.try_unwrap().unwrap().into_leaf();
-        let (flushed_leaf_data, credit) = leaf_data.flush(&*dml, txg).await?;
-        let node = Node::new(NodeData::Leaf(flushed_leaf_data));
-        let arc: Arc<Node<A, K, V>> = Arc::new(node);
-        let r = dml.put(arc, compressor, txg).await;
-        // Repay credit even if dml.put failed, because the DML doesn't return
-        // the data on error.
-        dml.repay(credit);
-        r
+        if V::NEEDS_FLUSH {
+            let leaf_data = node.0.try_unwrap().unwrap().into_leaf();
+            let ldf = leaf_data.flush(&*dml, txg);
+            WriteLeaf::Ldf(ldf, dml, compressor, txg)
+        } else {
+            let credit = node.take_credit();
+            let arc = Arc::new(node);
+            let dp = dml.put(arc, compressor, txg);
+            WriteLeaf::Dp(dp, dml, credit)
+        }
     }
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
