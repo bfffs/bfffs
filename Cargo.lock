@@ -128,6 +128,7 @@ dependencies = [
  "num_cpus",
  "num_enum",
  "permutohedron",
+ "pin-project",
  "pretty_assertions",
  "rand 0.8.5",
  "rand_xorshift",
