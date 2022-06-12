@@ -11,9 +11,10 @@ use futures::{
     FutureExt,
     TryFutureExt,
     TryStreamExt,
-    future,
-    stream::FuturesUnordered
+    stream::FuturesUnordered,
+    task::{Context, Poll}
 };
+use pin_project::pin_project;
 #[cfg(test)] use mockall::automock;
 use serde_derive::{Deserialize, Serialize};
 use std::{
@@ -354,8 +355,8 @@ impl Pool {
     /// # Returns
     ///
     /// The `PBA` where the data was written
-    pub fn write(&self, buf: IoVec, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<PBA>> + Send>>
+    pub fn write(&self, buf: IoVec, txg: TxgT) ->
+        impl Future<Output=Result<PBA>> + Send
     {
         let cluster = self.choose_cluster();
         let cidx = cluster as usize;
@@ -364,15 +365,10 @@ impl Pool {
         match self.clusters[cidx].write(buf, txg) {
             Ok((lba, wfut)) => {
                 self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
-                wfut.map(move |r: Result<()>| {
-                    stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
-                    r.map(|_| {
-                        stats2.used_space.fetch_add(space, Ordering::Relaxed);
-                        PBA::new(cluster, lba)
-                    })
-                }).boxed()
+                let pba = PBA::new(cluster, lba);
+                Write::Write(wfut, stats2, cidx, space, pba)
             },
-            Err(e) => future::err(e).boxed()
+            Err(e) => Write::EarlyErr(e)
         }
     }
 
@@ -395,6 +391,32 @@ impl Pool {
         Box::pin(fut)
     }
 }
+
+/// Return value of `Pool::write`
+#[pin_project(project = WriteProj)]
+enum Write {
+    Write(#[pin] BoxVdevFut, Arc<Stats>, usize, LbaT, PBA),
+    EarlyErr(Error)
+}
+
+impl Future for Write {
+    type Output = Result<PBA>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        Poll::Ready(match self.as_mut().project() {
+            WriteProj::Write(wfut, stats, cidx, space, pba) => {
+                let r = futures::ready!(wfut.poll(cx));
+                stats.queue_depth[*cidx].fetch_sub(1, Ordering::Relaxed);
+                r.map(|_| {
+                    stats.used_space.fetch_add(*space, Ordering::Relaxed);
+                    *pba
+                })
+            },
+            WriteProj::EarlyErr(e) => Err(*e)
+        })
+    }
+}
+
 
 // LCOV_EXCL_START
 #[cfg(test)]
