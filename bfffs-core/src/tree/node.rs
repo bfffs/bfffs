@@ -14,7 +14,7 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::{FuturesOrdered, FuturesUnordered, TryCollect}
+    stream::{FuturesOrdered, FuturesUnordered}
 };
 use futures_locks::*;
 use pin_project::pin_project;
@@ -138,15 +138,13 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         unreachable!()
     }
 
-    /// Prepare this `Value` to be written to disk
-    // LCOV_EXCL_START   unreachable code
-    fn flush<D>(self, _dml: &D, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
+    /// Prepare a collection of `Value`s to be written to disk.
+    // Could use an existential output type once that feature is stable.
+    // https://rust-lang.github.io/rfcs/2071-impl-trait-existential-types.html
+    fn flush_bt<D, K: Key>(_bt: BTreeMap<K, Self>, _dml: &D, _txg: TxgT) ->
+        Pin<Box<dyn Future<Output=Result<BTreeMap<K, Self>>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since needs_flush is false.  Ideally, this
-        // entire function should go away once generic specialization is stable
-        // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
     }
 
@@ -162,6 +160,11 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         unreachable!()
     }
 
+    /// Does this value need to be flushed to disk, separately from its Tree
+    /// node?
+    fn needs_flush(&self) -> bool {
+        false
+    }
     // LCOV_EXCL_STOP
 }
 
@@ -280,20 +283,19 @@ mod node_serializer {
 }
 
 #[pin_project]
-pub(super) struct LeafDataFlush<K: Key, V> {
+pub(super) struct LeafDataFlush<K: Key, V: Value> {
+    #[pin]
     credit: Credit,
     #[pin]
-    inner: TryCollect<
-        FuturesUnordered<Pin<Box<dyn Future<Output = Result<(K, V)>> + Send>>>,
-        BTreeMap<K, V>
-    >,
+    inner: Pin<Box<dyn Future<Output=Result<BTreeMap<K, V>>> + Send>>,
+    _phantom: PhantomData<K>
 }
 
-impl<K: Key, V> Future for LeafDataFlush<K, V> {
-    type Output = Result<(LeafData<K, V>, Credit)>;
+impl<K: Key, V: Value> Future for LeafDataFlush<K, V> {
+    type Output = Result<LeafData<K, V>>;
 
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let proj = self.project();
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let mut proj = self.as_mut().project();
         match proj.inner.poll(cx) {
             Poll::Pending => {
                 Poll::Pending
@@ -302,8 +304,8 @@ impl<K: Key, V> Future for LeafDataFlush<K, V> {
                 Poll::Ready(Err(e))
             },
             Poll::Ready(Ok(items)) => {
-                let ld = LeafData{credit: Credit::null(), items};
-                Poll::Ready(Ok((ld, proj.credit.take())))
+                let credit = proj.credit.take();
+                Poll::Ready(Ok(LeafData{credit, items}))
             }
         }
     }
@@ -346,22 +348,13 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Flush all items to stable storage.
     ///
     /// For most item types, this is a nop.
-    pub(super) fn flush<A, D>(mut self, d: &D, txg: TxgT)
-        -> LeafDataFlush<K, V>
+    pub(super) fn flush<A, D>(mut self, d: &D, txg: TxgT) -> LeafDataFlush<K, V>
         where D: DML<Addr=A> + 'static, A: 'static
     {
+        debug_assert!(V::NEEDS_FLUSH);
         let credit = self.credit.take();
-        if V::NEEDS_FLUSH {
-            let inner = self.items.into_iter().map(|(k, v)| {
-                v.flush(d, txg)
-                .map_ok(move |v| (k, v))
-                .boxed()
-            }).collect::<FuturesUnordered<_>>()
-            .try_collect::<BTreeMap<_, _>>();
-            LeafDataFlush{credit: credit, inner}
-        } else {
-            unreachable!()
-        }
+        let inner = V::flush_bt(self.items, d, txg);
+        LeafDataFlush{inner, credit, _phantom: PhantomData}
     }
 
     /// Discard the contents of this `LeafData` without flushing to disk.
@@ -550,8 +543,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
     ///
     /// After this, the caller is responsible for ensuring that the credit must
     /// be repayed after self is dropped or written to disk
-    fn take_credit(&mut self) -> Credit {
-        debug_assert!(!V::NEEDS_FLUSH);
+    pub(super) fn take_credit(&mut self) -> Credit {
         self.credit.take()
     }
 

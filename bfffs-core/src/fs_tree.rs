@@ -17,13 +17,17 @@ use futures::{
     TryFutureExt,
     TryStreamExt,
     future,
-    stream::{FuturesOrdered, FuturesUnordered}
+    stream::{FuturesOrdered, FuturesUnordered},
+    task::{Context, Poll}
 };
 use metrohash::MetroHash64;
 use num_enum::{IntoPrimitive, FromPrimitive};
+use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use serde::ser::{Serialize, Serializer, SerializeStruct};
 use std::{
+    any::Any,
+    collections::BTreeMap,
     convert::TryFrom,
     ffi::{OsString, OsStr},
     fmt::{self, Debug},
@@ -420,30 +424,30 @@ pub struct InlineExtAttr {
 }
 
 impl InlineExtAttr {
-    fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr>> + Send>>
-        where D: DML, D::Addr: 'static
+    fn flush<D, K>(self, k: K, dml: &D, txg: TxgT)
+        -> impl Future<Output=Result<(K, FSValue)>> + Send
+        where D: DML, D::Addr: 'static, K: Key
     {
         let lsize = self.len();
-        if lsize > BLOB_THRESHOLD {
-            let namespace = self.namespace;
-            let name = self.name;
-            let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
-            let fut = dml.put(dbs, Compression::None, txg)
-            .map_ok(move |rid: D::Addr| {
-                let rid_a = checked_transmute(rid);
-                let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
-                let bea = BlobExtAttr { namespace, name, extent };
-                ExtAttr::Blob(bea)
-            });
-            fut.boxed()
-        } else {
-            future::ok(ExtAttr::Inline(self)).boxed()
-        }
+        debug_assert!(lsize > BLOB_THRESHOLD);
+        let namespace = self.namespace;
+        let name = self.name;
+        let dbs = Arc::try_unwrap(self.extent.buf).unwrap();
+        dml.put(dbs, Compression::None, txg)
+        .map_ok(move |rid: D::Addr| {
+            let rid_a = checked_transmute(rid);
+            let extent = BlobExtent{lsize: lsize as u32, rid: rid_a};
+            let bea = BlobExtAttr { namespace, name, extent };
+            (k, FSValue::ExtAttr(ExtAttr::Blob(bea)))
+        })
     }
 
     fn len(&self) -> usize {
         self.extent.len()
+    }
+
+    pub fn needs_flush(&self) -> bool {
+        self.len() > BLOB_THRESHOLD
     }
 }
 
@@ -453,13 +457,6 @@ pub struct BlobExtAttr {
     pub namespace: ExtAttrNamespace,
     pub name:   OsString,
     pub extent: BlobExtent
-}
-
-impl BlobExtAttr {
-    fn flush(self) -> ExtAttr
-    {
-        ExtAttr::Blob(self)
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -510,14 +507,16 @@ impl<'a> ExtAttr {
         }
     }
 
-    fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<ExtAttr>>
+    fn flush<D, K>(self, k: K, dml: &D, txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<(K, FSValue)>>
             + Send + 'static>>
-        where D: DML + 'static, D::Addr: 'static
+        where D: DML + 'static, D::Addr: 'static, K: Key
     {
         match self {
-            ExtAttr::Inline(iea) => iea.flush(dml, txg),
-            ExtAttr::Blob(bea) => future::ok(bea.flush()).boxed()
+            ExtAttr::Inline(iea) => iea.flush(k, dml, txg).boxed(),
+            ExtAttr::Blob(bea) => future::ok(
+                (k, FSValue::ExtAttr(ExtAttr::Blob(bea)))
+            ).boxed()
         }
     }
 
@@ -532,6 +531,13 @@ impl<'a> ExtAttr {
         match self {
             ExtAttr::Inline(x) => x.namespace,
             ExtAttr::Blob(x) => x.namespace,
+        }
+    }
+
+    pub fn needs_flush(&self) -> bool {
+        match self {
+            ExtAttr::Inline(iea) => iea.needs_flush(),
+            ExtAttr::Blob(_) => false
         }
     }
 }
@@ -783,28 +789,28 @@ impl InlineExtent {
         self.buf.len() + Self::FUDGE
     }
 
-    fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<FSValue>>
-            + Send + 'static>>
-        where D: DML, D::Addr: 'static
+    fn flush<D, K>(self, k: K, dml: &D, txg: TxgT) -> InlineExtentFlush<K>
+        where D: DML + 'static, D::Addr: 'static, K: Key
     {
         let lsize = self.len();
-        if lsize > BLOB_THRESHOLD {
-            let dbs = Arc::try_unwrap(self.buf).unwrap();
-            let fut = dml.put(dbs, Compression::None, txg)
-            .map_ok(move |rid: D::Addr| {
-                let rid_a = checked_transmute(rid);
-                let be = BlobExtent{lsize: lsize as u32, rid: rid_a};
-                FSValue::BlobExtent(be)
-            });
-            fut.boxed()
-        } else {
-            future::ok(FSValue::InlineExtent(self)).boxed()
-        }
+        assert!(lsize > BLOB_THRESHOLD);
+        let dbs = Arc::try_unwrap(self.buf).unwrap();
+        let gfut = dml.put(dbs, Compression::None, txg);
+        let g_type_id = gfut.type_id();
+        let cfut: Pin<Box<dyn Future<Output=Result<RID>> + Send>> = unsafe {
+            // Safe because we compare type ids
+            mem::transmute(gfut)
+        };
+        debug_assert_eq!(g_type_id, cfut.type_id());
+        InlineExtentFlush{k, inner: cfut, lsize: lsize as u32}
     }
 
     pub fn len(&self) -> usize {
         self.buf.len()
+    }
+
+    pub fn needs_flush(&self) -> bool {
+        self.len() > BLOB_THRESHOLD
     }
 
     pub fn new(buf: Arc<DivBufShared>) -> Self {
@@ -824,6 +830,32 @@ impl Eq for InlineExtent {}
 impl PartialEq for InlineExtent {
     fn eq(&self, other: &Self) -> bool {
         self.buf.try_const().unwrap() == other.buf.try_const().unwrap()
+    }
+}
+
+/// Return type of `InlineExtent::flush`
+#[pin_project]
+pub struct InlineExtentFlush<K> {
+    k: K,
+    #[pin]
+    inner: Pin<Box<dyn Future<Output=Result<RID>> + Send>>,
+    lsize: u32
+}
+
+impl<K: Key> Future for InlineExtentFlush<K>
+{
+    type Output = Result<(K, FSValue)>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let proj = self.as_mut().project();
+        match proj.inner.poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(Ok(rid)) => {
+                let be = BlobExtent{lsize: *proj.lsize, rid};
+                Poll::Ready(Ok((*proj.k, FSValue::BlobExtent(be))))
+            }
+        }
     }
 }
 
@@ -870,8 +902,8 @@ pub enum FSValue {
     /// system.  Only valid for object 0.
     DyingInode(DyingInode),
     // TODO: hash bucket of DyingInode
-    /// For testing purposes only!  Must come last!
-    #[cfg(test)]
+    /// Only used temporarily in memory.  Never written to disk.
+    /// Must come last!
     #[doc(hidden)]
     Invalid,
 }
@@ -960,6 +992,43 @@ impl FSValue {
         nrecs * (rs + InlineExtent::FUDGE)
     }
 
+    fn flush<D, K>(self, k: K, dml: &D, txg: TxgT) -> FSValueFlush<K>
+        where D: DML + 'static, D::Addr: 'static, K: Key
+    {
+        match self {
+            FSValue::InlineExtent(ie) => {
+                FSValueFlush::Ie(ie.flush(k, dml, txg))
+            },
+            FSValue::ExtAttr(extattr) => {
+                FSValueFlush::Ea(extattr.flush(k, dml, txg))
+            }
+            FSValue::ExtAttrs(v) => {
+                // This code is complicated because we optimize for the
+                // non-hash-collision case.
+                let fut = v.into_iter()
+                .map(|extattr| if extattr.needs_flush() {
+                        extattr.flush(k, dml, txg)
+                        .map_ok(|(_, v)| {
+                             if let FSValue::ExtAttr(ea) = v {
+                                 ea
+                             } else {
+                                 panic!("ExtAttr::flush didn't return an \
+                                     ExtAttr?");
+                             }
+                         }).boxed()
+                    } else {
+                        future::ok(extattr).boxed()
+                    }
+                ).collect::<FuturesOrdered<_>>()
+                .try_collect::<Vec<_>>()
+                .map_ok(move |v| (k, FSValue::ExtAttrs(v)))
+                .boxed();
+                FSValueFlush::Eav(fut)
+            },
+            _ => unreachable!("Caller should've checked needs_flush()")
+        }
+    }
+
     /// Construct a new FSValue::Inode object
     pub fn inode(inode: Inode) -> Self {
         Self::Inode(Box::new(inode))
@@ -984,7 +1053,6 @@ impl FSValue {
     }
 }
 
-#[cfg(test)]
 impl Default for FSValue {
     fn default() -> Self {
         FSValue::Invalid
@@ -1074,29 +1142,62 @@ impl Value for FSValue {
         }
     }
 
-    fn flush<D>(self, dml: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self>> + Send + 'static>>
+    fn flush_bt<D, K: Key>(
+        mut bt: BTreeMap<K, Self>,
+        dml: &D,
+        txg: TxgT)
+        -> Pin<Box<dyn Future<Output=Result<BTreeMap<K, Self>>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        match self {
-            FSValue::InlineExtent(ie) => ie.flush(dml, txg),
-            FSValue::ExtAttr(extattr) => {
-                let fut = extattr.flush(dml, txg)
-                .map_ok(FSValue::ExtAttr);
-                Box::pin(fut)
+        let inner = FuturesUnordered::new();
+        for (km, vm) in bt.iter_mut() {
+            if vm.needs_flush() {
+                // Replace the value with a placeholder, rather than
+                // removing the value, so we don't churn the BTreeMap's own
+                // allocations.  OTOH, this copies the entire Value.
+                let v = mem::take(vm);
+                let k = *km;
+                inner.push(v.flush(k, dml, txg));
             }
-            FSValue::ExtAttrs(v) => {
-                v.into_iter()
-                .map(|extattr| extattr.flush(dml, txg))
-                .collect::<FuturesOrdered<_>>()
-                .try_collect::<Vec<_>>()
-                .map_ok(FSValue::ExtAttrs)
-                .boxed()
-            },
-            _ => future::ok(self).boxed()
+        }
+        inner.try_fold(bt, |mut bt, (k, v)| {
+            bt.insert(k, v);
+            future::ok(bt)
+        }).boxed()
+    }
+
+    fn needs_flush(&self) -> bool {
+        match self {
+            FSValue::InlineExtent(ie) => ie.needs_flush(),
+            FSValue::ExtAttr(extattr) => extattr.needs_flush(),
+            FSValue::ExtAttrs(_extattrs) => true,
+            _ => false
         }
     }
 }
+
+/// The return type of `FSValue::flush`
+#[pin_project(project = FSValueFlushProj)]
+pub enum FSValueFlush<K: Key> {
+    Ie(#[pin] InlineExtentFlush<K>),
+    // The ExtAttr and ExtAttrs types could be unboxed for better performance,
+    // but they aren't nearly as common as InlineExtents.
+    Ea(#[pin] Pin<Box<dyn Future<Output=Result<(K, FSValue)>> + Send + 'static>>),
+    Eav(#[pin] Pin<Box<dyn Future<Output=Result<(K, FSValue)>> + Send + 'static>>),
+}
+
+impl<K: Key> Future for FSValueFlush<K> {
+    type Output = Result<(K, FSValue)>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match self.as_mut().project() {
+            FSValueFlushProj::Ie(fut) => fut.poll(cx),
+            FSValueFlushProj::Ea(fut) => fut.poll(cx),
+            FSValueFlushProj::Eav(fut) => fut.poll(cx),
+        }
+    }
+}
+
 
 // LCOV_EXCL_START
 #[cfg(test)]
@@ -1172,11 +1273,12 @@ fn fsvalue_flush_inline_extattr_long() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = unflushed.flush(&idml, txg)
+    assert!(unflushed.needs_flush());
+    let flushed = unflushed.flush(42u32, &idml, txg)
         .now_or_never().unwrap()
         .unwrap();
 
-    if let ExtAttr::Inline(_) = flushed.as_extattr().unwrap() {
+    if let ExtAttr::Inline(_) = flushed.1.as_extattr().unwrap() {
         panic!("Long extattr should've become a BlobExtattr");
     }
 }
@@ -1184,9 +1286,6 @@ fn fsvalue_flush_inline_extattr_long() {
 /// Short InlineExtAttrs should be left in the B+Tree, not turned into blobs
 #[test]
 fn fsvalue_flush_inline_extattr_short() {
-    let idml = IDML::default();
-    let txg = TxgT(0);
-
     let namespace = ExtAttrNamespace::User;
     let name = OsString::from("bar");
     let dbs = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
@@ -1194,13 +1293,7 @@ fn fsvalue_flush_inline_extattr_short() {
     let iea = InlineExtAttr{namespace, name, extent};
     let unflushed = FSValue::ExtAttr(ExtAttr::Inline(iea));
 
-    let flushed = unflushed.flush(&idml, txg)
-        .now_or_never().unwrap()
-        .unwrap();
-
-    if let ExtAttr::Blob(_) = flushed.as_extattr().unwrap() {
-        panic!("Short extattr should remain inline");
-    }
+    assert!(!unflushed.needs_flush());
 }
 
 /// Long InlineExtents should be converted to BlobExtents during flush
@@ -1218,11 +1311,12 @@ fn fsvalue_flush_inline_extent_long() {
     let data = Arc::new(DivBufShared::from(vec![42u8; BYTES_PER_LBA]));
     let ile = InlineExtent::new(data);
     let unflushed = FSValue::InlineExtent(ile);
-    let flushed = unflushed.flush(&idml, txg)
+    assert!(unflushed.needs_flush());
+    let flushed = unflushed.flush(42u32, &idml, txg)
         .now_or_never().unwrap()
         .unwrap();
 
-    if let Extent::Inline(_) = flushed.as_extent().unwrap() {
+    if let Extent::Inline(_) = flushed.1.as_extent().unwrap() {
         panic!("Long extent should've become a BlobExtent");
     }
 }
@@ -1230,19 +1324,10 @@ fn fsvalue_flush_inline_extent_long() {
 /// Short InlineExtents should be left in the B+Tree, not turned into blobs
 #[test]
 fn fsvalue_flush_inline_extent_short() {
-    let idml = IDML::default();
-    let txg = TxgT(0);
-
     let data = Arc::new(DivBufShared::from(vec![0, 1, 2, 3, 4, 5]));
     let ile = InlineExtent::new(data);
     let unflushed = FSValue::InlineExtent(ile);
-    let flushed = unflushed.flush(&idml, txg)
-        .now_or_never().unwrap()
-        .unwrap();
-
-    if let Extent::Blob(_) = flushed.as_extent().unwrap() {
-        panic!("Short extent should remain inline");
-    }
+    assert!(!unflushed.needs_flush());
 }
 
 /// For best locality of reference, keys of the same object should always

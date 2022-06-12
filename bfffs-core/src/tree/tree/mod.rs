@@ -412,7 +412,8 @@ impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Future for WriteLeaf<A, D, K, V>
                     if let Err(e) = r {
                         break Err(e);
                     }
-                    let (ld, credit) = r.unwrap();
+                    let mut ld = r.unwrap();
+                    let credit = ld.take_credit();
                     let node = Node::new(NodeData::Leaf(ld));
                     let arc: Arc<Node<A, K, V>> = Arc::new(node);
                     let dp = dml.put(arc, *compressor, *txg);

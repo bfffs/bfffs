@@ -1766,8 +1766,7 @@ impl Fs {
                 FSValue::Property(_) => {
                     panic!("Directories should not have properties")
                 },
-                #[cfg(test)]
-                FSValue::Invalid => unimplemented!()
+                FSValue::Invalid => unreachable!()
             }
         }).map_ok(move |found_inode| {
             assert!(found_inode,
