@@ -732,14 +732,14 @@ impl Vdev for VdevRaid {
     }
 
     fn sync_all(&self) -> BoxVdevFut {
-        #[cfg(debug_assertions)]
         // Don't flush zones ourselves; the Cluster layer must be in charge of
         // that, so it can update the spacemap.
-        {
-            for sb in self.stripe_buffers.read().unwrap().values() {
-                assert!(sb.is_empty(), "Must call flush_zone before sync_all");
-            }
-        }
+        debug_assert!(
+            self.stripe_buffers.read().unwrap()
+            .values()
+            .all(StripeBuffer::is_empty),
+            "Must call flush_zone before sync_all"
+        );
         // TODO: handle errors on some devices
         let fut = self.blockdevs.iter()
         .map(|bd| bd.sync_all())
