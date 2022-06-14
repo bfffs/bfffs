@@ -706,8 +706,8 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeReadGuard<A, K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            TreeReadGuard::Mem(guard) => &*guard,
-            TreeReadGuard::Addr(guard, _) => &*guard,
+            TreeReadGuard::Mem(guard) => guard,
+            TreeReadGuard::Addr(guard, _) => guard,
         }
     }
 }
