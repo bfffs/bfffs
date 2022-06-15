@@ -33,6 +33,7 @@ mockall_double = "0.2.0"
 nix = { git = "http://github.com/nix-rust/nix", rev = "69738c0fd03af19053c5701a984f923ecbbfada6", default-features = false, features = ["fs", "ioctl", "mount", "time"] }
 num_enum = "0.5.1"
 num-traits = "0.2.0"
+pin-project = "1.0.10"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.16"

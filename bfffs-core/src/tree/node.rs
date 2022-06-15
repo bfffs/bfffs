@@ -17,6 +17,7 @@ use futures::{
     stream::{FuturesOrdered, FuturesUnordered}
 };
 use futures_locks::*;
+use pin_project::pin_project;
 use serde::{
     ser::{Serialize, Serializer},
     de::{self, Deserialize, DeserializeOwned, Deserializer, SeqAccess, Visitor},
@@ -34,7 +35,8 @@ use std::{
     pin::Pin,
     sync::{
         Arc,
-    }
+    },
+    task::{Context, Poll}
 };
 
 use tracing::instrument;
@@ -136,15 +138,13 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         unreachable!()
     }
 
-    /// Prepare this `Value` to be written to disk
-    // LCOV_EXCL_START   unreachable code
-    fn flush<D>(self, _dml: &D, _txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
+    /// Prepare a collection of `Value`s to be written to disk.
+    // Could use an existential output type once that feature is stable.
+    // https://rust-lang.github.io/rfcs/2071-impl-trait-existential-types.html
+    fn flush_bt<D, K: Key>(_bt: BTreeMap<K, Self>, _dml: &D, _txg: TxgT) ->
+        Pin<Box<dyn Future<Output=Result<BTreeMap<K, Self>>> + Send>>
         where D: DML + 'static, D::Addr: 'static
     {
-        // should never be called since needs_flush is false.  Ideally, this
-        // entire function should go away once generic specialization is stable
-        // https://github.com/rust-lang/rust/issues/31844
         unreachable!()
     }
 
@@ -160,6 +160,11 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
         unreachable!()
     }
 
+    /// Does this value need to be flushed to disk, separately from its Tree
+    /// node?
+    fn needs_flush(&self) -> bool {
+        false
+    }
     // LCOV_EXCL_STOP
 }
 
@@ -277,6 +282,35 @@ mod node_serializer {
     }
 }
 
+#[pin_project]
+pub(super) struct LeafDataFlush<K: Key, V: Value> {
+    #[pin]
+    credit: Credit,
+    #[pin]
+    inner: Pin<Box<dyn Future<Output=Result<BTreeMap<K, V>>> + Send>>,
+    _phantom: PhantomData<K>
+}
+
+impl<K: Key, V: Value> Future for LeafDataFlush<K, V> {
+    type Output = Result<LeafData<K, V>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let mut proj = self.as_mut().project();
+        match proj.inner.poll(cx) {
+            Poll::Pending => {
+                Poll::Pending
+            },
+            Poll::Ready(Err(e)) => {
+                Poll::Ready(Err(e))
+            },
+            Poll::Ready(Ok(items)) => {
+                let credit = proj.credit.take();
+                Poll::Ready(Ok(LeafData{credit, items}))
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct LeafData<K: Key, V> {
     /// WriteBack credit, if this `LeafData` is dirty.  Anytime the node is
@@ -314,27 +348,13 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Flush all items to stable storage.
     ///
     /// For most item types, this is a nop.
-    pub fn flush<A, D>(mut self, d: &D, txg: TxgT)
-        -> Pin<Box<dyn Future<Output=Result<(Self, Credit)>> + Send>>
+    pub(super) fn flush<A, D>(mut self, d: &D, txg: TxgT) -> LeafDataFlush<K, V>
         where D: DML<Addr=A> + 'static, A: 'static
     {
+        debug_assert!(V::NEEDS_FLUSH);
         let credit = self.credit.take();
-        if V::NEEDS_FLUSH {
-            self.items.into_iter().map(|(k, v)| {
-                v.flush(d, txg)
-                .map_ok(move |v| (k, v))
-            }).collect::<FuturesOrdered<_>>()
-            .try_collect::<Vec<_>>()
-            .map_ok(|items| {
-                let ld = LeafData{
-                    credit: Credit::null(),
-                    items: items.into_iter().collect()
-                };
-                (ld, credit)
-            }).boxed()
-        } else {
-            future::ok((self, credit)).boxed()
-        }
+        let inner = V::flush_bt(self.items, d, txg);
+        LeafDataFlush{inner, credit, _phantom: PhantomData}
     }
 
     /// Discard the contents of this `LeafData` without flushing to disk.
@@ -517,6 +537,14 @@ impl<K: Key, V: Value> LeafData<K, V> {
         let txgs = txg..txg + 1;
         let node = Box::new(Node::new(NodeData::Leaf(ld)));
         (txgs.clone(), IntElem::new(cutoff, txgs, TreePtr::Mem(node)))
+    }
+
+    /// Take all of this LeafData's Credit.
+    ///
+    /// After this, the caller is responsible for ensuring that the credit must
+    /// be repayed after self is dropped or written to disk
+    pub(super) fn take_credit(&mut self) -> Credit {
+        self.credit.take()
     }
 
     fn wb_space(&self) -> usize {
@@ -1265,6 +1293,13 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         }
     }
 
+    fn take_credit(&mut self) -> Credit {
+        match self {
+            NodeData::Leaf(ld) => ld.take_credit(),
+            NodeData::Int(_) => unimplemented!()
+        }
+    }
+
     /// Take `other`'s highest keys and merge them into ourself
     pub fn take_high_keys(&mut self, other: &mut NodeData<A, K, V>) {
         // Try to even out the nodes, but always steal at least 1
@@ -1426,6 +1461,14 @@ pub struct Node<A, K, V> (
 impl<A: Addr, K: Key, V: Value> Node<A, K, V> {
     pub fn new(node_data: NodeData<A, K, V>) -> Self {
         Node(RwLock::new(node_data))
+    }
+
+    /// Take all of this Node's Credit.
+    ///
+    /// After this, the caller is responsible for ensuring that the credit must
+    /// be repayed after self is dropped or written to disk
+    pub fn take_credit(&mut self) -> Credit {
+        self.0.get_mut().unwrap().take_credit()
     }
 
     /// Attempt to unwrap Self into a [`NodeData`].

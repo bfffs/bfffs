@@ -8,6 +8,7 @@ use futures::{
 };
 use lazy_static::lazy_static;
 use nix::unistd::{sysconf, SysconfVar};
+use pin_project::pin_project;
 use std::{
     cmp::{Ord, Ordering, PartialOrd},
     collections::BinaryHeap,
@@ -678,10 +679,12 @@ impl Future for ReschedFut {
     }
 }
 
+#[pin_project]
 /// Return type for most `VdevBlock` asynchronous methods
 pub struct VdevBlockFut {
     block_op: Option<BlockOp>,
     inner: Arc<RwLock<Inner>>,
+    #[pin]
     receiver: oneshot::Receiver<()>,
 }
 
@@ -693,7 +696,7 @@ impl Future for VdevBlockFut {
             let block_op = self.block_op.take().unwrap();
             self.inner.write().unwrap().sched_and_issue(block_op, cx);
         }
-        Pin::new(&mut self.receiver).poll(cx)
+        self.project().receiver.poll(cx)
             .map_err(|_| Error::EPIPE)
     }
 }

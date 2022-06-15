@@ -18,6 +18,7 @@ use futures::{
 #[cfg(test)] use mockall::mock;
 use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
+use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
@@ -593,9 +594,11 @@ impl VdevFile {
     }
 }
 
+#[pin_project]
 struct ReadAt {
     // Owns the buffer used by the Future
     _buf: IoVecMut,
+    #[pin]
     fut: tokio_file::ReadAt<'static>
 }
 
@@ -609,8 +612,7 @@ impl Future for ReadAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
-        match f.poll(cx) {
+        match self.project().fut.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending
@@ -618,7 +620,9 @@ impl Future for ReadAt {
     }
 }
 
+#[pin_project]
 struct WriteAt {
+    #[pin]
     fut: tokio_file::WriteAt<'static>,
     // Owns the buffer used by the Future
     _buf: IoVec,
@@ -634,8 +638,7 @@ impl Future for WriteAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
-        match f.poll(cx) {
+        match self.project().fut.poll(cx) {
             Poll::Ready(Ok(_aio_result)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending
@@ -643,7 +646,9 @@ impl Future for WriteAt {
     }
 }
 
+#[pin_project]
 struct ReadvAt {
+    #[pin]
     fut: tokio_file::ReadvAt<'static>,
     // Owns the pointer array used by the Future
     _slices: Box<[IoSliceMut<'static>]>,
@@ -661,8 +666,7 @@ impl Future for ReadvAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
-        match f.poll(cx) {
+        match self.project().fut.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending
@@ -670,7 +674,9 @@ impl Future for ReadvAt {
     }
 }
 
+#[pin_project]
 struct WritevAt{
+    #[pin]
     fut: tokio_file::WritevAt<'static>,
     // Owns the pointer array used by the Future
     _slices: Box<[IoSlice<'static>]>,
@@ -688,8 +694,7 @@ impl Future for WritevAt {
     // FuturesExt::{map, map_err}'s implementations.  So we have to define a
     // custom poll method here, with map's and map_err's functionality inlined.
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let f = unsafe{ self.map_unchecked_mut(|s| &mut s.fut) };
-        match f.poll(cx) {
+        match self.project().fut.poll(cx) {
             Poll::Ready(Ok(_l)) => Poll::Ready(Ok(())),
             Poll::Ready(Err(e)) => Poll::Ready(Err(Error::from(e))),
             Poll::Pending => Poll::Pending

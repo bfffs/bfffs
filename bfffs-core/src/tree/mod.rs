@@ -99,7 +99,7 @@ impl<A: Addr> TypicalSize for TreeOnDisk<A> {
     const TYPICAL_SIZE: usize = 32 + A::TYPICAL_SIZE;
 }
 
-impl<A: Addr> Value for TreeOnDisk<A> {}
+impl<A: Addr> Value for TreeOnDisk<A> { }
 
 // LCOV_EXCL_START
 #[cfg(test)]
