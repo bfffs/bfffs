@@ -56,5 +56,6 @@ name = "integration"
 path = "tests/integration/mod.rs"
 
 [[bench]]
-name = "fs_destroy"
+name = "bfffs-bench"
+path = "benches/bfffs-bench/mod.rs"
 harness = false
