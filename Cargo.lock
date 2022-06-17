@@ -651,7 +651,7 @@ dependencies = [
 [[package]]
 name = "fuse3"
 version = "0.4.0"
-source = "git+https://github.com/asomers/fuse3.git?rev=452c6b280bc012c6aca6200c7d8a0464e5d5c173#452c6b280bc012c6aca6200c7d8a0464e5d5c173"
+source = "git+https://github.com/asomers/fuse3.git?rev=90f4c22#90f4c223ef50ca471cf64224aa6cd35a0d6701e1"
 dependencies = [
  "async-trait",
  "bincode",
