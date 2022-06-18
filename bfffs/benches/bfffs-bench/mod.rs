@@ -28,6 +28,7 @@ pub mod util {
 pub use util::bfffs;
 use util::{bfffsd, waitfor, Bfffsd};
 
+mod fs_create;
 mod fs_destroy;
 
 #[async_trait]
@@ -113,6 +114,7 @@ impl Harness {
 
 #[derive(Parser, Clone, Debug)]
 enum SubCommand {
+    FsCreate(fs_create::Cli),
     FsDestroy(fs_destroy::Cli),
 }
 
@@ -235,7 +237,10 @@ async fn bench_one<'a>(
 }
 
 async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
-    for benchmark in [Box::new(fs_destroy::Cli::default().build())] {
+    for benchmark in [
+        Box::new(fs_create::Cli::default().build()) as Box<dyn Benchmark>,
+        Box::new(fs_destroy::Cli::default().build()) as Box<dyn Benchmark>,
+    ] {
         bench_one(None, geom_regex, benchmark, harness).await
     }
 }
@@ -262,6 +267,7 @@ async fn main() -> Result<()> {
 
     let harness = Harness::new(cli.devices, cli.options);
     let benchmark: Box<dyn Benchmark> = match cli.subcommand {
+        Some(SubCommand::FsCreate(subcmd)) => Box::new(subcmd.build()),
         Some(SubCommand::FsDestroy(subcmd)) => Box::new(subcmd.build()),
         None => {
             if cli.flamegraph.is_some() {
