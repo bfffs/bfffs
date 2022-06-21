@@ -204,7 +204,7 @@ impl Controller {
         })
     }
 
-    /// List a dataset and all of its immediate childen
+    /// List a dataset's immediate childen
     ///
     /// # Arguments
     ///
@@ -246,20 +246,7 @@ impl Controller {
                             Poll::Ready(Ok((_, Some(tree_id)))) => {
                                 let offs = self.offs.unwrap_or(0);
                                 let mut s = self.db.readdir(tree_id, offs);
-                                let o = if self.offs.is_some() {
-                                    Pin::new(&mut s).poll_next(cx)
-                                } else {
-                                    // BUG: using 0 as the offset for the parent
-                                    // create a potential for a hash collision
-                                    // with a child that happens to have an offs
-                                    // of zero, too.
-                                    let de = database::Dirent {
-                                        name: String::new(),
-                                        id: tree_id,
-                                        offs: 0
-                                    };
-                                    Poll::Ready(Some(Ok(de)))
-                                };
+                                let o = Pin::new(&mut s).poll_next(cx);
                                 self.lol = LookupOrList::List(Box::pin(s));
                                 o
                             }

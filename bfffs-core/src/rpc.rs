@@ -48,6 +48,12 @@ pub mod fs {
         pub offset: Option<u64>
     }
 
+    /// Like `readdirplus`, list all of a dataset's children with the requested
+    /// properties.
+    ///
+    /// The named dataset itself will not be included.  If `offset` is provided,
+    /// it can be used to resume a previous listing, as in `getdirentries`.
+    ///
     pub fn list(name: String, props: Vec<PropertyName>, offset: Option<u64>)
         -> Request
     {
@@ -82,6 +88,17 @@ pub mod fs {
             name,
             props
         })
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Stat {
+        pub name: String,
+        pub props: Vec<PropertyName>,
+    }
+
+    /// Lookup the requested properties for a single dataset
+    pub fn stat(name: String, props: Vec<PropertyName>) -> Request {
+        Request::FsStat(Stat{name, props})
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -126,6 +143,7 @@ pub enum Request {
     FsList(fs::List),
     FsMount(fs::Mount),
     FsSet(fs::Set),
+    FsStat(fs::Stat),
     FsUnmount(fs::Unmount),
     PoolClean(pool::Clean)
 }
@@ -138,6 +156,7 @@ pub enum Response {
     FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>),
     FsSet(Result<()>),
+    FsStat(Result<fs::DsInfo>),
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
 }
@@ -181,6 +200,13 @@ impl Response {
     pub fn into_fs_set(self) -> Result<()> {
         match self {
             Response::FsSet(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_stat(self) -> Result<fs::DsInfo> {
+        match self {
+            Response::FsStat(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

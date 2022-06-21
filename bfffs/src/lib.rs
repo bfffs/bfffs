@@ -13,7 +13,7 @@ pub use bfffs_core::{
     Error,
     Result,
 };
-use futures::{stream, Stream};
+use futures::{stream, Stream, StreamExt, TryFutureExt};
 use tokio_seqpacket::UnixSeqpacket;
 
 /// A connection to the bfffsd server
@@ -69,33 +69,82 @@ impl Bfffs {
     ///                 value returned from a previous call to this function.
     ///                 Children will be returned beginning after the entry
     ///                 whose offset is `offs`.
+    /// `depth`     -   Only return datasets this far underneath the named
+    ///                 ones.  `0` means return the named ones only, `1` means
+    ///                 return the named ones and its children, `usize::MAX`
+    ///                 means fully recurse.
     // Modeled after getdirentries(2).
     pub fn fs_list(
         &self,
         name: String,
         props: Vec<PropertyName>,
         offs: Option<u64>,
+        depth: usize,
     ) -> impl Stream<Item = Result<rpc::fs::DsInfo>> + '_ {
-        stream::try_unfold((offs, VecDeque::new()), move |(offs, mut v)| {
-            let name2 = name.clone();
+        struct State {
+            offs:     Option<u64>,
+            // The usize is the depth of children to list beneath this dataset
+            datasets: VecDeque<(usize, String)>,
+            results:  VecDeque<rpc::fs::DsInfo>,
+            // The depth of children to list beneath the stuff in results
+            depth:    usize,
+        }
+
+        let req = rpc::fs::stat(name.clone(), props.clone());
+        let parent_fut = self
+            .call(req)
+            .map_ok(rpc::Response::into_fs_stat)
+            .map_ok(Result::unwrap);
+        let parent_stream = stream::once(parent_fut);
+        let datasets = if depth > 0 {
+            VecDeque::from(vec![(depth, name)])
+        } else {
+            VecDeque::new()
+        };
+        let state = State {
+            offs,
+            datasets,
+            results: VecDeque::new(),
+            depth: depth.saturating_sub(1),
+        };
+        let children_stream = stream::try_unfold(state, move |mut state| {
             let props2 = props.clone();
             async move {
-                if v.is_empty() {
-                    let req =
-                        rpc::fs::list(name2.clone(), props2.clone(), offs);
-                    v = self.call(req).await?.into_fs_list()?.into();
-                    if v.is_empty() {
-                        return Ok(None);
+                if state.results.is_empty() {
+                    loop {
+                        let dsname =
+                            if let Some((depth, n)) = state.datasets.front() {
+                                debug_assert!(*depth > 0);
+                                state.depth = *depth;
+                                n.to_owned()
+                            } else {
+                                return Ok(None);
+                            };
+                        let props3 = props2.clone();
+                        let req = rpc::fs::list(dsname, props3, state.offs);
+                        state.results =
+                            self.call(req).await?.into_fs_list()?.into();
+                        if state.results.is_empty() {
+                            state.offs = None;
+                            state.datasets.pop_front();
+                            continue;
+                        }
+                        break;
                     }
                 }
-                let x: Option<(rpc::fs::DsInfo, (Option<u64>, VecDeque<_>))> =
-                    v.pop_front().map(|dsinfo| {
-                        let offset = Some(dsinfo.offset);
-                        (dsinfo, (offset, v))
-                    });
+                let x = state.results.pop_front().map(|dsinfo| {
+                    if state.depth > 1 {
+                        state
+                            .datasets
+                            .push_back((state.depth - 1, dsinfo.name.clone()));
+                    }
+                    state.offs = Some(dsinfo.offset);
+                    (dsinfo, state)
+                });
                 Ok(x)
             }
-        })
+        });
+        parent_stream.chain(children_stream)
     }
 
     /// Mount a file system

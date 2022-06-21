@@ -350,8 +350,7 @@ mod list_fs {
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
-        assert_eq!(1, datasets.len());
-        assert_eq!(POOLNAME, datasets[0].name);
+        assert_eq!(0, datasets.len());
     }
 
     #[rstest]
@@ -364,11 +363,8 @@ mod list_fs {
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
-        assert_eq!(2, datasets.len());
-        // The order of results is determined by a hash function and is
-        // reproducible but not meaningful
-        assert_eq!(POOLNAME, datasets[0].name);
-        assert_eq!(dsname, datasets[1].name);
+        assert_eq!(1, datasets.len());
+        assert_eq!(dsname, datasets[0].name);
     }
 
     #[rstest]
@@ -383,24 +379,14 @@ mod list_fs {
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
-        assert_eq!(3, datasets1.len());
+        assert_eq!(2, datasets1.len());
         // The order of results is determined by a hash function and is
         // reproducible but not meaningful
-        assert_eq!(POOLNAME, datasets1[0].name);
-        assert_eq!(dsname1, datasets1[1].name);
-        assert_eq!(dsname2, datasets1[2].name);
+        assert_eq!(dsname1, datasets1[0].name);
+        assert_eq!(dsname2, datasets1[1].name);
 
-        // Now read results again, but providing an offset to skip the parent
-        let datasets2 = harness.0.list_fs(POOLNAME, Some(datasets1[0].offs))
-            .try_collect::<Vec<_>>()
-            .await
-            .unwrap();
-        assert_eq!(2, datasets2.len());
-        assert_eq!(dsname1, datasets2[0].name);
-        assert_eq!(dsname2, datasets2[1].name);
-
-        // And again, but skipping the first child
-        let datasets3 = harness.0.list_fs(POOLNAME, Some(datasets2[0].offs))
+        // Now read results again, but providing an offset to skip the first
+        let datasets3 = harness.0.list_fs(POOLNAME, Some(datasets1[0].offs))
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
@@ -420,18 +406,14 @@ mod list_fs {
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
-        assert_eq!(2, l1datasets.len());
-        // The order of results is determined by a hash function and is
-        // reproducible but not meaningful
-        assert_eq!(POOLNAME, l1datasets[0].name);
-        assert_eq!(childname, l1datasets[1].name);
+        assert_eq!(1, l1datasets.len());
+        assert_eq!(childname, l1datasets[0].name);
         let l2datasets = harness.0.list_fs(&childname, None)
             .try_collect::<Vec<_>>()
             .await
             .unwrap();
-        assert_eq!(2, l2datasets.len());
-        assert_eq!(childname, l2datasets[0].name);
-        assert_eq!(grandchildname, l2datasets[1].name);
+        assert_eq!(1, l2datasets.len());
+        assert_eq!(grandchildname, l2datasets[0].name);
     }
 }
 
