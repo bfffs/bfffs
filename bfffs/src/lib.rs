@@ -7,7 +7,12 @@
 use std::{collections::VecDeque, path::Path};
 
 use bfffs_core::rpc;
-pub use bfffs_core::{controller::TreeID, property::Property, Error, Result};
+pub use bfffs_core::{
+    controller::TreeID,
+    property::{Property, PropertyName},
+    Error,
+    Result,
+};
 use futures::{stream, Stream};
 use tokio_seqpacket::UnixSeqpacket;
 
@@ -59,6 +64,7 @@ impl Bfffs {
     /// # Arguments
     ///
     /// `fsname`    -   The dataset to list, including pool name
+    /// `props`     -   Properties to look up
     /// `offs`      -   A stream resume token.  It must be either `None` or the
     ///                 value returned from a previous call to this function.
     ///                 Children will be returned beginning after the entry
@@ -67,13 +73,16 @@ impl Bfffs {
     pub fn fs_list<'a>(
         &'a self,
         name: String,
+        props: Vec<PropertyName>,
         offs: Option<u64>,
     ) -> impl Stream<Item = Result<rpc::fs::DsInfo>> + '_ {
         stream::try_unfold((offs, VecDeque::new()), move |(offs, mut v)| {
             let name2 = name.clone();
+            let props2 = props.clone();
             async move {
                 if v.is_empty() {
-                    let req = rpc::fs::list(name2.clone(), offs);
+                    let req =
+                        rpc::fs::list(name2.clone(), props2.clone(), offs);
                     v = self.call(req).await?.into_fs_list()?.into();
                     if v.is_empty() {
                         return Ok(None);

@@ -9,7 +9,7 @@ use bfffs_core::{
     controller::Controller,
     database::{Database, TreeID},
     device_manager::DevManager,
-    property::Property,
+    property::{Property, PropertyName},
 };
 use clap::{crate_version, Parser};
 use futures::{future, TryStreamExt};
@@ -219,18 +219,26 @@ mod fs {
     /// List file systems
     #[derive(Parser, Clone, Debug)]
     pub(super) struct List {
-        pub(super) datasets: Vec<String>,
+        /// Dataset properties to display, comma delimited
+        #[clap(
+            short = 'o',
+            long,
+            require_value_delimiter(true),
+            value_delimiter(',')
+        )]
+        pub(super) properties: Vec<PropertyName>,
+        pub(super) datasets:   Vec<String>,
     }
 
     impl List {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            // TODO: recursion, sorting, properties
+            // TODO: recursion, sorting
             // Sort datasets by name, until other sort options are added
             let mut all = Vec::new();
             for ds in self.datasets.into_iter() {
                 bfffs
-                    .fs_list(ds, None)
+                    .fs_list(ds, self.properties.clone(), None)
                     .try_for_each(|dsinfo| {
                         all.push(dsinfo);
                         future::ok(())
@@ -239,7 +247,11 @@ mod fs {
             }
             all.sort_unstable_by(|x, y| x.name.cmp(&y.name));
             for dsinfo in all.into_iter() {
-                println!("{}", dsinfo.name);
+                print!("{}", dsinfo.name);
+                for (prop, _source) in dsinfo.props {
+                    print!(" {}", prop)
+                }
+                println!();
             }
             Ok(())
         }
