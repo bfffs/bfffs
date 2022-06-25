@@ -131,9 +131,10 @@ mod get_prop {
     #[rstest]
     #[tokio::test]
     async fn enoent(harness: Harness) {
+        let dsname = String::from("TestPool/foo");
         assert_eq!(
             Err(Error::ENOENT),
-            harness.0.get_prop("TestPool/foo", PropertyName::Atime).await
+            harness.0.get_prop(dsname, PropertyName::Atime).await
         );
     }
 
@@ -182,7 +183,7 @@ mod get_prop {
         };
         assert_eq!(
             (expected, source),
-            harness.0.get_prop(&dsname, propname).await.unwrap()
+            harness.0.get_prop(dsname, propname).await.unwrap()
         );
     }
 
@@ -261,7 +262,7 @@ mod get_prop {
             };
             assert_eq!(
                 (expected, source),
-                harness.0.get_prop(&childname, PropertyName::Mountpoint).await
+                harness.0.get_prop(childname, PropertyName::Mountpoint).await
                     .unwrap()
             );
         }

@@ -210,7 +210,7 @@ impl Bfffsd {
         let mo2 = self.mount_opts.clone();
         let mp = self
             .controller
-            .get_prop(&name, PropertyName::Mountpoint)
+            .get_prop(name.clone(), PropertyName::Mountpoint)
             .map_ok(|(prop, _source)| PathBuf::from(prop.as_str()))
             .await?;
         tracing::debug!("mounting {:?}", mp);
