@@ -52,7 +52,6 @@ impl Property {
             PropertyName::Mountpoint =>
                 unimplemented!("Does not have a static default value"),
             PropertyName::RecordSize => Property::RecordSize(17), // 128KB
-            PropertyName::Invalid => panic!("Invalid props have no values")
         }
     }
 
@@ -161,7 +160,6 @@ pub enum PropertyName {
     BaseMountpoint,
     Mountpoint,
     RecordSize,
-    Invalid,    // Must be last!
 }
 
 impl PropertyName {
@@ -170,17 +168,6 @@ impl PropertyName {
             PropertyName::BaseMountpoint
         } else {
             self
-        }
-    }
-
-    #[must_use]
-    pub fn next(self) -> PropertyName {
-        match self {
-            PropertyName::Atime => PropertyName::BaseMountpoint,
-            PropertyName::BaseMountpoint => PropertyName::Mountpoint,
-            PropertyName::Mountpoint => PropertyName::RecordSize,
-            PropertyName::RecordSize => PropertyName::Invalid,
-            PropertyName::Invalid => PropertyName::Invalid,
         }
     }
 }
