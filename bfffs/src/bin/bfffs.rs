@@ -235,15 +235,6 @@ mod fs {
 
     impl List {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
-            fn hname(propname: PropertyName) -> &'static str {
-                match propname {
-                    PropertyName::Atime => "ATIME",
-                    PropertyName::BaseMountpoint => "BASEMOUNTPOINT",
-                    PropertyName::Mountpoint => "MOUNTPOINT",
-                    PropertyName::RecordSize => "RECSIZE",
-                }
-            }
-
             let bfffs = Bfffs::new(sock).await.unwrap();
             // TODO: recursion, sorting
             let mut all = Vec::new();
@@ -285,7 +276,8 @@ mod fs {
                     let mut row = tabular::Row::new();
                     row.add_cell(dsinfo.name);
                     for (prop, _source) in dsinfo.props {
-                        row.add_cell(prop);
+                        let hprop = humanize_property(&prop);
+                        row.add_cell(hprop);
                     }
                     table.add_row(row);
                 }
@@ -342,6 +334,36 @@ mod fs {
         List(List),
         Mount(Mount),
         Unmount(Unmount),
+    }
+
+    fn hname(propname: PropertyName) -> &'static str {
+        match propname {
+            PropertyName::Atime => "ATIME",
+            PropertyName::BaseMountpoint => "BASEMOUNTPOINT",
+            PropertyName::Mountpoint => "MOUNTPOINT",
+            PropertyName::RecordSize => "RECSIZE",
+        }
+    }
+
+    si_scale::scale_fn!(bibytes0,
+                                 base: B1024,
+                                 constraint: UnitAndAbove,
+                                 mantissa_fmt: "{:.0}",
+                                 groupings: '_',
+                                 unit: "B");
+
+    fn humanize_property(prop: &Property) -> String {
+        match prop {
+            Property::Atime(b) => {
+                match b {
+                    true => String::from("on"),
+                    false => String::from("off"),
+                }
+            }
+            Property::BaseMountpoint(s) => s.to_owned(),
+            Property::Mountpoint(s) => s.to_owned(),
+            Property::RecordSize(i) => bibytes0(1 << i),
+        }
     }
 }
 

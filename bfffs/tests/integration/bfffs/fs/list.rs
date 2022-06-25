@@ -116,6 +116,27 @@ fn help() {
     bfffs().arg("fs").arg("list").arg("-h").assert().success();
 }
 
+/// By default, numeric properties should be printed in human-friendly units
+#[rstest]
+#[tokio::test]
+async fn humanize() {
+    let h = harness::<&'static str>(&[]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("list")
+        .arg("-o")
+        .arg("recsize")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout(
+            "NAME   RECSIZE\n\
+            mypool 128 kiB\n",
+        );
+}
+
 #[rstest]
 #[tokio::test]
 async fn multi_arg() {
@@ -184,11 +205,11 @@ async fn parseable() {
         .arg("list")
         .arg("-p")
         .arg("-o")
-        .arg("atime,mountpoint")
+        .arg("atime,mountpoint,recsize")
         .arg("mypool")
         .assert()
         .success()
-        .stdout("mypool\ton\t/mypool\n");
+        .stdout("mypool\ton\t/mypool\t131072\n");
 }
 
 #[rstest]

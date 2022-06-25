@@ -11,3 +11,4 @@ members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 
 [patch.crates-io]
 nix = { git = "https://github.com/nix-rust/nix.git", rev = "69738c0fd03af19053c5701a984f923ecbbfada6" }
+si-scale = { git = "https://github.com/asomers/si-scale.git", rev = "55aece3b7203e97ae06a0ad2bb12129e1cc615ff"}
