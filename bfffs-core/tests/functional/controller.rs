@@ -124,7 +124,6 @@ mod get_prop {
                 Property::BaseMountpoint("/xxx".to_owned()),
             PropertyName::Mountpoint => Property::Mountpoint("/xxx".to_owned()),
             PropertyName::RecordSize => Property::RecordSize(15),
-            PropertyName::Invalid => unimplemented!()
         }
     }
 
