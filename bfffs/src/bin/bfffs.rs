@@ -1,4 +1,5 @@
 use std::{
+    io::{self, Write},
     path::{Path, PathBuf},
     process::exit,
     sync::Arc,
@@ -92,12 +93,12 @@ struct Dump {
 impl Dump {
     async fn dump_alloct(self) {
         let db = self.load_db().await;
-        db.dump_alloct(&mut std::io::stdout()).await.unwrap()
+        db.dump_alloct(&mut io::stdout()).await.unwrap()
     }
 
     async fn dump_forest(self) {
         let db = self.load_db().await;
-        db.dump_forest(&mut std::io::stdout()).await.unwrap()
+        db.dump_forest(&mut io::stdout()).await.unwrap()
     }
 
     async fn dump_fsm(self) {
@@ -119,14 +120,14 @@ impl Dump {
 
     async fn dump_ridt(self) {
         let db = self.load_db().await;
-        db.dump_ridt(&mut std::io::stdout()).await.unwrap()
+        db.dump_ridt(&mut io::stdout()).await.unwrap()
     }
 
     async fn dump_tree(self) {
         let db = self.load_db().await;
         // For now, hardcode tree_id to 0
         let tree_id = TreeID(0);
-        db.dump_fs(&mut std::io::stdout(), tree_id).await.unwrap()
+        db.dump_fs(&mut io::stdout(), tree_id).await.unwrap()
     }
 
     async fn load_db(&self) -> Arc<Database> {
@@ -219,6 +220,8 @@ mod fs {
     /// List file systems
     #[derive(Parser, Clone, Debug)]
     pub(super) struct List {
+        #[clap(short = 'p', long, help = "Scriptable output")]
+        pub(super) parseable:  bool,
         /// Dataset properties to display, comma delimited
         #[clap(
             short = 'o',
@@ -232,9 +235,17 @@ mod fs {
 
     impl List {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            fn hname(propname: PropertyName) -> &'static str {
+                match propname {
+                    PropertyName::Atime => "ATIME",
+                    PropertyName::BaseMountpoint => "BASEMOUNTPOINT",
+                    PropertyName::Mountpoint => "MOUNTPOINT",
+                    PropertyName::RecordSize => "RECSIZE",
+                }
+            }
+
             let bfffs = Bfffs::new(sock).await.unwrap();
             // TODO: recursion, sorting
-            // Sort datasets by name, until other sort options are added
             let mut all = Vec::new();
             for ds in self.datasets.into_iter() {
                 bfffs
@@ -245,13 +256,40 @@ mod fs {
                     })
                     .await?;
             }
+            // Sort datasets by name, until other sort options are added
             all.sort_unstable_by(|x, y| x.name.cmp(&y.name));
-            for dsinfo in all.into_iter() {
-                print!("{}", dsinfo.name);
-                for (prop, _source) in dsinfo.props {
-                    print!(" {}", prop)
+
+            if self.parseable {
+                let stdout = io::stdout();
+                let lock = stdout.lock();
+                let mut buf = io::BufWriter::new(lock);
+                for dsinfo in all {
+                    let mut row = vec![dsinfo.name];
+                    for (prop, _source) in dsinfo.props {
+                        row.push(format!("{}", prop));
+                    }
+                    writeln!(buf, "{}", row.join("\t")).unwrap();
                 }
-                println!();
+                buf.flush().unwrap();
+            } else {
+                let row_spec = vec!["{:<}"; 1 + self.properties.len()];
+                let mut table = tabular::Table::new(&row_spec.join(" "));
+                let mut hrow = tabular::Row::new();
+                hrow.add_cell("NAME");
+                for i in 0..(self.properties.len()) {
+                    hrow.add_cell(hname(self.properties[i]));
+                }
+                table.add_row(hrow);
+
+                for dsinfo in all {
+                    let mut row = tabular::Row::new();
+                    row.add_cell(dsinfo.name);
+                    for (prop, _source) in dsinfo.props {
+                        row.add_cell(prop);
+                    }
+                    table.add_row(row);
+                }
+                print!("{}", table);
             }
             Ok(())
         }

@@ -10,7 +10,7 @@ ignore = [
 	"bfffs-core",
 ]
 force_multiline_blocks = true
-format_strings = true
+format_strings = false
 group_imports = "StdExternalCrate"
 imports_granularity = "Crate"
 imports_layout = "HorizontalVertical"

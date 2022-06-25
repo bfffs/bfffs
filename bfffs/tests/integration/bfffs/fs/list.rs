@@ -85,7 +85,11 @@ async fn child() {
         .arg("mypool")
         .assert()
         .success()
-        .stdout("mypool\nmypool/child\n");
+        .stdout(
+            "NAME\n\
+             mypool\n\
+             mypool/child\n",
+        );
 }
 
 #[rstest]
@@ -100,7 +104,11 @@ async fn grandchild() {
         .arg("mypool/child")
         .assert()
         .success()
-        .stdout("mypool/child\nmypool/child/grandchild\n");
+        .stdout(
+            "NAME\n\
+             mypool/child\n\
+             mypool/child/grandchild\n",
+        );
 }
 
 #[test]
@@ -127,8 +135,11 @@ async fn multi_arg() {
         .assert()
         .success()
         .stdout(
-            "mypool/brother\nmypool/brother/grandson\nmypool/sister\nmypool/\
-             sister/granddaughter\n",
+            "NAME\n\
+             mypool/brother\n\
+             mypool/brother/grandson\n\
+             mypool/sister\n\
+             mypool/sister/granddaughter\n",
         );
 }
 
@@ -145,7 +156,7 @@ async fn lots() {
     }
     let h = harness(&dsnames);
     dsnames.sort();
-    let mut expected = vec![String::from("mypool")];
+    let mut expected = vec![String::from("NAME"), String::from("mypool")];
     expected.extend(dsnames.into_iter());
     let mut expected = expected.join("\n");
     expected.push('\n');
@@ -158,6 +169,26 @@ async fn lots() {
         .assert()
         .success()
         .stdout(expected);
+}
+
+/// With -H the header row should not be printed, and the columns should be
+/// separated by tabs.
+#[rstest]
+#[tokio::test]
+async fn parseable() {
+    let h = harness::<&'static str>(&[]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("list")
+        .arg("-p")
+        .arg("-o")
+        .arg("atime,mountpoint")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout("mypool\ton\t/mypool\n");
 }
 
 #[rstest]
@@ -174,7 +205,10 @@ async fn props() {
         .arg("mypool")
         .assert()
         .success()
-        .stdout("mypool on /mypool\n");
+        .stdout(
+            "NAME   ATIME MOUNTPOINT\n\
+             mypool on    /mypool\n",
+        );
 }
 
 #[rstest]
@@ -189,7 +223,10 @@ async fn pool_only() {
         .arg("mypool")
         .assert()
         .success()
-        .stdout("mypool\n");
+        .stdout(
+            "NAME\n\
+             mypool\n",
+        );
 }
 
 #[rstest]
@@ -204,5 +241,10 @@ async fn siblings() {
         .arg("mypool")
         .assert()
         .success()
-        .stdout("mypool\nmypool/brother\nmypool/sister\n");
+        .stdout(
+            "NAME\n\
+             mypool\n\
+             mypool/brother\n\
+             mypool/sister\n",
+        );
 }
