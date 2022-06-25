@@ -136,14 +136,14 @@ impl Controller {
 
     /// Get the value of the `propname` property on the given dataset
     #[tracing::instrument(skip(self))]
-    pub async fn get_prop(&self, dataset: &str, propname: PropertyName)
+    pub async fn get_prop(&self, dataset: String, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
-        let dsname = self.strip_pool_name(dataset)?;
+        let dsname = self.strip_pool_name(&dataset)?;
         let guard = self.filesystems.read().await;
         match self.db.lookup_fs(dsname).await? {
             (_parent, Some(tree_id)) => {
-                self.get_prop_locked(&guard, dataset, tree_id, propname).await
+                self.get_prop_locked(&guard, &dataset, tree_id, propname).await
             }
             (_, None) => {
                 tracing::debug!("no property found");

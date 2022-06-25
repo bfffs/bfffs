@@ -1,5 +1,6 @@
 //vim: tw=80
 //! Dataset Properties
+use std::{fmt, str::FromStr};
 use crate::{Error, Result};
 use serde_derive::*;
 
@@ -100,6 +101,20 @@ impl Property {
     }
 }
 
+impl fmt::Display for Property {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Property::Atime(b) => match b {
+                true => "on".fmt(f),
+                false => "off".fmt(f),
+            },
+            Property::BaseMountpoint(s) => s.fmt(f),
+            Property::Mountpoint(s) => s.fmt(f),
+            Property::RecordSize(i) => (2 << i).fmt(f),
+        }
+    }
+}
+
 impl TryFrom<&str> for Property {
     type Error = Error;
 
@@ -172,6 +187,30 @@ impl PropertyName {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FromStrError{}
+impl fmt::Display for FromStrError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Not a valid property name")
+    }
+}
+impl std::error::Error for FromStrError {}
+
+impl FromStr for PropertyName {
+    type Err = FromStrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, FromStrError> {
+        match s {
+            "atime" => Ok(PropertyName::Atime),
+            "basemountpoint" => Ok(PropertyName::BaseMountpoint),
+            "mountpoint" => Ok(PropertyName::Mountpoint),
+            "recordsize" => Ok(PropertyName::RecordSize),
+            "recsize" => Ok(PropertyName::RecordSize),
+            _ => Err(FromStrError{})
+        }
+    }
+}
+
 /// Where did the property come from?
 // The inner value is the number of levels upward from which the property was
 // inherited:
@@ -180,7 +219,8 @@ impl PropertyName {
 // Some(2)  -   Inherited from grandparent
 // ...
 // None     -   Default value
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
+         Serialize)]
 pub struct PropertySource(pub(crate) Option<u8>);
 impl PropertySource {
     /// No value has been set for this property on this dataset or any of its

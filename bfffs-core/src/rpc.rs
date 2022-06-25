@@ -11,7 +11,7 @@ use crate::{
 use serde_derive::{Deserialize, Serialize};
 
 pub mod fs {
-    use crate::property::Property;
+    use crate::property::{Property, PropertyName, PropertySource};
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
 
@@ -37,18 +37,21 @@ pub mod fs {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct DsInfo {
         pub name:   String,
-        pub props:  Vec<Property>,
+        pub props:  Vec<(Property, PropertySource)>,
         pub offset: u64
     }
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct List {
         pub name: String,
+        pub props: Vec<PropertyName>,
         pub offset: Option<u64>
     }
 
-    pub fn list(name: String, offset: Option<u64>) -> Request {
-        Request::FsList(List{name, offset})
+    pub fn list(name: String, props: Vec<PropertyName>, offset: Option<u64>)
+        -> Request
+    {
+        Request::FsList(List{name, props, offset})
     }
 
     #[derive(Debug, Deserialize, Serialize)]

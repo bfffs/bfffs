@@ -22,7 +22,11 @@ use fuse3::{
     raw::{MountHandle, Session},
     MountOptions,
 };
-use futures::{stream::FuturesUnordered, TryFutureExt, TryStreamExt};
+use futures::{
+    stream::{FuturesOrdered, FuturesUnordered},
+    TryFutureExt,
+    TryStreamExt,
+};
 use nix::{
     fcntl::{open, OFlag},
     sys::stat::Mode,
@@ -210,7 +214,7 @@ impl Bfffsd {
         let mo2 = self.mount_opts.clone();
         let mp = self
             .controller
-            .get_prop(&name, PropertyName::Mountpoint)
+            .get_prop(name.clone(), PropertyName::Mountpoint)
             .map_ok(|(prop, _source)| PathBuf::from(prop.as_str()))
             .await?;
         tracing::debug!("mounting {:?}", mp);
@@ -278,30 +282,44 @@ impl Bfffsd {
                 // this value of chunkqty is a guess, not well-calculated
                 const CHUNKQTY: usize = 64;
 
-                let mut rstream = self
+                let r = self
                     .controller
                     .list_fs(&req.name, req.offset)
-                    .try_chunks(CHUNKQTY);
-                let r = rstream
+                    .try_chunks(CHUNKQTY)
                     .try_next()
-                    .map_ok(|ov| {
-                        match ov {
-                            Some(v) => {
-                                v.into_iter()
-                                    .map(|de| {
+                    .await;
+                let r = match r {
+                    Ok(Some(v)) => {
+                        // It's tempting to move the get_prop call into an
+                        // and_then method after list_fs.  But it doesn't work
+                        // due to a Rust lifetime analysis bug.
+                        // https://github.com/rust-lang/rust/issues/64552
+                        v.into_iter()
+                            .map(|de| {
+                                req.props
+                                    .iter()
+                                    .map(|propname| {
+                                        let name = de.name.clone();
+                                        self.controller
+                                            .get_prop(name, *propname)
+                                    })
+                                    .collect::<FuturesOrdered<_>>()
+                                    .try_collect::<Vec<_>>()
+                                    .map_ok(move |props| {
                                         rpc::fs::DsInfo {
-                                            name:   de.name,
-                                            props:  vec![], // TODO
+                                            name: de.name,
+                                            props,
                                             offset: de.offs,
                                         }
                                     })
-                                    .collect::<Vec<_>>()
-                            }
-                            None => vec![],
-                        }
-                    })
-                    .map_err(|tce| tce.1)
-                    .await;
+                            })
+                            .collect::<FuturesUnordered<_>>()
+                            .try_collect::<Vec<_>>()
+                            .await
+                    }
+                    Ok(None) => Ok(vec![]),
+                    Err(tce) => Err(tce.1),
+                };
                 rpc::Response::FsList(r)
             }
             rpc::Request::FsMount(req) => {

@@ -162,6 +162,23 @@ async fn lots() {
 
 #[rstest]
 #[tokio::test]
+async fn props() {
+    let h = harness::<&'static str>(&[]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("list")
+        .arg("-o")
+        .arg("atime,mountpoint")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout("mypool on /mypool\n");
+}
+
+#[rstest]
+#[tokio::test]
 async fn pool_only() {
     let h = harness::<&'static str>(&[]);
     bfffs()
