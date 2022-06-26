@@ -212,18 +212,18 @@ impl fmt::Display for PropertyName {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NameFromStrError{}
-impl fmt::Display for NameFromStrError {
+pub struct ParsePropertyNameError{}
+impl fmt::Display for ParsePropertyNameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Not a valid property name")
     }
 }
-impl std::error::Error for NameFromStrError {}
+impl std::error::Error for ParsePropertyNameError {}
 
 impl FromStr for PropertyName {
-    type Err = NameFromStrError;
+    type Err = ParsePropertyNameError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, NameFromStrError> {
+    fn from_str(s: &str) -> std::result::Result<Self, ParsePropertyNameError> {
         match s {
             "atime" => Ok(PropertyName::Atime),
             "basemountpoint" => Ok(PropertyName::BaseMountpoint),
@@ -231,7 +231,7 @@ impl FromStr for PropertyName {
             "name" => Ok(PropertyName::Name),
             "recordsize" => Ok(PropertyName::RecordSize),
             "recsize" => Ok(PropertyName::RecordSize),
-            _ => Err(NameFromStrError{})
+            _ => Err(ParsePropertyNameError{})
         }
     }
 }
@@ -280,24 +280,24 @@ impl fmt::Display for PropertySource {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SourceFromStrError{}
-impl fmt::Display for SourceFromStrError {
+pub struct ParsePropertySourceError{}
+impl fmt::Display for ParsePropertySourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Not a valid property source")
     }
 }
-impl std::error::Error for SourceFromStrError {}
+impl std::error::Error for ParsePropertySourceError {}
 
 impl FromStr for PropertySource {
-    type Err = SourceFromStrError;
+    type Err = ParsePropertySourceError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, SourceFromStrError> {
+    fn from_str(s: &str) -> std::result::Result<Self, ParsePropertySourceError> {
         match s {
             "default" => Ok(PropertySource::Default),
             "local" => Ok(PropertySource::LOCAL),
             "none" => Ok(PropertySource::None),
             "inherited" => Ok(PropertySource::Set(1)),
-            _ => Err(SourceFromStrError{})
+            _ => Err(ParsePropertySourceError{})
         }
     }
 }
