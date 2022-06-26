@@ -123,6 +123,7 @@ mod get_prop {
             PropertyName::BaseMountpoint =>
                 Property::BaseMountpoint("/xxx".to_owned()),
             PropertyName::Mountpoint => Property::Mountpoint("/xxx".to_owned()),
+            PropertyName::Name => unimplemented!(),
             PropertyName::RecordSize => Property::RecordSize(15),
         }
     }
@@ -294,6 +295,19 @@ mod get_prop {
         {
             test(harness, PropertySource::FROM_GRANDPARENT, mounted).await
         }
+
+        /// Get the name pseudoproperty
+        #[rstest]
+        #[tokio::test]
+        async fn name(harness: Harness) {
+            let childname = format!("{}/child", POOLNAME);
+            harness.0.create_fs(POOLNAME).await.unwrap();
+            harness.0.create_fs(&childname).await.unwrap();
+            assert_eq!(
+                (Property::Name(childname.clone()), PropertySource::DEFAULT),
+                harness.0.get_prop(childname, PropertyName::Name).await.unwrap()
+            );
+        }
     }
 }
 
@@ -440,6 +454,16 @@ mod set_prop {
         harness.0.create_fs(POOLNAME).await.unwrap();
         let _fs = harness.0.new_fs(POOLNAME).await.unwrap();
         harness.0.set_prop(POOLNAME, Property::Atime(false)).await.unwrap();
+    }
+
+    #[rstest]
+    #[tokio::test]
+    #[should_panic(expected = "Immutable property")]
+    async fn set_prop(harness: Harness) {
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        let _fs = harness.0.new_fs(POOLNAME).await.unwrap();
+        harness.0.set_prop(POOLNAME, Property::Name(String::from("xxx")))
+            .await.unwrap();
     }
 
     #[rstest]

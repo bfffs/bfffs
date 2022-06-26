@@ -139,6 +139,10 @@ impl Controller {
     pub async fn get_prop(&self, dataset: String, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
+        if propname == PropertyName::Name {
+            // Hard-code this pseudoproperty
+            return Ok((Property::Name(dataset), PropertySource::DEFAULT));
+        }
         let dsname = self.strip_pool_name(&dataset)?;
         let guard = self.filesystems.read().await;
         match self.db.lookup_fs(dsname).await? {

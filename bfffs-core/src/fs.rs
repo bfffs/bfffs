@@ -2279,6 +2279,7 @@ impl Fs {
                 self.atime.store(atime, Ordering::Relaxed),
             Property::RecordSize(exp) =>
                 self.record_size.store(exp, Ordering::Relaxed),
+            Property::Name(_) => panic!("Immutable property"),
             _ => todo!(),
         }
 
