@@ -36,6 +36,9 @@ pub enum Property {
     /// "/", the pool name, and the file system name.
     Mountpoint(String),
 
+    /// The dataset's name
+    Name(String),
+
     /// Suggested block size for newly written data.
     ///
     /// Units are in bytes, log base 2.  So `RecordSize(16)` means 64KB records.
@@ -51,6 +54,8 @@ impl Property {
             PropertyName::BaseMountpoint =>
                 Property::BaseMountpoint("".to_string()),
             PropertyName::Mountpoint =>
+                unimplemented!("Does not have a static default value"),
+            PropertyName::Name =>
                 unimplemented!("Does not have a static default value"),
             PropertyName::RecordSize => Property::RecordSize(17), // 128KB
         }
@@ -74,6 +79,7 @@ impl Property {
             Property::Atime(_) => PropertyName::Atime,
             Property::BaseMountpoint(_) => PropertyName::BaseMountpoint,
             Property::Mountpoint(_) => PropertyName::Mountpoint,
+            Property::Name(_) => PropertyName::Name,
             Property::RecordSize(_) => PropertyName::RecordSize,
         }
     }
@@ -89,6 +95,7 @@ impl Property {
         match self {
             Property::BaseMountpoint(mp) => mp,
             Property::Mountpoint(mp) => mp,
+            Property::Name(s) => s,
             _ => panic!("{:?} is not a str Property", self)
         }
     }
@@ -110,6 +117,7 @@ impl fmt::Display for Property {
             },
             Property::BaseMountpoint(s) => s.fmt(f),
             Property::Mountpoint(s) => s.fmt(f),
+            Property::Name(s) => s.fmt(f),
             Property::RecordSize(i) => (1 << i).fmt(f),
         }
     }
@@ -174,15 +182,16 @@ pub enum PropertyName {
     Atime,
     BaseMountpoint,
     Mountpoint,
+    Name,
     RecordSize,
 }
 
 impl PropertyName {
     pub(crate) fn inheritable(self) -> Self {
-        if let PropertyName::Mountpoint = self {
-            PropertyName::BaseMountpoint
-        } else {
-            self
+        match self {
+            PropertyName::Mountpoint => PropertyName::BaseMountpoint,
+            PropertyName::Name => unimplemented!(),
+            x => x
         }
     }
 }
@@ -204,6 +213,7 @@ impl FromStr for PropertyName {
             "atime" => Ok(PropertyName::Atime),
             "basemountpoint" => Ok(PropertyName::BaseMountpoint),
             "mountpoint" => Ok(PropertyName::Mountpoint),
+            "name" => Ok(PropertyName::Name),
             "recordsize" => Ok(PropertyName::RecordSize),
             "recsize" => Ok(PropertyName::RecordSize),
             _ => Err(FromStrError{})
@@ -258,6 +268,7 @@ fn property_try_from() {
         Property::try_from("mountpoint=/mnt"));
     assert_eq!(Err(Error::EINVAL),
         Property::try_from("mountpoint"));
+    assert_eq!(Err(Error::EINVAL), Property::try_from("name"));
     assert_eq!(Ok(Property::RecordSize(12)),
                Property::try_from("record_size=4096"));
     assert_eq!(Ok(Property::RecordSize(13)),

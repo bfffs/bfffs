@@ -227,7 +227,8 @@ mod fs {
             short = 'o',
             long,
             require_value_delimiter(true),
-            value_delimiter(',')
+            value_delimiter(','),
+            default_value = "name"
         )]
         pub(super) properties: Vec<PropertyName>,
         pub(super) datasets:   Vec<String>,
@@ -255,7 +256,7 @@ mod fs {
                 let lock = stdout.lock();
                 let mut buf = io::BufWriter::new(lock);
                 for dsinfo in all {
-                    let mut row = vec![dsinfo.name];
+                    let mut row = Vec::new();
                     for (prop, _source) in dsinfo.props {
                         row.push(format!("{}", prop));
                     }
@@ -263,10 +264,9 @@ mod fs {
                 }
                 buf.flush().unwrap();
             } else {
-                let row_spec = vec!["{:<}"; 1 + self.properties.len()];
+                let row_spec = vec!["{:<}"; self.properties.len()];
                 let mut table = tabular::Table::new(&row_spec.join(" "));
                 let mut hrow = tabular::Row::new();
-                hrow.add_cell("NAME");
                 for i in 0..(self.properties.len()) {
                     hrow.add_cell(hname(self.properties[i]));
                 }
@@ -274,7 +274,6 @@ mod fs {
 
                 for dsinfo in all {
                     let mut row = tabular::Row::new();
-                    row.add_cell(dsinfo.name);
                     for (prop, _source) in dsinfo.props {
                         let hprop = humanize_property(&prop);
                         row.add_cell(hprop);
@@ -341,6 +340,7 @@ mod fs {
             PropertyName::Atime => "ATIME",
             PropertyName::BaseMountpoint => "BASEMOUNTPOINT",
             PropertyName::Mountpoint => "MOUNTPOINT",
+            PropertyName::Name => "NAME",
             PropertyName::RecordSize => "RECSIZE",
         }
     }
@@ -362,6 +362,7 @@ mod fs {
             }
             Property::BaseMountpoint(s) => s.to_owned(),
             Property::Mountpoint(s) => s.to_owned(),
+            Property::Name(s) => s.to_owned(),
             Property::RecordSize(i) => bibytes0(1 << i),
         }
     }
