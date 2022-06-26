@@ -797,7 +797,7 @@ root:
             .await
             .unwrap();
         assert_eq!(val, Property::default_value(PropertyName::Atime));
-        assert_eq!(source, PropertySource::DEFAULT);
+        assert_eq!(source, PropertySource::Default);
     }
 
     /// getattr on the filesystem's root directory

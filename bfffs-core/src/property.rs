@@ -1,6 +1,9 @@
 //vim: tw=80
 //! Dataset Properties
-use std::{fmt, str::FromStr};
+use std::{
+    fmt,
+    str::FromStr
+};
 use crate::{Error, Result};
 use serde_derive::*;
 
@@ -231,17 +234,23 @@ impl FromStr for PropertyName {
 // None     -   Default value
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
-pub struct PropertySource(pub(crate) Option<u8>);
-impl PropertySource {
+pub enum PropertySource {
+    /// This is a pseudoproperty that has no source.
+    None,
     /// No value has been set for this property on this dataset or any of its
     /// parents.
-    pub const DEFAULT: PropertySource = PropertySource(None);
-    /// The property's value is inherited from the grandparent dataset.
-    pub const FROM_PARENT: PropertySource = PropertySource(Some(1));
-    /// The property's value is inherited from the parent dataset.
-    pub const FROM_GRANDPARENT: PropertySource = PropertySource(Some(2));
+    Default,
+    /// The property was explicitly set on this dataset or a on an ancestor.
+    Set(u8)
+}
+
+impl PropertySource {
     /// The property was explicitly set on this dataset
-    pub const LOCAL: PropertySource = PropertySource(Some(0u8));
+    pub const LOCAL: PropertySource = PropertySource::Set(0);
+    /// The property's value is inherited from the grandparent dataset.
+    pub const FROM_PARENT: PropertySource = PropertySource::Set(1);
+    /// The property's value is inherited from the parent dataset.
+    pub const FROM_GRANDPARENT: PropertySource = PropertySource::Set(2);
 }
 
 // LCOV_EXCL_START

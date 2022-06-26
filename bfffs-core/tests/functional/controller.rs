@@ -163,12 +163,12 @@ mod get_prop {
         let dsname = format!("{}/child", POOLNAME);
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&dsname).await.unwrap();
-        let expected = if PropertySource::DEFAULT == source {
+        let expected = if PropertySource::Default == source {
             Property::default_value(propname)
         } else {
             get_nondefault_value(propname)
         };
-        if source == PropertySource::DEFAULT {
+        if source == PropertySource::Default {
             // do nothing
         } else if source == PropertySource::LOCAL {
             harness.0.set_prop(&dsname, expected.clone()).await.unwrap();
@@ -191,13 +191,13 @@ mod get_prop {
     #[apply(inheritable_props)]
     #[tokio::test]
     async fn default_mounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::DEFAULT, true, propname).await
+        test(harness, PropertySource::Default, true, propname).await
     }
 
     #[apply(inheritable_props)]
     #[tokio::test]
     async fn default_unmounted(harness: Harness, propname: PropertyName) {
-        test(harness, PropertySource::DEFAULT, false, propname).await
+        test(harness, PropertySource::Default, false, propname).await
     }
 
     #[apply(inheritable_props)]
@@ -239,7 +239,7 @@ mod get_prop {
             harness.0.create_fs(&grandparentname).await.unwrap();
             harness.0.create_fs(&parentname).await.unwrap();
             harness.0.create_fs(&childname).await.unwrap();
-            let expected = if source == PropertySource::DEFAULT {
+            let expected = if source == PropertySource::Default {
                 Property::mountpoint(format!("/{}/grandparent/parent/child",
                     POOLNAME))
             } else if source == PropertySource::FROM_PARENT {
@@ -273,7 +273,7 @@ mod get_prop {
         #[case(true)]
         #[tokio::test]
         async fn default(harness: Harness, #[case] mounted: bool) {
-            test(harness, PropertySource::DEFAULT, mounted).await
+            test(harness, PropertySource::Default, mounted).await
         }
 
         #[rstest]
@@ -304,7 +304,7 @@ mod get_prop {
             harness.0.create_fs(POOLNAME).await.unwrap();
             harness.0.create_fs(&childname).await.unwrap();
             assert_eq!(
-                (Property::Name(childname.clone()), PropertySource::DEFAULT),
+                (Property::Name(childname.clone()), PropertySource::None),
                 harness.0.get_prop(childname, PropertyName::Name).await.unwrap()
             );
         }

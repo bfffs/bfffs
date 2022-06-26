@@ -141,7 +141,7 @@ impl Controller {
     {
         if propname == PropertyName::Name {
             // Hard-code this pseudoproperty
-            return Ok((Property::Name(dataset), PropertySource::DEFAULT));
+            return Ok((Property::Name(dataset), PropertySource::None));
         }
         let dsname = self.strip_pool_name(&dataset)?;
         let guard = self.filesystems.read().await;
@@ -177,10 +177,11 @@ impl Controller {
                     // To construct the Mountpoint property, we must combine the
                     // inherited BaseMountpoint with 0 or more components of the
                     // dataset name
-                    let mp = match source.0 {
-                        None => format!("/{}", dataset),
-                        Some(0) => bmp,
-                        Some(i) => {
+                    let mp = match source {
+                        PropertySource::Default => format!("/{}", dataset),
+                        PropertySource::LOCAL => bmp,
+                        PropertySource::Set(i) => {
+                            debug_assert!(i > 0);
                             let nparts = dataset.chars()
                                 .filter(|c| *c == '/')
                                 .count();
@@ -189,7 +190,8 @@ impl Controller {
                                     .last()
                                     .unwrap()
                             )
-                        }
+                        },
+                        PropertySource::None => unreachable!()
                     };
                     (Property::Mountpoint(mp), source)
                 } else {
