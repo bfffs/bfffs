@@ -110,7 +110,7 @@ impl fmt::Display for Property {
             },
             Property::BaseMountpoint(s) => s.fmt(f),
             Property::Mountpoint(s) => s.fmt(f),
-            Property::RecordSize(i) => (2 << i).fmt(f),
+            Property::RecordSize(i) => (1 << i).fmt(f),
         }
     }
 }

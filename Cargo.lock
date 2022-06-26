@@ -1746,8 +1746,7 @@ checksum = "7fdf1b9db47230893d76faad238fd6097fd6d6a9245cd7a4d90dbd639536bbd2"
 [[package]]
 name = "si-scale"
 version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ef92341d2da57526860a94e517e5c175208f55f0b13e3753b44ad44e8221050"
+source = "git+https://github.com/asomers/si-scale.git?rev=55aece3b7203e97ae06a0ad2bb12129e1cc615ff#55aece3b7203e97ae06a0ad2bb12129e1cc615ff"
 
 [[package]]
 name = "signal-hook-registry"
