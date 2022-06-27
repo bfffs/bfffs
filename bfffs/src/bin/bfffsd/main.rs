@@ -313,7 +313,7 @@ impl Bfffsd {
                                         }
                                     })
                             })
-                            .collect::<FuturesUnordered<_>>()
+                            .collect::<FuturesOrdered<_>>()
                             .try_collect::<Vec<_>>()
                             .await
                     }

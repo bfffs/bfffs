@@ -1170,7 +1170,10 @@ impl Fs {
                     break;
                 }
             }
-            let source = PropertySource(source_levels);
+            let source = match source_levels {
+                None => PropertySource::Default,
+                Some(i) => PropertySource::Set(i)
+            };
             Ok((prop, source))
         }
     }

@@ -1,6 +1,9 @@
 //vim: tw=80
 //! Dataset Properties
-use std::{fmt, str::FromStr};
+use std::{
+    fmt,
+    str::FromStr
+};
 use crate::{Error, Result};
 use serde_derive::*;
 
@@ -196,19 +199,31 @@ impl PropertyName {
     }
 }
 
+impl fmt::Display for PropertyName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Atime => "atime".fmt(f),
+            Self::BaseMountpoint => "basemountpoint".fmt(f),
+            Self::Mountpoint => "mountpoint".fmt(f),
+            Self::Name => "name".fmt(f),
+            Self::RecordSize => "recordsize".fmt(f),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct FromStrError{}
-impl fmt::Display for FromStrError {
+pub struct NameFromStrError{}
+impl fmt::Display for NameFromStrError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Not a valid property name")
     }
 }
-impl std::error::Error for FromStrError {}
+impl std::error::Error for NameFromStrError {}
 
 impl FromStr for PropertyName {
-    type Err = FromStrError;
+    type Err = NameFromStrError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, FromStrError> {
+    fn from_str(s: &str) -> std::result::Result<Self, NameFromStrError> {
         match s {
             "atime" => Ok(PropertyName::Atime),
             "basemountpoint" => Ok(PropertyName::BaseMountpoint),
@@ -216,7 +231,7 @@ impl FromStr for PropertyName {
             "name" => Ok(PropertyName::Name),
             "recordsize" => Ok(PropertyName::RecordSize),
             "recsize" => Ok(PropertyName::RecordSize),
-            _ => Err(FromStrError{})
+            _ => Err(NameFromStrError{})
         }
     }
 }
@@ -231,18 +246,62 @@ impl FromStr for PropertyName {
 // None     -   Default value
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
-pub struct PropertySource(pub(crate) Option<u8>);
-impl PropertySource {
+pub enum PropertySource {
+    /// This is a pseudoproperty that has no source.
+    None,
     /// No value has been set for this property on this dataset or any of its
     /// parents.
-    pub const DEFAULT: PropertySource = PropertySource(None);
-    /// The property's value is inherited from the grandparent dataset.
-    pub const FROM_PARENT: PropertySource = PropertySource(Some(1));
-    /// The property's value is inherited from the parent dataset.
-    pub const FROM_GRANDPARENT: PropertySource = PropertySource(Some(2));
-    /// The property was explicitly set on this dataset
-    pub const LOCAL: PropertySource = PropertySource(Some(0u8));
+    Default,
+    /// The property was explicitly set on this dataset or a on an ancestor.
+    Set(u8)
 }
+
+impl PropertySource {
+    /// The property was explicitly set on this dataset
+    pub const LOCAL: PropertySource = PropertySource::Set(0);
+    /// The property's value is inherited from the grandparent dataset.
+    pub const FROM_PARENT: PropertySource = PropertySource::Set(1);
+    /// The property's value is inherited from the parent dataset.
+    pub const FROM_GRANDPARENT: PropertySource = PropertySource::Set(2);
+
+    pub fn is_inherited(self) -> bool {
+        matches!(self, PropertySource::Set(i) if i > 0)
+    }
+}
+
+impl fmt::Display for PropertySource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Default => "default".fmt(f),
+            Self::LOCAL => "local".fmt(f),
+            _ => "inherited".fmt(f)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SourceFromStrError{}
+impl fmt::Display for SourceFromStrError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Not a valid property source")
+    }
+}
+impl std::error::Error for SourceFromStrError {}
+
+impl FromStr for PropertySource {
+    type Err = SourceFromStrError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, SourceFromStrError> {
+        match s {
+            "default" => Ok(PropertySource::Default),
+            "local" => Ok(PropertySource::LOCAL),
+            "none" => Ok(PropertySource::None),
+            "inherited" => Ok(PropertySource::Set(1)),
+            _ => Err(SourceFromStrError{})
+        }
+    }
+}
+
 
 // LCOV_EXCL_START
 #[cfg(test)]

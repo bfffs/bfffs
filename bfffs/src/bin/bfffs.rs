@@ -1,7 +1,9 @@
 use std::{
+    fmt,
     io::{self, Write},
     path::{Path, PathBuf},
     process::exit,
+    str::FromStr,
     sync::Arc,
 };
 
@@ -10,7 +12,7 @@ use bfffs_core::{
     controller::Controller,
     database::{Database, TreeID},
     device_manager::DevManager,
-    property::{Property, PropertyName},
+    property::{Property, PropertyName, PropertySource},
 };
 use clap::{crate_version, Parser};
 use futures::{future, TryStreamExt};
@@ -217,6 +219,170 @@ mod fs {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(super) enum GetField {
+        Name,
+        Property,
+        Value,
+        Source,
+    }
+
+    impl fmt::Display for GetField {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::Name => "NAME".fmt(f),
+                Self::Property => "PROPERTY".fmt(f),
+                Self::Value => "VALUE".fmt(f),
+                Self::Source => "SOURCE".fmt(f),
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub struct FromStrError {}
+    impl fmt::Display for FromStrError {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "Invalid column name")
+        }
+    }
+    impl std::error::Error for FromStrError {}
+
+    impl FromStr for GetField {
+        type Err = FromStrError;
+
+        fn from_str(s: &str) -> std::result::Result<Self, FromStrError> {
+            match s {
+                "name" => Ok(GetField::Name),
+                "property" => Ok(GetField::Property),
+                "value" => Ok(GetField::Value),
+                "source" => Ok(GetField::Source),
+                _ => Err(FromStrError {}),
+            }
+        }
+    }
+
+    /// Get dataset properties
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Get {
+        #[clap(short = 'p', long, help = "Scriptable output")]
+        pub(super) parseable:  bool,
+        #[clap(
+            short = 'o',
+            long,
+            help = "Fields to display",
+            default_value = "name,property,value,source",
+            require_value_delimiter(true),
+            value_delimiter(','),
+            multiple_occurrences = false
+        )]
+        pub(super) fields:     Vec<GetField>,
+        #[clap(
+            short = 's',
+            long,
+            help = "Only display properties coming from these sources.",
+            default_value = "local,default,inherited,none",
+            require_value_delimiter(true),
+            value_delimiter(','),
+            multiple_occurrences = false
+        )]
+        pub(super) sources:    Vec<PropertySource>,
+        /// Dataset properties to display, comma delimited
+        #[clap(
+            require_value_delimiter(true),
+            value_delimiter(','),
+            multiple_occurrences = false,
+            required(true)
+        )]
+        pub(super) properties: Vec<PropertyName>,
+        /// Datasets to inspect, comma delimited
+        #[clap(multiple_values(true), required(true))]
+        pub(super) datasets:   Vec<String>,
+    }
+
+    impl Get {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            // TODO: recursion, source filter
+            let mut all = Vec::new();
+            for ds in self.datasets.into_iter() {
+                bfffs
+                    .fs_list(ds, self.properties.clone(), None)
+                    .try_for_each(|mut dsinfo| {
+                        dsinfo.props.retain(|(_prop, source)| {
+                            // We use FROM_PARENT as a shorthand for "any
+                            // level of inheritance".
+                            let eff_source = if source.is_inherited() {
+                                &PropertySource::FROM_PARENT
+                            } else {
+                                source
+                            };
+                            self.sources.contains(eff_source)
+                        });
+                        all.push(dsinfo);
+                        future::ok(())
+                    })
+                    .await?;
+            }
+            // Sort datasets by name, until other sort options are added
+            all.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+
+            if self.parseable {
+                let stdout = io::stdout();
+                let lock = stdout.lock();
+                let mut buf = io::BufWriter::new(lock);
+                for dsinfo in all {
+                    for (prop, source) in dsinfo.props {
+                        let mut row = Vec::new();
+                        for field in &self.fields {
+                            match field {
+                                GetField::Name => row.push(dsinfo.name.clone()),
+                                GetField::Property => {
+                                    row.push(prop.name().to_string())
+                                }
+                                GetField::Value => row.push(prop.to_string()),
+                                GetField::Source => {
+                                    row.push(source.to_string())
+                                }
+                            };
+                        }
+                        writeln!(buf, "{}", row.join("\t")).unwrap();
+                    }
+                }
+                buf.flush().unwrap();
+            } else {
+                let row_spec = vec!["{:<}"; self.fields.len()].join(" ");
+                let mut table = tabular::Table::new(&row_spec);
+                let mut hrow = tabular::Row::new();
+                for field in &self.fields {
+                    hrow.add_cell(field);
+                }
+                table.add_row(hrow);
+
+                for dsinfo in all {
+                    for (prop, source) in dsinfo.props {
+                        let mut row = tabular::Row::new();
+                        for field in &self.fields {
+                            match field {
+                                GetField::Name => row.add_cell(&dsinfo.name),
+                                GetField::Property => {
+                                    row.add_cell(&prop.name())
+                                }
+                                GetField::Value => {
+                                    let hprop = humanize_property(&prop);
+                                    row.add_cell(hprop)
+                                }
+                                GetField::Source => row.add_cell(source),
+                            };
+                        }
+                        table.add_row(row);
+                    }
+                }
+                print!("{}", table);
+            }
+            Ok(())
+        }
+    }
+
     /// List file systems
     #[derive(Parser, Clone, Debug)]
     pub(super) struct List {
@@ -330,6 +496,7 @@ mod fs {
     pub(super) enum FsCmd {
         Create(Create),
         Destroy(Destroy),
+        Get(Get),
         List(List),
         Mount(Mount),
         Unmount(Unmount),
@@ -611,6 +778,7 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Destroy(destroy)) => {
             destroy.main(&cli.sock).await
         }
+        SubCommand::Fs(fs::FsCmd::Get(get)) => get.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::List(list)) => list.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Unmount(unmount)) => {
@@ -758,6 +926,110 @@ mod t {
                 assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Destroy(_))));
                 if let SubCommand::Fs(FsCmd::Destroy(destroy)) = cli.cmd {
                     assert_eq!(destroy.name, "testpool/foo");
+                }
+            }
+        }
+
+        mod get {
+            use super::*;
+            use crate::fs;
+
+            #[test]
+            fn fields() {
+                let args = vec![
+                    "bfffs",
+                    "fs",
+                    "get",
+                    "-o",
+                    "name,property",
+                    "atime",
+                    "testpool",
+                ];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(
+                        &get.fields[..],
+                        &[fs::GetField::Name, fs::GetField::Property]
+                    );
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(&get.properties[..], &[PropertyName::Atime][..]);
+                }
+            }
+
+            #[test]
+            fn parseable() {
+                let args =
+                    vec!["bfffs", "fs", "get", "-p", "atime", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert!(get.parseable);
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(&get.properties[..], &[PropertyName::Atime][..]);
+                }
+            }
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "get", "recordsize", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(
+                        &get.properties[..],
+                        &[PropertyName::RecordSize][..]
+                    );
+                }
+            }
+
+            #[test]
+            fn sources() {
+                let args = vec![
+                    "bfffs",
+                    "fs",
+                    "get",
+                    "-s",
+                    "default",
+                    "recordsize",
+                    "testpool",
+                ];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(&get.sources[..], &[PropertySource::Default]);
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(
+                        &get.properties[..],
+                        &[PropertyName::RecordSize][..]
+                    );
+                }
+            }
+
+            #[test]
+            fn twodatasets() {
+                let args = vec!["bfffs", "fs", "get", "atime", "foo", "bar"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(&get.datasets[..], &["foo", "bar"][..]);
+                    assert_eq!(&get.properties[..], &[PropertyName::Atime][..]);
+                }
+            }
+
+            #[test]
+            fn twoprops() {
+                let args =
+                    vec!["bfffs", "fs", "get", "recsize,atime", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(
+                        &get.properties[..],
+                        &[PropertyName::RecordSize, PropertyName::Atime][..]
+                    );
                 }
             }
         }
