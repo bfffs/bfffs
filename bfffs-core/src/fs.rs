@@ -2276,6 +2276,9 @@ impl Fs {
     }
 
     /// Change filesystem properties
+    // Should be private to the crate.  Is only public so it can be used by the
+    // functional tests.
+    #[doc(hidden)]
     pub async fn set_prop(&self, prop: Property) -> Result<()> {
         match prop {
             Property::Atime(atime) =>
@@ -2291,7 +2294,7 @@ impl Fs {
     }
 
     /// Set a property on a file system that is not currently mounted
-    pub async fn set_prop_unmounted(
+    pub(crate) async fn set_prop_unmounted(
         tree_id: TreeID,
         db: &Database,
         prop: Property)
