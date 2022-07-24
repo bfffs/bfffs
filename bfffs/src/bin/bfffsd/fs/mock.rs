@@ -14,7 +14,6 @@ use bfffs_core::{
         SeekWhence,
         SetAttr,
     },
-    property::Property,
     SGList,
 };
 use divbuf::DivBuf;
@@ -80,7 +79,6 @@ mock! {
             -> Result<(), i32>;
         pub async fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> Result<(), i32>;
-        pub async fn set_props(&mut self, props: Vec<Property>);
         pub async fn statvfs(&self) -> Result<libc::statvfs, i32>;
         pub async fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16,
             uid: u32, gid: u32, link: &OsStr) -> Result<FileDataMut, i32>;

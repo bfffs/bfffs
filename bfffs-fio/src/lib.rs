@@ -185,7 +185,7 @@ lazy_static! {
 #[no_mangle]
 pub unsafe extern "C" fn fio_bfffs_cleanup(td: *mut thread_data) {
     if !(*td).io_ops_data.is_null() {
-        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+        drop(Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData));
         (*td).io_ops_data = ptr::null_mut();
     }
 }

@@ -8,10 +8,7 @@ use crate::{
     tree::*,
     writeback::Credit
 };
-use futures::{
-    Future,
-    Stream
-};
+use futures::Future;
 use lazy_static::lazy_static;
 use mockall::mock;
 use std::{
@@ -21,25 +18,7 @@ use std::{
     ops::{Range, RangeBounds},
     pin::Pin,
     sync::{Arc, Mutex},
-    task::{Context, Poll},
 };
-
-// RangeQuery can't be automock'd because
-mock! {
-    pub RangeQuery<A, D, K, T, V> {}
-    impl<A, D, K, T, V> Stream for RangeQuery<A, D, K, T, V>
-        where A: Addr,
-              D: DML<Addr=A> + 'static,
-              K: Key + Borrow<T>,
-              T: Ord + Clone + Send + 'static,
-              V: Value
-    {
-        type Item = Result<(K, V)>;
-
-        fn poll_next<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>)
-            -> Poll<Option<Result<(K, V)>>>;
-    }
-}
 
 lazy_static! {
     pub static ref OPEN_MTX: Mutex<()> = Mutex::new(());

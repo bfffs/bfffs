@@ -630,7 +630,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         }).collect::<FuturesOrdered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(move |r| {
-            let children_passed = r.iter().all(|x| (*x).0);
+            let children_passed = r.iter().all(|x| x.0);
             let first_key = *r[0].1.start();
             let mut last_key = K::min_value();
             let sorted = r.iter().map(|(_passed, keys)| {

@@ -770,7 +770,7 @@ mod dbs_serializer {
         -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
-        (&dbs.try_const().unwrap()[..]).serialize(serializer)
+        dbs.try_const().unwrap()[..].serialize(serializer)
     }
 }
 
