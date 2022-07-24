@@ -919,7 +919,7 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
 
     fn deref(&self) -> &Self::Target {
         match self {
-            TreeWriteGuard(guard) => &**guard,
+            TreeWriteGuard(guard) => guard,
         }
     }
 }
@@ -927,7 +927,7 @@ impl<A: Addr, K: Key, V: Value> Deref for TreeWriteGuard<A, K, V> {
 impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         match self {
-            TreeWriteGuard(guard) => &mut **guard,
+            TreeWriteGuard(guard) => guard,
         }
     }
 }

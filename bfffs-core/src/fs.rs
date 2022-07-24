@@ -2193,20 +2193,12 @@ impl Fs {
             let ds2 = ds.clone();
             // 1) Lookup the directory
             let key = FSKey::new(parent_ino, objkey);
-            let rde = htable::get::<Dirent>(
+            let de = htable::get::<Dirent>(
                 &htable::ReadFilesystem::ReadWrite(&ds), key, 0,
-                owned_name3).await;
-            if let Err(e) = rde {
-                return Err(e);
-            };
-            let de = rde.unwrap();
+                owned_name3).await?;
             // 2) Check that the directory is empty
             let ino = de.ino;
-            if let Err(e) = Fs::ok_to_rmdir(&ds, ino, parent_ino,
-                                            owned_name2).await
-            {
-                return Err(e);
-            }
+            Fs::ok_to_rmdir(&ds, ino, parent_ino, owned_name2).await?;
             // 3) Remove the parent dir's dir_entry
             let de_key = FSKey::new(parent_ino, objkey);
             let dirent_fut = htable::remove::<Arc<ReadWriteFilesystem>,
