@@ -70,8 +70,8 @@ impl Bfffs {
     ///                 Children will be returned beginning after the entry
     ///                 whose offset is `offs`.
     // Modeled after getdirentries(2).
-    pub fn fs_list<'a>(
-        &'a self,
+    pub fn fs_list(
+        &self,
         name: String,
         props: Vec<PropertyName>,
         offs: Option<u64>,
