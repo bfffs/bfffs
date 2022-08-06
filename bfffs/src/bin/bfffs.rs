@@ -195,7 +195,7 @@ mod fs {
                 .properties
                 .iter()
                 .map(|ps| {
-                    Property::try_from(ps.as_str()).unwrap_or_else(|_e| {
+                    Property::from_str(ps.as_str()).unwrap_or_else(|_e| {
                         eprintln!("Invalid property specification {}", ps);
                         std::process::exit(2);
                     })
@@ -666,7 +666,7 @@ mod pool {
             let clusters = Vec::new();
             let properties = propstrings
                 .map(|ps| {
-                    Property::try_from(ps).unwrap_or_else(|_e| {
+                    Property::from_str(ps).unwrap_or_else(|_e| {
                         eprintln!("Invalid property specification {}", ps);
                         std::process::exit(2);
                     })
