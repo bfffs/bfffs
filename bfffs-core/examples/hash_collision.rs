@@ -3,7 +3,7 @@
 //! B-Tree
 
 use bfffs_core::fs_tree::*;
-use chashmap::CHashMap;
+use dashmap::DashMap;
 use clap::Parser;
 use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;
@@ -31,14 +31,11 @@ struct Stats {
 }
 
 lazy_static! {
-    // CHashMap resizes more slowly than the standard hashmap.  So give it a
-    // large size to start.  64M entries takes about 10GB.
-    //
     // Don't store the actual namespace and name, because that takes too much
     // RAM.  Instead, store a seed that can be used to recreate the name and
     // namespace.  It cuts the throughput, but also cuts the RAM usage.
-    static ref HM: CHashMap<u64, [u8; 16]> =
-        CHashMap::with_capacity(4_000_000);
+    static ref HM: DashMap<u64, [u8; 16]> =
+        DashMap::with_capacity(4_000_000);
     static ref STATS: Mutex<Stats> = Default::default();
 }
 
@@ -103,12 +100,12 @@ fn report(collisions: u64, tries: u64) {
 }
 
 struct Worker {
-    hm: &'static CHashMap<u64, [u8; 16]>,
+    hm: &'static DashMap<u64, [u8; 16]>,
     rng: XorShiftRng,
 }
 
 impl Worker {
-    fn new(hm: &'static CHashMap<u64, [u8; 16]>) -> Self
+    fn new(hm: &'static DashMap<u64, [u8; 16]>) -> Self
     {
         let rng = XorShiftRng::from_entropy();
         Worker{hm, rng}
