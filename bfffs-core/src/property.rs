@@ -4,7 +4,6 @@ use std::{
     fmt,
     str::FromStr
 };
-use crate::{Error, Result};
 use serde_derive::*;
 
 /// All dataset properties are associated with this fake inode number.
@@ -126,54 +125,73 @@ impl fmt::Display for Property {
     }
 }
 
-impl TryFrom<&str> for Property {
-    type Error = Error;
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ParsePropertyError {
+    NoEquals,
+    Name(ParsePropertyNameError),
+    ReadOnly,
+    Value(String)
+}
 
-    fn try_from(s: &str) -> Result<Self> {
+impl fmt::Display for ParsePropertyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoEquals => write!(f, "Must contain an '=' character"),
+            Self::Name(e) => e.fmt(f),
+            Self::ReadOnly => write!(f, "This property is read-only"),
+            Self::Value(s) =>
+                write!(f, "{} is not a valid value for this property", s)
+        }
+    }
+}
+impl std::error::Error for ParsePropertyError {}
+
+impl FromStr for Property {
+    type Err = ParsePropertyError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, ParsePropertyError> {
         let mut words = s.splitn(2, '=');
-        let propname = words.next().ok_or(Error::EINVAL)?;
-        let propval = words.next();
-        if let Some(v) = propval {
-            match propname {
-                "atime" => {
-                    match v {
-                        "true" | "on" => Ok(Property::Atime(true)),
-                        "false" | "off" => Ok(Property::Atime(false)),
-                        _ => Err(Error::EINVAL)
-                    }
-                },
-                "base_mountpoint" =>
-                    Ok(Property::BaseMountpoint(v.to_string())),
-                "mountpoint" =>
-                    Ok(Property::Mountpoint(v.to_string())),
-                "record_size" => {
-                    if let Ok(rs) = v.parse::<usize>() {
-                        // We need the log base 2 of rs.  We could calculate it
-                        // numerically, but there are so few valid values that
-                        // it's easier to use a LUT.
-                        match rs {
-                            4_096 => Ok(Property::RecordSize(12)),
-                            8_192 => Ok(Property::RecordSize(13)),
-                            16_384 => Ok(Property::RecordSize(14)),
-                            32_768 => Ok(Property::RecordSize(15)),
-                            65_536 => Ok(Property::RecordSize(16)),
-                            131_072 => Ok(Property::RecordSize(17)),
-                            262_144 => Ok(Property::RecordSize(18)),
-                            524_288 => Ok(Property::RecordSize(19)),
-                            1_048_776 => Ok(Property::RecordSize(20)),
-                            _ => Err(Error::EINVAL)
-                        }
-                    } else {
-                        Err(Error::EINVAL)
-                    }
-                },
-                _ => Err(Error::EINVAL)
-            }
+        let propnamestr = words.next().unwrap();
+        let propname = PropertyName::from_str(propnamestr)
+            .map_err(ParsePropertyError::Name)?;
+        // Value may be omitted only for boolean options
+        let propval = if propname.boolean() {
+            words.next().unwrap_or("on")
         } else {
-            // Value may be omitted only for boolean options
-            match propname {
-                "atime" => Ok(Property::Atime(true)),
-                _ => Err(Error::EINVAL)
+            words.next().ok_or(ParsePropertyError::NoEquals)?
+        };
+        match propname {
+            PropertyName::Atime => {
+                match propval {
+                    "true" | "on" => Ok(Property::Atime(true)),
+                    "false" | "off" => Ok(Property::Atime(false)),
+                    _ => Err(ParsePropertyError::Value(propval.to_string()))
+                }
+            },
+            PropertyName::BaseMountpoint => Err(ParsePropertyError::ReadOnly),
+            PropertyName::Mountpoint =>
+                Ok(Property::Mountpoint(propval.to_string())),
+            PropertyName::Name => Err(ParsePropertyError::ReadOnly),
+            PropertyName::RecordSize => {
+                if let Ok(rs) = propval.parse::<usize>() {
+                    // We need the log base 2 of rs.  We could calculate it
+                    // numerically, but there are so few valid values that
+                    // it's easier to use a LUT.
+                    match rs {
+                        4_096 => Ok(Property::RecordSize(12)),
+                        8_192 => Ok(Property::RecordSize(13)),
+                        16_384 => Ok(Property::RecordSize(14)),
+                        32_768 => Ok(Property::RecordSize(15)),
+                        65_536 => Ok(Property::RecordSize(16)),
+                        131_072 => Ok(Property::RecordSize(17)),
+                        262_144 => Ok(Property::RecordSize(18)),
+                        524_288 => Ok(Property::RecordSize(19)),
+                        1_048_776 => Ok(Property::RecordSize(20)),
+                        _ => Err(ParsePropertyError::Value(propval.to_string()))
+                    }
+                } else {
+                    Err(ParsePropertyError::Value(propval.to_string()))
+                }
             }
         }
     }
@@ -190,6 +208,11 @@ pub enum PropertyName {
 }
 
 impl PropertyName {
+    /// Does this property take boolean values?
+    fn boolean(self) -> bool {
+        matches!(self, Self::Atime)
+    }
+
     pub(crate) fn inheritable(self) -> Self {
         match self {
             PropertyName::Mountpoint => PropertyName::BaseMountpoint,
@@ -212,18 +235,18 @@ impl fmt::Display for PropertyName {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct NameFromStrError{}
-impl fmt::Display for NameFromStrError {
+pub struct ParsePropertyNameError{}
+impl fmt::Display for ParsePropertyNameError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Not a valid property name")
     }
 }
-impl std::error::Error for NameFromStrError {}
+impl std::error::Error for ParsePropertyNameError {}
 
 impl FromStr for PropertyName {
-    type Err = NameFromStrError;
+    type Err = ParsePropertyNameError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, NameFromStrError> {
+    fn from_str(s: &str) -> std::result::Result<Self, ParsePropertyNameError> {
         match s {
             "atime" => Ok(PropertyName::Atime),
             "basemountpoint" => Ok(PropertyName::BaseMountpoint),
@@ -231,7 +254,7 @@ impl FromStr for PropertyName {
             "name" => Ok(PropertyName::Name),
             "recordsize" => Ok(PropertyName::RecordSize),
             "recsize" => Ok(PropertyName::RecordSize),
-            _ => Err(NameFromStrError{})
+            _ => Err(ParsePropertyNameError{})
         }
     }
 }
@@ -280,24 +303,24 @@ impl fmt::Display for PropertySource {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SourceFromStrError{}
-impl fmt::Display for SourceFromStrError {
+pub struct ParsePropertySourceError{}
+impl fmt::Display for ParsePropertySourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Not a valid property source")
     }
 }
-impl std::error::Error for SourceFromStrError {}
+impl std::error::Error for ParsePropertySourceError {}
 
 impl FromStr for PropertySource {
-    type Err = SourceFromStrError;
+    type Err = ParsePropertySourceError;
 
-    fn from_str(s: &str) -> std::result::Result<Self, SourceFromStrError> {
+    fn from_str(s: &str) -> std::result::Result<Self, ParsePropertySourceError> {
         match s {
             "default" => Ok(PropertySource::Default),
             "local" => Ok(PropertySource::LOCAL),
             "none" => Ok(PropertySource::None),
             "inherited" => Ok(PropertySource::Set(1)),
-            _ => Err(SourceFromStrError{})
+            _ => Err(ParsePropertySourceError{})
         }
     }
 }
@@ -311,44 +334,66 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]
-fn property_try_from() {
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime=true"));
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime=on"));
-    assert_eq!(Ok(Property::Atime(true)), Property::try_from("atime"));
-    assert_eq!(Ok(Property::Atime(false)),
-               Property::try_from("atime=false"));
-    assert_eq!(Ok(Property::Atime(false)), Property::try_from("atime=off"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from("atime=xyz"));
-    assert_eq!(Ok(Property::BaseMountpoint("/mnt".to_string())),
-        Property::try_from("base_mountpoint=/mnt"));
-    assert_eq!(Err(Error::EINVAL),
-        Property::try_from("base_mountpoint"));
+fn property_from_str() {
+    assert!(matches!(
+        Property::from_str(""),
+        Err(ParsePropertyError::Name(_))
+    ));
+    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime=true"));
+    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime=on"));
+    assert_eq!(Ok(Property::Atime(true)), Property::from_str("atime"));
+    assert_eq!(Ok(Property::Atime(false)), Property::from_str("atime=false"));
+    assert_eq!(Ok(Property::Atime(false)), Property::from_str("atime=off"));
+    assert!(matches!(
+        Property::from_str("atime=xyz"),
+        Err(ParsePropertyError::Value(_))
+    ));
+    assert!(matches!(
+        Property::from_str("basemountpoint=/mnt"),
+        Err(ParsePropertyError::ReadOnly)
+    ));
+    assert!(matches!(
+        Property::from_str("basemountpoint"),
+        Err(ParsePropertyError::NoEquals)
+    ));
     assert_eq!(Ok(Property::Mountpoint("/mnt".to_string())),
-        Property::try_from("mountpoint=/mnt"));
-    assert_eq!(Err(Error::EINVAL),
-        Property::try_from("mountpoint"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from("name"));
+        Property::from_str("mountpoint=/mnt"));
+    assert!(matches!(
+        Property::from_str("mountpoint"),
+        Err(ParsePropertyError::NoEquals)
+    ));
+    assert!(matches!(
+        Property::from_str("name=foo"),
+        Err(ParsePropertyError::ReadOnly)
+    ));
     assert_eq!(Ok(Property::RecordSize(12)),
-               Property::try_from("record_size=4096"));
+               Property::from_str("recordsize=4096"));
     assert_eq!(Ok(Property::RecordSize(13)),
-        Property::try_from("record_size=8192"));
+        Property::from_str("recordsize=8192"));
     assert_eq!(Ok(Property::RecordSize(14)),
-        Property::try_from("record_size=16384"));
+        Property::from_str("recordsize=16384"));
     assert_eq!(Ok(Property::RecordSize(15)),
-        Property::try_from("record_size=32768"));
+        Property::from_str("recordsize=32768"));
     assert_eq!(Ok(Property::RecordSize(16)),
-        Property::try_from("record_size=65536"));
+        Property::from_str("recordsize=65536"));
     assert_eq!(Ok(Property::RecordSize(17)),
-        Property::try_from("record_size=131072"));
+        Property::from_str("recordsize=131072"));
     assert_eq!(Ok(Property::RecordSize(18)),
-        Property::try_from("record_size=262144"));
+        Property::from_str("recordsize=262144"));
     assert_eq!(Ok(Property::RecordSize(19)),
-        Property::try_from("record_size=524288"));
+        Property::from_str("recordsize=524288"));
     assert_eq!(Ok(Property::RecordSize(20)),
-        Property::try_from("record_size=1048776"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=12"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size=true"));
-    assert_eq!(Err(Error::EINVAL), Property::try_from("record_size"));
+        Property::from_str("recordsize=1048776"));
+    assert!(matches!(
+        Property::from_str("recordsize=12"),
+        Err(ParsePropertyError::Value(_))
+    ));
+    assert!(matches!(
+        Property::from_str("recordsize=true"),
+        Err(ParsePropertyError::Value(_))
+    ));
+    assert_eq!(Err(ParsePropertyError::NoEquals),
+        Property::from_str("recordsize"));
 }
 
 }

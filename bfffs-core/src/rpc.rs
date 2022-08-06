@@ -70,6 +70,21 @@ pub mod fs {
     }
 
     #[derive(Debug, Deserialize, Serialize)]
+    pub struct Set {
+        /// File system name, including the pool
+        pub name: String,
+        /// Dataset properties
+        pub props: Vec<Property>
+    }
+
+    pub fn set(name: String, props: Vec<Property>) -> Request {
+        Request::FsSet(Set {
+            name,
+            props
+        })
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
     pub struct Unmount {
         /// Forcibly unmount, even if in-use
         pub force: bool,
@@ -110,6 +125,7 @@ pub enum Request {
     FsDestroy(fs::Destroy),
     FsList(fs::List),
     FsMount(fs::Mount),
+    FsSet(fs::Set),
     FsUnmount(fs::Unmount),
     PoolClean(pool::Clean)
 }
@@ -121,6 +137,7 @@ pub enum Response {
     FsDestroy(Result<()>),
     FsList(Result<Vec<fs::DsInfo>>),
     FsMount(Result<()>),
+    FsSet(Result<()>),
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
 }
@@ -157,6 +174,13 @@ impl Response {
     pub fn into_fs_mount(self) -> Result<()> {
         match self {
             Response::FsMount(r) => r,
+            x => panic!("Unexpected response type {:?}", x)
+        }
+    }
+
+    pub fn into_fs_set(self) -> Result<()> {
+        match self {
+            Response::FsSet(r) => r,
             x => panic!("Unexpected response type {:?}", x)
         }
     }

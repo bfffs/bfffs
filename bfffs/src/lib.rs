@@ -108,6 +108,21 @@ impl Bfffs {
         self.call(req).await.unwrap().into_fs_mount()
     }
 
+    /// Set properties on a file system
+    ///
+    /// # Arguments
+    ///
+    /// `fsname`    -   Name of the file system to mount, including the pool
+    /// `props`     -   Properties to set
+    pub async fn fs_set(
+        &self,
+        fsname: String,
+        props: Vec<Property>,
+    ) -> Result<()> {
+        let req = rpc::fs::set(fsname, props);
+        self.call(req).await.unwrap().into_fs_set()
+    }
+
     /// Unmount a file system
     ///
     /// # Arguments
