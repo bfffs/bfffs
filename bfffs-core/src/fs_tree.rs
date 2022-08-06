@@ -883,7 +883,7 @@ impl<'a> Extent<'a> {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Box<Inode>),
@@ -905,6 +905,7 @@ pub enum FSValue {
     /// Only used temporarily in memory.  Never written to disk.
     /// Must come last!
     #[doc(hidden)]
+    #[default]
     Invalid,
 }
 
@@ -1050,12 +1051,6 @@ impl FSValue {
             FSValue::BlobExtent(be) => be.lsize.into(),
             _ => 0
         }
-    }
-}
-
-impl Default for FSValue {
-    fn default() -> Self {
-        FSValue::Invalid
     }
 }
 

@@ -16,8 +16,9 @@ use std::{
 };
 
 /// Compression mode in use
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Compression {
+    #[default]
     None,
     /// LZ4 is very fast with decent compression.  From experiment, it's the
     /// best algorithm for metadata
@@ -83,12 +84,6 @@ impl Compression {
             Compression::None => None,
             Compression::LZ4(s) | Compression::Zstd(s) => s
         }
-    }
-}
-
-impl Default for Compression {
-    fn default() -> Compression {
-        Compression::None
     }
 }
 
