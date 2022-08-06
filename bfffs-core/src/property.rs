@@ -168,8 +168,7 @@ impl FromStr for Property {
                     _ => Err(ParsePropertyError::Value(propval.to_string()))
                 }
             },
-            PropertyName::BaseMountpoint =>
-                Ok(Property::BaseMountpoint(propval.to_string())),
+            PropertyName::BaseMountpoint => Err(ParsePropertyError::ReadOnly),
             PropertyName::Mountpoint =>
                 Ok(Property::Mountpoint(propval.to_string())),
             PropertyName::Name => Err(ParsePropertyError::ReadOnly),
@@ -349,8 +348,10 @@ fn property_from_str() {
         Property::from_str("atime=xyz"),
         Err(ParsePropertyError::Value(_))
     ));
-    assert_eq!(Ok(Property::BaseMountpoint("/mnt".to_string())),
-        Property::from_str("basemountpoint=/mnt"));
+    assert!(matches!(
+        Property::from_str("basemountpoint=/mnt"),
+        Err(ParsePropertyError::ReadOnly)
+    ));
     assert!(matches!(
         Property::from_str("basemountpoint"),
         Err(ParsePropertyError::NoEquals)
