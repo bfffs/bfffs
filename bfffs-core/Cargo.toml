@@ -50,7 +50,7 @@ default-features = true
 features=  [ "derive", "wrap_help" ]
 
 [dev-dependencies]
-chashmap = "2"
+dashmap = "5"
 criterion = "0.3"
 futures-test = "0.3.7"
 glob = "0.2"
