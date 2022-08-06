@@ -11,7 +11,7 @@ use std::{
 use bfffs_core::{
     controller::Controller,
     device_manager::DevManager,
-    property::PropertyName,
+    property::{Property, PropertyName},
     rpc,
     Error,
     Result,
@@ -335,6 +335,19 @@ impl Bfffsd {
                     }
                 }
             }
+            rpc::Request::FsSet(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::FsSet(Err(Error::EPERM))
+                } else {
+                    match self.set(&req.name, req.props).await {
+                        Ok(_) => rpc::Response::FsSet(Ok(())),
+                        Err(e) => {
+                            error!("set: {:?}", e);
+                            rpc::Response::FsSet(Err(e))
+                        }
+                    }
+                }
+            }
             rpc::Request::FsUnmount(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsUnmount(Err(Error::EPERM))
@@ -364,6 +377,13 @@ impl Bfffsd {
             let peer = sock.listener.accept().await.unwrap();
             tokio::spawn(self.clone().handle_client(peer));
         }
+    }
+
+    async fn set(&self, name: &str, props: Vec<Property>) -> Result<()> {
+        for prop in props.into_iter() {
+            self.controller.set_prop(name, prop).await?;
+        }
+        Ok(())
     }
 
     async fn unmount(&self, name: &str, force: bool) -> Result<()> {

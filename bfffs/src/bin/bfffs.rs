@@ -474,6 +474,32 @@ mod fs {
         }
     }
 
+    /// Set dataset properties
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Set {
+        /// Dataset properties to set, comma delimited
+        #[clap(
+            require_value_delimiter(true),
+            value_delimiter(','),
+            multiple_occurrences = false,
+            required(true)
+        )]
+        pub(super) properties: Vec<Property>,
+        /// Datasets to modify, comma delimited
+        #[clap(multiple_values(true), required(true))]
+        pub(super) datasets:   Vec<String>,
+    }
+
+    impl Set {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            for ds in self.datasets.into_iter() {
+                let bfffs = Bfffs::new(sock).await.unwrap();
+                bfffs.fs_set(ds, self.properties.clone()).await?
+            }
+            Ok(())
+        }
+    }
+
     /// Unmount a file system
     #[derive(Parser, Clone, Debug)]
     pub(super) struct Unmount {
@@ -499,6 +525,7 @@ mod fs {
         Get(Get),
         List(List),
         Mount(Mount),
+        Set(Set),
         Unmount(Unmount),
     }
 
@@ -781,6 +808,7 @@ async fn main() -> Result<()> {
         SubCommand::Fs(fs::FsCmd::Get(get)) => get.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::List(list)) => list.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Mount(mount)) => mount.main(&cli.sock).await,
+        SubCommand::Fs(fs::FsCmd::Set(set)) => set.main(&cli.sock).await,
         SubCommand::Fs(fs::FsCmd::Unmount(unmount)) => {
             unmount.main(&cli.sock).await
         }
@@ -1056,6 +1084,24 @@ mod t {
                 if let SubCommand::Fs(FsCmd::Mount(mount)) = cli.cmd {
                     assert_eq!(mount.name, "testpool/foo");
                     assert!(mount.options.is_empty());
+                }
+            }
+        }
+
+        mod set {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "fs", "set", "atime=off", "mypool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Set(_))));
+                if let SubCommand::Fs(FsCmd::Set(set)) = cli.cmd {
+                    assert_eq!(&set.datasets[..], &["mypool"][..]);
+                    assert_eq!(
+                        &set.properties[..],
+                        &[Property::Atime(false)][..]
+                    );
                 }
             }
         }
