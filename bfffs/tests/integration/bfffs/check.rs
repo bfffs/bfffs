@@ -21,9 +21,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -37,8 +35,7 @@ async fn ok(harness: Harness) {
     let (filename, _tempdir) = harness;
 
     bfffs()
-        .arg("check")
-        .arg("mypool")
+        .args(&["check", "mypool"])
         .arg(filename)
         .assert()
         .success();

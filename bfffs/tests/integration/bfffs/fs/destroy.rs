@@ -34,9 +34,7 @@ fn harness() -> Harness {
     let mountpoint = tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("-p")
+        .args(&["pool", "create", "-p"])
         .arg(format!("mountpoint={}", mountpoint.display()))
         .arg("mypool")
         .arg(&filename)
@@ -46,9 +44,9 @@ fn harness() -> Harness {
     let sockpath = tempdir.path().join("bfffsd.sock");
     let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
         .arg("--sock")
-        .arg(sockpath.to_str().unwrap())
+        .arg(sockpath.as_os_str())
         .arg("mypool")
-        .arg(filename.to_str().unwrap())
+        .arg(filename.as_os_str())
         .spawn()
         .unwrap()
         .into();
@@ -73,19 +71,15 @@ fn harness() -> Harness {
 async fn child(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool/foo"])
         .assert()
         .success();
 }
@@ -95,28 +89,22 @@ async fn child(harness: Harness) {
 async fn grandchild(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo/bar")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo/bar"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool/foo/bar")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool/foo/bar"])
         .assert()
         .success();
 }
@@ -126,10 +114,8 @@ async fn grandchild(harness: Harness) {
 async fn enoent(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool/foo/bar/baz")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool/foo/bar/baz"])
         .assert()
         .failure()
         .stderr("Error: ENOENT\n");
@@ -144,29 +130,23 @@ async fn mounted(harness: Harness) {
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("mount")
-        .arg("mypool")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "mount", "mypool"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool"])
         .assert()
         .failure()
         .stderr("Error: EBUSY\n");
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("unmount")
-        .arg("mypool")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "unmount", "mypool"])
         .assert()
         .success();
 }
@@ -177,19 +157,15 @@ async fn mounted(harness: Harness) {
 async fn parent(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool"])
         .assert()
         .failure()
         .stderr("Error: EBUSY\n");
@@ -200,12 +176,8 @@ async fn parent(harness: Harness) {
 async fn root_fs(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("destroy")
-        .arg("mypool")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "destroy", "mypool"])
         .assert()
         .success();
 }
-
-// TODO: destroy a child and a grand child
