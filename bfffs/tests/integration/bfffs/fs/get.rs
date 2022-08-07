@@ -75,6 +75,68 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
 
 #[rstest]
 #[tokio::test]
+async fn depth() {
+    let h = harness(&[
+        "mypool/brother",
+        "mypool/brother/nephew",
+        "mypool/sister",
+        "mypool/sister/niece",
+    ]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("get")
+        .arg("-d")
+        .arg("0")
+        .arg("recsize")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout(
+            "NAME   PROPERTY   VALUE   SOURCE\n\
+             mypool recordsize 128 kiB default\n",
+        );
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("get")
+        .arg("-d")
+        .arg("1")
+        .arg("recsize")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout(
+            "NAME           PROPERTY   VALUE   SOURCE\n\
+             mypool         recordsize 128 kiB default\n\
+             mypool/brother recordsize 128 kiB default\n\
+             mypool/sister  recordsize 128 kiB default\n",
+        );
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("get")
+        .arg("-d")
+        .arg("2")
+        .arg("recsize")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout(
+            "NAME                  PROPERTY   VALUE   SOURCE\n\
+             mypool                recordsize 128 kiB default\n\
+             mypool/brother        recordsize 128 kiB default\n\
+             mypool/brother/nephew recordsize 128 kiB default\n\
+             mypool/sister         recordsize 128 kiB default\n\
+             mypool/sister/niece   recordsize 128 kiB default\n",
+        );
+}
+
+#[rstest]
+#[tokio::test]
 async fn fields() {
     let h = harness::<&'static str>(&[]);
     bfffs()
@@ -173,6 +235,35 @@ async fn parseable() {
 
 #[rstest]
 #[tokio::test]
+async fn recursive() {
+    let h = harness(&[
+        "mypool/brother",
+        "mypool/brother/nephew",
+        "mypool/sister",
+        "mypool/sister/niece",
+    ]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("get")
+        .arg("-r")
+        .arg("recsize")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout(
+            "NAME                  PROPERTY   VALUE   SOURCE\n\
+             mypool                recordsize 128 kiB default\n\
+             mypool/brother        recordsize 128 kiB default\n\
+             mypool/brother/nephew recordsize 128 kiB default\n\
+             mypool/sister         recordsize 128 kiB default\n\
+             mypool/sister/niece   recordsize 128 kiB default\n",
+        );
+}
+
+#[rstest]
+#[tokio::test]
 async fn simple() {
     let h = harness::<&'static str>(&[]);
     bfffs()
@@ -230,6 +321,7 @@ async fn sources() {
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("get")
+        .arg("-r")
         .arg("-s")
         .arg("local")
         .arg("mountpoint")
@@ -245,22 +337,11 @@ async fn sources() {
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("get")
+        .arg("-r")
         .arg("-s")
         .arg("inherited")
         .arg("mountpoint")
         .arg("mypool")
-        .assert()
-        .success()
-        .stdout("NAME PROPERTY VALUE SOURCE\n");
-    bfffs()
-        .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("get")
-        .arg("-s")
-        .arg("inherited")
-        .arg("mountpoint")
-        .arg("mypool/foo/bar")
         .assert()
         .success()
         .stdout(
@@ -269,7 +350,3 @@ async fn sources() {
              mypool/foo/bar/baz mountpoint /foo/bar/baz inherited\n",
         );
 }
-
-// TODO:
-// recursive
-// depth-limited

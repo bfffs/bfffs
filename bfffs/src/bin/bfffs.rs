@@ -286,6 +286,12 @@ mod fs {
             multiple_occurrences = false
         )]
         pub(super) sources:    Vec<PropertySource>,
+        /// Recursively display all children
+        #[clap(short = 'r', long)]
+        pub(super) recursive:  bool,
+        /// Recursively display children up to this many levels deep
+        #[clap(short = 'd', long)]
+        pub(super) depth:      Option<usize>,
         /// Dataset properties to display, comma delimited
         #[clap(
             require_value_delimiter(true),
@@ -302,11 +308,15 @@ mod fs {
     impl Get {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            // TODO: recursion, source filter
+            let depth = self.depth.unwrap_or(if self.recursive {
+                usize::MAX
+            } else {
+                0
+            });
             let mut all = Vec::new();
             for ds in self.datasets.into_iter() {
                 bfffs
-                    .fs_list(ds, self.properties.clone(), None)
+                    .fs_list(ds, self.properties.clone(), None, depth)
                     .try_for_each(|mut dsinfo| {
                         dsinfo.props.retain(|(_prop, source)| {
                             // We use FROM_PARENT as a shorthand for "any
@@ -397,17 +407,28 @@ mod fs {
             default_value = "name"
         )]
         pub(super) properties: Vec<PropertyName>,
+        /// Recursively display all children
+        #[clap(short = 'r', long)]
+        pub(super) recursive:  bool,
+        /// Recursively display children up to this many levels deep
+        #[clap(short = 'd', long)]
+        pub(super) depth:      Option<usize>,
         pub(super) datasets:   Vec<String>,
     }
 
     impl List {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            // TODO: recursion, sorting
+            let depth = self.depth.unwrap_or(if self.recursive {
+                usize::MAX
+            } else {
+                0
+            });
+            // TODO: sorting
             let mut all = Vec::new();
             for ds in self.datasets.into_iter() {
                 bfffs
-                    .fs_list(ds, self.properties.clone(), None)
+                    .fs_list(ds, self.properties.clone(), None, depth)
                     .try_for_each(|dsinfo| {
                         all.push(dsinfo);
                         future::ok(())
@@ -963,6 +984,19 @@ mod t {
             use crate::fs;
 
             #[test]
+            fn depth() {
+                let args =
+                    vec!["bfffs", "fs", "get", "-d", "42", "atime", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert_eq!(get.depth, Some(42));
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(&get.properties[..], &[PropertyName::Atime][..]);
+                }
+            }
+
+            #[test]
             fn fields() {
                 let args = vec![
                     "bfffs",
@@ -1009,6 +1043,19 @@ mod t {
                         &get.properties[..],
                         &[PropertyName::RecordSize][..]
                     );
+                }
+            }
+
+            #[test]
+            fn recursive() {
+                let args =
+                    vec!["bfffs", "fs", "get", "-r", "atime", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::Get(_))));
+                if let SubCommand::Fs(FsCmd::Get(get)) = cli.cmd {
+                    assert!(get.recursive);
+                    assert_eq!(&get.datasets[..], &["testpool"][..]);
+                    assert_eq!(&get.properties[..], &[PropertyName::Atime][..]);
                 }
             }
 

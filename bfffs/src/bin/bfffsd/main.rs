@@ -348,6 +348,26 @@ impl Bfffsd {
                     }
                 }
             }
+            rpc::Request::FsStat(req) => {
+                let r = req
+                    .props
+                    .iter()
+                    .map(|propname| {
+                        let name = req.name.clone();
+                        self.controller.get_prop(name, *propname)
+                    })
+                    .collect::<FuturesOrdered<_>>()
+                    .try_collect::<Vec<_>>()
+                    .map_ok(move |props| {
+                        rpc::fs::DsInfo {
+                            name: req.name,
+                            props,
+                            offset: 0,
+                        }
+                    })
+                    .await;
+                rpc::Response::FsStat(r)
+            }
             rpc::Request::FsUnmount(req) => {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::FsUnmount(Err(Error::EPERM))

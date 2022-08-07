@@ -75,40 +75,47 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
 
 #[rstest]
 #[tokio::test]
-async fn child() {
-    let h = harness(&["mypool/child"]);
+async fn depth() {
+    let h = harness(&[
+        "mypool/brother",
+        "mypool/brother/nephew",
+        "mypool/sister",
+        "mypool/sister/niece",
+    ]);
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("list")
+        .arg("-d")
+        .arg("0")
         .arg("mypool")
         .assert()
         .success()
-        .stdout(
-            "NAME\n\
-             mypool\n\
-             mypool/child\n",
-        );
-}
-
-#[rstest]
-#[tokio::test]
-async fn grandchild() {
-    let h = harness(&["mypool/child", "mypool/child/grandchild"]);
+        .stdout("NAME\nmypool\n");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("list")
-        .arg("mypool/child")
+        .arg("-d")
+        .arg("1")
+        .arg("mypool")
         .assert()
         .success()
-        .stdout(
-            "NAME\n\
-             mypool/child\n\
-             mypool/child/grandchild\n",
-        );
+        .stdout("NAME\nmypool\nmypool/brother\nmypool/sister\n");
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("list")
+        .arg("-d")
+        .arg("2")
+        .arg("mypool")
+        .assert()
+        .success()
+        .stdout("NAME\nmypool\nmypool/brother\nmypool/brother/nephew\nmypool/sister\n\
+            mypool/sister/niece\n");
 }
 
 #[test]
@@ -145,6 +152,7 @@ async fn multi_arg() {
         "mypool/sister",
         "mypool/brother/grandson",
         "mypool/sister/granddaughter",
+        "mypool/dog",
     ]);
     bfffs()
         .arg("--sock")
@@ -158,9 +166,7 @@ async fn multi_arg() {
         .stdout(
             "NAME\n\
              mypool/brother\n\
-             mypool/brother/grandson\n\
-             mypool/sister\n\
-             mypool/sister/granddaughter\n",
+             mypool/sister\n",
         );
 }
 
@@ -186,6 +192,7 @@ async fn lots() {
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("list")
+        .arg("-r")
         .arg("mypool")
         .assert()
         .success()
@@ -252,20 +259,32 @@ async fn pool_only() {
 
 #[rstest]
 #[tokio::test]
-async fn siblings() {
-    let h = harness(&["mypool/brother", "mypool/sister"]);
+async fn recursive() {
+    let h = harness(&[
+        "mypool/brother",
+        "mypool/brother/nephew",
+        "mypool/sister",
+        "mypool/sister/niece",
+    ]);
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.to_str().unwrap())
         .arg("fs")
         .arg("list")
+        .arg("-r")
         .arg("mypool")
         .assert()
         .success()
-        .stdout(
-            "NAME\n\
-             mypool\n\
-             mypool/brother\n\
-             mypool/sister\n",
-        );
+        .stdout("NAME\nmypool\nmypool/brother\nmypool/brother/nephew\nmypool/sister\n\
+            mypool/sister/niece\n");
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.to_str().unwrap())
+        .arg("fs")
+        .arg("list")
+        .arg("-r")
+        .arg("mypool/brother")
+        .assert()
+        .success()
+        .stdout("NAME\nmypool/brother\nmypool/brother/nephew\n");
 }
