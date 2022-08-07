@@ -30,9 +30,7 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -40,9 +38,9 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
     let sockpath = tempdir.path().join("bfffsd.sock");
     let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
         .arg("--sock")
-        .arg(sockpath.to_str().unwrap())
+        .arg(sockpath.as_os_str())
         .arg("mypool")
-        .arg(filename.to_str().unwrap())
+        .arg(filename.as_os_str())
         .spawn()
         .unwrap()
         .into();
@@ -58,9 +56,8 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
     for dsname in dsnames {
         bfffs()
             .arg("--sock")
-            .arg(sockpath.to_str().unwrap())
-            .arg("fs")
-            .arg("create")
+            .arg(sockpath.as_os_str())
+            .args(&["fs", "create"])
             .arg(dsname.as_ref())
             .assert()
             .success();
@@ -84,43 +81,37 @@ async fn depth() {
     ]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-d")
-        .arg("0")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-d", "0", "mypool"])
         .assert()
         .success()
         .stdout("NAME\nmypool\n");
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-d")
-        .arg("1")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-d", "1", "mypool"])
         .assert()
         .success()
         .stdout("NAME\nmypool\nmypool/brother\nmypool/sister\n");
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-d")
-        .arg("2")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-d", "2", "mypool"])
         .assert()
         .success()
-        .stdout("NAME\nmypool\nmypool/brother\nmypool/brother/nephew\nmypool/sister\n\
-            mypool/sister/niece\n");
+        .stdout(
+            "NAME\n\
+            mypool\n\
+            mypool/brother\n\
+            mypool/brother/nephew\n\
+            mypool/sister\n\
+            mypool/sister/niece\n",
+        );
 }
 
 #[test]
 fn help() {
-    bfffs().arg("fs").arg("list").arg("-h").assert().success();
+    bfffs().args(&["fs", "list", "-h"]).assert().success();
 }
 
 /// By default, numeric properties should be printed in human-friendly units
@@ -130,12 +121,8 @@ async fn humanize() {
     let h = harness::<&'static str>(&[]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-o")
-        .arg("name,recsize")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-o", "name,recsize", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -156,11 +143,8 @@ async fn multi_arg() {
     ]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("mypool/brother")
-        .arg("mypool/sister")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "mypool/brother", "mypool/sister"])
         .assert()
         .success()
         .stdout(
@@ -189,11 +173,8 @@ async fn lots() {
     expected.push('\n');
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-r")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-r", "mypool"])
         .assert()
         .success()
         .stdout(expected);
@@ -207,12 +188,8 @@ async fn parseable() {
     let h = harness::<&'static str>(&[]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-p")
-        .arg("-o")
-        .arg("name,atime,mountpoint,recsize")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-p", "-o", "name,atime,mountpoint,recsize"])
         .arg("mypool")
         .assert()
         .success()
@@ -225,12 +202,8 @@ async fn props() {
     let h = harness::<&'static str>(&[]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-o")
-        .arg("name,atime,mountpoint")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-o", "name,atime,mountpoint", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -245,10 +218,8 @@ async fn pool_only() {
     let h = harness::<&'static str>(&[]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -268,22 +239,22 @@ async fn recursive() {
     ]);
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-r")
-        .arg("mypool")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-r", "mypool"])
         .assert()
         .success()
-        .stdout("NAME\nmypool\nmypool/brother\nmypool/brother/nephew\nmypool/sister\n\
-            mypool/sister/niece\n");
+        .stdout(
+            "NAME\n\
+            mypool\n\
+            mypool/brother\n\
+            mypool/brother/nephew\n\
+            mypool/sister\n\
+            mypool/sister/niece\n",
+        );
     bfffs()
         .arg("--sock")
-        .arg(h.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("list")
-        .arg("-r")
-        .arg("mypool/brother")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "list", "-r", "mypool/brother"])
         .assert()
         .success()
         .stdout("NAME\nmypool/brother\nmypool/brother/nephew\n");

@@ -56,10 +56,7 @@ async fn atime(harness: Harness) {
     let pool_name = "mypool";
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("--properties")
-        .arg("atime=off")
+        .args(&["pool", "create", "--properties", "atime=off"])
         .arg(pool_name)
         .arg(&filenames[0])
         .assert()
@@ -78,9 +75,7 @@ async fn atime(harness: Harness) {
 #[test]
 fn enoent() {
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg("/tmp/does_not_exist_a8hra3hraw938hfwf")
         .assert()
         .failure();
@@ -89,12 +84,7 @@ fn enoent() {
 
 #[test]
 fn help() {
-    bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("-h")
-        .assert()
-        .success();
+    bfffs().args(&["pool", "create", "-h"]).assert().success();
 }
 
 /// Multiple properties may be comma-delimited.
@@ -105,10 +95,12 @@ async fn multiprops(harness: Harness) {
     let pool_name = "mypool";
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("--properties")
-        .arg("atime=off,recordsize=65536")
+        .args(&[
+            "pool",
+            "create",
+            "--properties",
+            "atime=off,recordsize=65536",
+        ])
         .arg(pool_name)
         .arg(&filenames[0])
         .assert()
@@ -121,9 +113,7 @@ async fn ok(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg(&filenames[0])
         .assert()
         .success();
@@ -139,15 +129,8 @@ async fn raid(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
-        .arg("raid")
-        .arg("3")
-        .arg("1")
-        .arg(&filenames[0])
-        .arg(&filenames[1])
-        .arg(&filenames[2])
+        .args(&["pool", "create", "mypool", "raid", "3", "1"])
+        .args(&[&filenames[0], &filenames[1], &filenames[2]])
         .assert()
         .success();
 
@@ -162,10 +145,7 @@ async fn recsize(harness: Harness) {
     let pool_name = "mypool";
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("--properties")
-        .arg("recordsize=65536")
+        .args(&["pool", "create", "--properties", "recordsize=65536"])
         .arg(pool_name)
         .arg(&filenames[0])
         .assert()
@@ -186,11 +166,8 @@ async fn stripe(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
-        .arg(&filenames[0])
-        .arg(&filenames[1])
+        .args(&["pool", "create", "mypool"])
+        .args(&[&filenames[0], &filenames[1]])
         .assert()
         .success();
 
@@ -205,21 +182,10 @@ async fn striped_raid(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
-        .arg("raid")
-        .arg("3")
-        .arg("1")
-        .arg(&filenames[0])
-        .arg(&filenames[1])
-        .arg(&filenames[2])
-        .arg("raid")
-        .arg("3")
-        .arg("1")
-        .arg(&filenames[3])
-        .arg(&filenames[4])
-        .arg(&filenames[5])
+        .args(&["pool", "create", "mypool", "raid", "3", "1"])
+        .args(&[&filenames[0], &filenames[1], &filenames[2]])
+        .args(&["raid", "3", "1"])
+        .args(&[&filenames[3], &filenames[4], &filenames[5]])
         .assert()
         .success();
 
@@ -233,11 +199,7 @@ async fn zone_size(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("--zone-size")
-        .arg("512")
-        .arg("mypool")
+        .args(&["pool", "create", "--zone-size", "512", "mypool"])
         .arg(&filenames[0])
         .assert()
         .success();

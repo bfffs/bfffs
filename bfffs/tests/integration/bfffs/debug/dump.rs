@@ -21,9 +21,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -33,12 +31,7 @@ fn harness() -> Harness {
 
 #[test]
 fn help() {
-    bfffs()
-        .arg("debug")
-        .arg("dump")
-        .arg("-h")
-        .assert()
-        .success();
+    bfffs().args(&["debug", "dump", "-h"]).assert().success();
 }
 
 #[rstest]
@@ -49,10 +42,7 @@ async fn forest(harness: Harness) {
     // The output format is tested by the Fs functional tests.  In the
     // integration tests, just test that it looks basically correct.
     bfffs()
-        .arg("debug")
-        .arg("dump")
-        .arg("--forest")
-        .arg("mypool")
+        .args(&["debug", "dump", "--forest", "mypool"])
         .arg(filename)
         .assert()
         .success()
@@ -76,10 +66,7 @@ async fn fsm(harness: Harness) {
     let (filename, _tempdir) = harness;
 
     bfffs()
-        .arg("debug")
-        .arg("dump")
-        .arg("-f")
-        .arg("mypool")
+        .args(&["debug", "dump", "-f", "mypool"])
         .arg(filename)
         .assert()
         .success()
@@ -102,10 +89,7 @@ async fn tree(harness: Harness) {
     // The output format is tested by the Fs functional tests.  In the
     // integration tests, just test that it looks basically correct.
     bfffs()
-        .arg("debug")
-        .arg("dump")
-        .arg("-t")
-        .arg("mypool")
+        .args(&["debug", "dump", "-t", "mypool"])
         .arg(filename)
         .assert()
         .success()

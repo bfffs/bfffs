@@ -31,9 +31,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .arg("pool")
-        .arg("create")
-        .arg("mypool")
+        .args(&["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -41,9 +39,9 @@ fn harness() -> Harness {
     let sockpath = tempdir.path().join("bfffsd.sock");
     let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
         .arg("--sock")
-        .arg(sockpath.to_str().unwrap())
+        .arg(sockpath.as_os_str())
         .arg("mypool")
-        .arg(filename.to_str().unwrap())
+        .arg(filename.as_os_str())
         .spawn()
         .unwrap()
         .into();
@@ -68,20 +66,16 @@ fn harness() -> Harness {
 async fn eexist(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
     // Creating the same file system again should fail
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .failure()
         .stderr("Error: EEXIST\n");
@@ -89,7 +83,7 @@ async fn eexist(harness: Harness) {
 
 #[test]
 fn help() {
-    bfffs().arg("fs").arg("create").arg("-h").assert().success();
+    bfffs().args(&["fs", "create", "-h"]).assert().success();
 }
 
 #[rstest]
@@ -97,10 +91,8 @@ fn help() {
 async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "mypool/foo"])
         .assert()
         .success();
 }
@@ -110,12 +102,8 @@ async fn ok(harness: Harness) {
 async fn noatime(harness: Harness) {
     bfffs()
         .arg("--sock")
-        .arg(harness.sockpath.to_str().unwrap())
-        .arg("fs")
-        .arg("create")
-        .arg("-o")
-        .arg("atime=off")
-        .arg("mypool/foo")
+        .arg(harness.sockpath.as_os_str())
+        .args(&["fs", "create", "-o", "atime=off", "mypool/foo"])
         .assert()
         .success();
 }
