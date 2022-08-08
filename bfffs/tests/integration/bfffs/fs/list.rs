@@ -259,3 +259,96 @@ async fn recursive() {
         .success()
         .stdout("NAME\nmypool/brother\nmypool/brother/nephew\n");
 }
+
+#[rstest]
+#[tokio::test]
+async fn sort() {
+    let h = harness::<&'static str>(&[]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "create", "-o", "atime=off,recsize=65536"])
+        .arg("mypool/a")
+        .assert()
+        .success();
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "create", "-o", "atime=on,recsize=65536"])
+        .arg("mypool/b")
+        .assert()
+        .success();
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(&["fs", "create", "-o", "atime=off,recsize=131072"])
+        .arg("mypool/c")
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(&[
+            "fs",
+            "list",
+            "-o",
+            "name,atime,recsize",
+            "-r",
+            "-s",
+            "atime",
+            "-s",
+            "recsize",
+            "-s",
+            "name",
+            "mypool",
+        ])
+        .assert()
+        .success()
+        .stdout(
+            "NAME     ATIME RECSIZE\n\
+             mypool/a off   64 kiB\n\
+             mypool/c off   128 kiB\n\
+             mypool/b on    64 kiB\n\
+             mypool   on    128 kiB\n",
+        );
+
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(&[
+            "fs",
+            "list",
+            "-o",
+            "name,atime,recsize",
+            "-r",
+            "-s",
+            "recsize",
+            "-s",
+            "atime",
+            "-s",
+            "name",
+            "mypool",
+        ])
+        .assert()
+        .success()
+        .stdout(
+            "NAME     ATIME RECSIZE\n\
+             mypool/a off   64 kiB\n\
+             mypool/b on    64 kiB\n\
+             mypool/c off   128 kiB\n\
+             mypool   on    128 kiB\n",
+        );
+}
+
+#[rstest]
+#[test]
+fn sort_by_unlisted_property() {
+    bfffs()
+        .args(&["fs", "list", "-o", "name,atime", "-s", "recsize", "mypool"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "Cannot sort by a property that isn't listed",
+        ));
+}

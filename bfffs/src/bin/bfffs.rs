@@ -1,4 +1,5 @@
 use std::{
+    cmp::Ordering,
     fmt,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -7,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use bfffs::{Bfffs, Result};
+use bfffs::{Bfffs, Error, Result};
 use bfffs_core::{
     controller::Controller,
     database::{Database, TreeID},
@@ -413,18 +414,44 @@ mod fs {
         /// Recursively display children up to this many levels deep
         #[clap(short = 'd', long)]
         pub(super) depth:      Option<usize>,
+        /// Ascending sort columns, comma delimited
+        #[clap(
+            short = 's',
+            long,
+            action = clap::ArgAction::Append,
+            default_value = "name"
+        )]
+        // TODO: add a -S option for descending columns.  But first #[clap]
+        // needs to get support for storing argument indices.
+        // https://github.com/clap-rs/clap/discussions/3399
+        // https://github.com/clap-rs/clap/issues/3846
+        pub(super) sort: Vec<PropertyName>,
         pub(super) datasets:   Vec<String>,
     }
 
     impl List {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
-            let bfffs = Bfffs::new(sock).await.unwrap();
             let depth = self.depth.unwrap_or(if self.recursive {
                 usize::MAX
             } else {
                 0
             });
-            // TODO: sorting
+
+            // This could be written in a functional way once Iterator::try_collect stabilizes.
+            // https://github.com/rust-lang/rust/issues/94047
+            let mut sort_indices = Vec::<usize>::with_capacity(self.sort.len());
+            for sname in self.sort.into_iter() {
+                if let Some(i) =
+                    self.properties.iter().position(|&pname| sname == pname)
+                {
+                    sort_indices.push(i);
+                } else {
+                    eprintln!("Cannot sort by a property that isn't listed");
+                    return Err(Error::EINVAL);
+                }
+            }
+
+            let bfffs = Bfffs::new(sock).await.unwrap();
             let mut all = Vec::new();
             for ds in self.datasets.into_iter() {
                 bfffs
@@ -435,8 +462,16 @@ mod fs {
                     })
                     .await?;
             }
-            // Sort datasets by name, until other sort options are added
-            all.sort_unstable_by(|x, y| x.name.cmp(&y.name));
+
+            all.sort_unstable_by(|x, y| {
+                for pidx in &sort_indices {
+                    let r = x.props[*pidx].0.cmp(&y.props[*pidx].0);
+                    if Ordering::Equal != r {
+                        return r;
+                    }
+                }
+                Ordering::Equal
+            });
 
             if self.parseable {
                 let stdout = io::stdout();
@@ -1104,6 +1139,31 @@ mod t {
                     assert_eq!(
                         &get.properties[..],
                         &[PropertyName::RecordSize, PropertyName::Atime][..]
+                    );
+                }
+            }
+        }
+
+        mod list {
+            use super::*;
+
+            #[test]
+            fn sort() {
+                let args = vec![
+                    "bfffs", "fs", "list", "-s", "recsize", "-s", "atime",
+                    "-s", "name", "testpool",
+                ];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Fs(FsCmd::List(_))));
+                if let SubCommand::Fs(FsCmd::List(list)) = cli.cmd {
+                    assert_eq!(list.datasets, &["testpool"]);
+                    assert_eq!(
+                        list.sort,
+                        &[
+                            PropertyName::RecordSize,
+                            PropertyName::Atime,
+                            PropertyName::Name
+                        ]
                     );
                 }
             }

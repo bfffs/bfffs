@@ -17,7 +17,7 @@ pub const PROPERTY_OBJECT: u64 = 0;
 ///
 /// This enum is not used for User Properties.  User Properties are stored as
 /// extended attributes on inode 0.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Property {
     /// Access time.
     ///
