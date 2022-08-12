@@ -172,11 +172,11 @@ lazy_static! {
             .build()
             .unwrap()
     );
-    static ref FS: RwLock<Option<Arc<Fs>>> = RwLock::default();
-    static ref ROOT: RwLock<Option<FileDataMut>> = RwLock::default();
     static ref FILES: RwLock<HashMap<libc::c_int, FileDataMut>> =
         RwLock::default();
 }
+static FS: RwLock<Option<Arc<Fs>>> = RwLock::new(None);
+static ROOT: RwLock<Option<FileDataMut>> = RwLock::new(None);
 
 ///
 /// # Safety

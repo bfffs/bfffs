@@ -30,14 +30,20 @@ struct Stats {
     collisions: u64
 }
 
+impl Stats {
+    const fn new() -> Self {
+        Stats {tries: 0, collisions: 0}
+    }
+}
+
 lazy_static! {
     // Don't store the actual namespace and name, because that takes too much
     // RAM.  Instead, store a seed that can be used to recreate the name and
     // namespace.  It cuts the throughput, but also cuts the RAM usage.
     static ref HM: DashMap<u64, [u8; 16]> =
         DashMap::with_capacity(4_000_000);
-    static ref STATS: Mutex<Stats> = Default::default();
 }
+static STATS: Mutex<Stats> = Mutex::new(Stats::new());
 
 trait Collidable {
     fn dump(&self) -> String;
