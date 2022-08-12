@@ -9,7 +9,6 @@ use crate::{
     writeback::Credit
 };
 use futures::Future;
-use lazy_static::lazy_static;
 use mockall::mock;
 use std::{
     borrow::Borrow,
@@ -20,9 +19,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-lazy_static! {
-    pub static ref OPEN_MTX: Mutex<()> = Mutex::new(());
-}
+pub static OPEN_MTX: Mutex<()> = Mutex::new(());
 
 mock! {
     pub Tree<A, D, K, V>
