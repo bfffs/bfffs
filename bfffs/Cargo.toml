@@ -21,8 +21,8 @@ cfg-if = "1.0"
 fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "90f4c22", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 libc = "0.2.44"
-nix = { git = "http://github.com/nix-rust/nix", rev = "69738c0fd03af19053c5701a984f923ecbbfada6", default-features = false, features = ["user"] }
-si-scale = "0.1.3"
+nix = { version = "0.25.0", default-features = false, features = ["user"] }
+si-scale = "0.1.5"
 tabular = "0.2.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.10.0", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
@@ -45,7 +45,7 @@ divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 freebsd-libgeom = "0.2.0"
 function_name = "0.2.0"
 mockall = "0.11.0"
-nix = { git = "http://github.com/nix-rust/nix", rev = "69738c0fd03af19053c5701a984f923ecbbfada6", default-features = false, features = ["mount", "process", "signal", "user"] }
+nix = { version = "0.25.0", default-features = false, features = ["mount", "process", "signal", "user"] }
 predicates = "2.1.0"
 regex = "1.0"
 rstest = "0.11.0"
