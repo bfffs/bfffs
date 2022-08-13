@@ -717,7 +717,7 @@ mod pool {
                         cluster_type = Some("raid")
                     }
                     Some(dev) => {
-                        if cluster_type == None {
+                        if cluster_type.is_none() {
                             builder.create_single(dev);
                         } else {
                             devs.push(dev);
