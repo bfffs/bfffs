@@ -30,18 +30,18 @@ mod codec;
 mod declust;
 mod prime_s;
 mod sgcursor;
-mod vdev_onedisk;
+mod null_raid;
 mod vdev_raid;
 mod vdev_raid_api;
 
-pub use self::vdev_onedisk::VdevOneDisk;
+pub use self::null_raid::NullRaid;
 pub use self::vdev_raid::VdevRaid;
 pub use self::vdev_raid_api::VdevRaidApi;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Label {
     // TODO: VdevMirror
-    OneDisk(self::vdev_onedisk::Label),
+    NullRaid(self::null_raid::Label),
     Raid(self::vdev_raid::Label)
 }
 
@@ -49,14 +49,14 @@ impl<'a> Label {
     pub fn iter_children(&'a self) -> Box<dyn Iterator<Item=&Uuid> + 'a> {
         match self {
             Label::Raid(l) => Box::new(l.children.iter()),
-            Label::OneDisk(l) => Box::new(once(&l.child))
+            Label::NullRaid(l) => Box::new(once(&l.child))
         }
     }
 
     pub fn uuid(&self) -> Uuid {
         match self {
             Label::Raid(l) => l.uuid,
-            Label::OneDisk(l) => l.uuid
+            Label::NullRaid(l) => l.uuid
         }
     }
 }
@@ -86,7 +86,7 @@ pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
     if paths.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Arc::new(VdevOneDisk::create(lbas_per_zone, &paths[0]))
+        Arc::new(NullRaid::create(lbas_per_zone, &paths[0]))
     } else {
         Arc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
                                  redundancy, paths))
@@ -122,8 +122,8 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
         Label::Raid(l) => {
             Arc::new(VdevRaid::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
         },
-        Label::OneDisk(l) => {
-            Arc::new(VdevOneDisk::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
+        Label::NullRaid(l) => {
+            Arc::new(NullRaid::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
         },
     };
     (vdev, label_reader)

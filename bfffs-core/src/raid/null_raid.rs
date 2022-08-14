@@ -32,19 +32,19 @@ pub struct Label {
     pub child:  Uuid
 }
 
-/// `VdevOneDisk`: RAID-level Virtual Device for single-disk clusters
+/// `NullRaid`: RAID-level passthrough Virtual Device
 ///
-/// This Vdev adapts a Cluster to a single disk, without providing any
-/// redundancy.
-pub struct VdevOneDisk {
+/// This Vdev adapts a Cluster to a single disk or a single mirror, without
+/// providing any additional redundancy.
+pub struct NullRaid {
     /// Underlying block device.
     blockdev: VdevBlock,
 
     uuid: Uuid,
 }
 
-impl VdevOneDisk {
-    /// Create a new VdevOneDisk from an unused file or device
+impl NullRaid {
+    /// Create a new NullRaid from an unused file or device
     ///
     /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
     ///                         simulated zones on devices that don't have
@@ -58,26 +58,26 @@ impl VdevOneDisk {
     {
         let uuid = Uuid::new_v4();
         let blockdev = VdevBlock::create(path, lbas_per_zone).unwrap();
-        VdevOneDisk{blockdev, uuid}
+        NullRaid{blockdev, uuid}
     }
 
-    /// Open an existing `VdevOneDisk`
+    /// Open an existing `NullRaid`
     ///
     /// # Parameters
     ///
-    /// * `label`:      The `VdevOneDisk`'s label
+    /// * `label`:      The `NullRaid`'s label
     /// * `blockdevs`:  A map containing a single `VdevBlock`, indexed by UUID
     pub(super) fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlock>)
         -> Self
     {
         assert_eq!(blockdevs.len(), 1);
         let blockdev = blockdevs.into_iter().next().unwrap().1;
-        VdevOneDisk{uuid: label.uuid, blockdev}
+        NullRaid{uuid: label.uuid, blockdev}
     }
 
 }
 
-impl Vdev for VdevOneDisk {
+impl Vdev for NullRaid {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         self.blockdev.lba2zone(lba)
     }
@@ -108,7 +108,7 @@ impl Vdev for VdevOneDisk {
 }
 
 #[async_trait]
-impl VdevRaidApi for VdevOneDisk {
+impl VdevRaidApi for NullRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.blockdev.zone_limits(zone);
         Box::pin(self.blockdev.erase_zone(limits.0, limits.1 - 1))
@@ -160,11 +160,11 @@ impl VdevRaidApi for VdevOneDisk {
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
-        let onedisk_label = Label {
+        let nullraid_label = Label {
             uuid: self.uuid,
             child: self.blockdev.uuid()
         };
-        let label = super::Label::OneDisk(onedisk_label);
+        let label = super::Label::NullRaid(nullraid_label);
         labeller.serialize(&label).unwrap();
         Box::pin(self.blockdev.write_label(labeller))
     }

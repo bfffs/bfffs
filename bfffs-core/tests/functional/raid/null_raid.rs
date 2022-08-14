@@ -6,7 +6,7 @@ mod persistence {
         vdev_block::*,
         vdev::Vdev,
         vdev_file::*,
-        raid::{self, VdevOneDisk, VdevRaidApi},
+        raid::{self, NullRaid, VdevRaidApi},
     };
     use futures::TryFutureExt;
     use pretty_assertions::assert_eq;
@@ -18,11 +18,11 @@ mod persistence {
     use super::super::super::*;
     use tempfile::{Builder, TempDir};
 
-    const GOLDEN_VDEV_ONEDISK_LABEL: [u8; 36] = [
+    const GOLDEN_VDEV_NULLRAID_LABEL: [u8; 36] = [
         // Past the VdevFile::Label, we have a raid::Label
-        // First comes the VdevOneDisk discriminant
+        // First comes the NullRaid discriminant
         0x00, 0x00, 0x00, 0x00,
-        // Then the VdevOneDisk label, beginning with a UUID
+        // Then the NullRaid label, beginning with a UUID
                                 0x2f, 0x27, 0x51, 0xe5,
         0xe8, 0x58, 0x45, 0x1b, 0x92, 0xb5, 0x24, 0x0f,
         0x23, 0x7b, 0xc9, 0xbe,
@@ -33,20 +33,20 @@ mod persistence {
     ];
 
     #[fixture]
-    fn harness() -> (VdevOneDisk, TempDir, String) {
+    fn harness() -> (NullRaid, TempDir, String) {
         let len = 1 << 26;  // 64 MB
         let tempdir = t!(
-            Builder::new().prefix("test_vdev_onedisk_persistence").tempdir()
+            Builder::new().prefix("test_vdev_null_raid_persistence").tempdir()
         );
         let path = format!("{}/vdev", tempdir.path().display());
         let file = t!(fs::File::create(&path));
         t!(file.set_len(len));
-        let vdev = VdevOneDisk::create(None, path.clone());
+        let vdev = NullRaid::create(None, path.clone());
         (vdev, tempdir, path)
     }
 
     #[rstest]
-    fn open_after_write(harness: (VdevOneDisk, TempDir, String)) {
+    fn open_after_write(harness: (NullRaid, TempDir, String)) {
         let (old_vdev, _tempdir, path) = harness;
         let uuid = old_vdev.uuid();
         basic_runtime().block_on(async move {
@@ -64,7 +64,7 @@ mod persistence {
     }
 
     #[rstest]
-    fn write_label(harness: (VdevOneDisk, TempDir, String)) {
+    fn write_label(harness: (NullRaid, TempDir, String)) {
         basic_runtime().block_on(async {
             let label_writer = LabelWriter::new(0);
             harness.0.write_label(label_writer).await
@@ -82,7 +82,7 @@ mod persistence {
             println!("UUID is {}", harness.0.uuid());
         } */
         // Compare against the golden master, skipping the UUID fields
-        assert_eq!(&v[0..4], &GOLDEN_VDEV_ONEDISK_LABEL[0..4]);
+        assert_eq!(&v[0..4], &GOLDEN_VDEV_NULLRAID_LABEL[0..4]);
         // Rest of the buffer should be zero-filled
         assert!(v[36..].iter().all(|&x| x == 0));
     }
