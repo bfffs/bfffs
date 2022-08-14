@@ -324,7 +324,7 @@ impl VdevRaid {
         // healthy reads than for writes or degraded reads.  This calculation
         // computes the optimum for writes and degraded reads.
         let optimum_queue_depth = blockdevs.iter()
-        .map(|bd| bd.optimum_queue_depth())
+        .map(VdevBlock::optimum_queue_depth)
         .sum::<u32>() / (codec.stripesize() as u32);
 
         VdevRaid { chunksize, codec, locator, blockdevs, layout_algorithm,
