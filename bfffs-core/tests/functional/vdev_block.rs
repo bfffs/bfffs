@@ -1,5 +1,5 @@
 // vim: tw=80
-/// These tests use a real VdevLeaf object
+/// These tests use a real VdevBlock object
 mod vdev_block {
     use bfffs_core::{vdev::*, vdev_block::*};
     use divbuf::DivBufShared;
