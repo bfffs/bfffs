@@ -6,8 +6,7 @@ use bfffs_core::{
     database::Database,
     ddml::*,
     idml::*,
-    pool::*,
-    property::{Property, PropertyName, PropertySource}
+    property::{Property, PropertyName, PropertySource},
 };
 use futures::TryStreamExt;
 use rstest::{fixture, rstest};
@@ -15,7 +14,6 @@ use std::{
     fs,
     sync::{Arc, Mutex}
 };
-use tempfile::Builder;
 
 
 const POOLNAME: &str = "TestPool";
@@ -25,18 +23,15 @@ type Harness = (Controller,);
 #[fixture]
 fn harness() -> Harness {
     let len = 1 << 26;  // 64 MB
-    let tempdir = Builder::new()
-        .prefix("test_controller")
-        .tempdir()
-        .unwrap();
+    let (tempdir, _, pool) = crate::PoolBuilder::new()
+        .name(POOLNAME)
+        .build();
     let filename = tempdir.path().join("vdev");
     {
         let file = fs::File::create(&filename).unwrap();
         file.set_len(len).unwrap();
     }
     let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
-    let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
-    let pool = Pool::create(String::from(POOLNAME), vec![cluster]);
     let ddml = Arc::new(DDML::new(pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
     let db = Database::create(Arc::new(idml));

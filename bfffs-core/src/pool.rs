@@ -25,10 +25,6 @@ use std::{
         Arc
     }
 };
-#[cfg(not(test))] use std::{
-    num::NonZeroU64,
-    path::Path,
-};
 use std::collections::BTreeMap;
 
 #[cfg(test)]
@@ -141,35 +137,6 @@ impl Pool {
         .min_by(|&(_, x), &(_, y)| x.partial_cmp(&y).unwrap())
         .map(|(i, _)| i)
         .unwrap() as ClusterT
-    }
-
-    /// Create a new `Cluster` from unused files or devices.
-    ///
-    /// * `chunksize`:          RAID chunksize in LBAs, if specified.  This is
-    ///                         the largest amount of data that will be
-    ///                         read/written to a single device before the
-    ///                         `Locator` switches to the next device.
-    /// * `disks_per_stripe`:   Number of data plus parity chunks in each
-    ///                         self-contained RAID stripe.  Must be less than
-    ///                         or equal to the size of `paths`.
-    /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
-    ///                         simulated zones on devices that don't have
-    ///                         native zones.
-    /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
-    ///                         disks may fail before the array becomes
-    ///                         inoperable.
-    /// * `paths`:              Slice of pathnames of files and/or devices
-    #[cfg(not(test))]
-    pub fn create_cluster<P>(chunksize: Option<NonZeroU64>,
-                             disks_per_stripe: i16,
-                             lbas_per_zone: Option<NonZeroU64>,
-                             redundancy: i16,
-                             paths: &[P])
-        -> Cluster
-        where P: AsRef<Path> + Sync
-    {
-        Cluster::create(chunksize, disks_per_stripe,
-                lbas_per_zone, redundancy, paths)
     }
 
     /// Create a new `Pool` from some freshly created `Cluster`s.

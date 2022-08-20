@@ -3,12 +3,12 @@
 mod persistence {
     use bfffs_core::{
         label::*,
+        mirror::Mirror,
         vdev_block::*,
         vdev::Vdev,
         vdev_file::*,
         raid::{self, NullRaid, VdevRaidApi},
     };
-    use futures::TryFutureExt;
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
     use std::{
@@ -19,7 +19,7 @@ mod persistence {
     use tempfile::{Builder, TempDir};
 
     const GOLDEN_VDEV_NULLRAID_LABEL: [u8; 36] = [
-        // Past the VdevFile::Label, we have a raid::Label
+        // Past the mirror::Label, we have a raid::Label
         // First comes the NullRaid discriminant
         0x00, 0x00, 0x00, 0x00,
         // Then the NullRaid label, beginning with a UUID
@@ -41,26 +41,23 @@ mod persistence {
         let path = format!("{}/vdev", tempdir.path().display());
         let file = t!(fs::File::create(&path));
         t!(file.set_len(len));
-        let vdev = NullRaid::create(None, path.clone());
+        let mirror = Mirror::create(&[&path], None).unwrap();
+        let vdev = NullRaid::create(mirror);
         (vdev, tempdir, path)
     }
 
     #[rstest]
-    fn open_after_write(harness: (NullRaid, TempDir, String)) {
+    #[tokio::test]
+    async fn open_after_write(harness: (NullRaid, TempDir, String)) {
         let (old_vdev, _tempdir, path) = harness;
         let uuid = old_vdev.uuid();
-        basic_runtime().block_on(async move {
-            let label_writer = LabelWriter::new(0);
-            old_vdev.write_label(label_writer).and_then(move |_| {
-                VdevFile::open(path)
-                .map_ok(|(leaf, reader)| {
-                    (VdevBlock::new(leaf), reader)
-                })
-            }).map_ok(move |vb| {
-                let (vdev, _) = raid::open(Some(uuid), vec![vb]);
-                assert_eq!(uuid, vdev.uuid());
-            }).await
-        }).unwrap();
+        let label_writer = LabelWriter::new(0);
+        old_vdev.write_label(label_writer).await.unwrap();
+        let (leaf, reader) = VdevFile::open(path).await.unwrap();
+        let mirror_children = vec![(VdevBlock::new(leaf), reader)];
+        let (mirror, reader) = Mirror::open(None, mirror_children);
+        let (vdev, _) = raid::open(Some(uuid), vec![(mirror, reader)]);
+        assert_eq!(uuid, vdev.uuid());
     }
 
     #[rstest]
@@ -71,7 +68,7 @@ mod persistence {
         }).unwrap();
         let mut f = fs::File::open(harness.2).unwrap();
         let mut v = vec![0; 8192];
-        f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
+        f.seek(SeekFrom::Start(112)).unwrap();   // Skip the leaf, mirror labels
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

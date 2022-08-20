@@ -4,7 +4,6 @@ mod ddml {
         cache::*,
         dml::*,
         ddml::*,
-        pool::*,
         TxgT
     };
     use divbuf::{DivBuf, DivBufShared};
@@ -14,27 +13,18 @@ mod ddml {
     use std::{
         fs,
         io::Read,
-        num::NonZeroU64,
         path::Path,
         sync::{Arc, Mutex}
     };
-    use tempfile::Builder;
     use super::super::*;
     use tokio::runtime::Runtime;
 
     #[fixture]
     fn objects() -> (Runtime, DDML) {
-        let len = 1 << 26;  // 64 MB
-        let tempdir = t!(Builder::new().prefix("ddml").tempdir());
-        let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
+        let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+            .chunksize(1)
+            .build();
         let rt = basic_runtime();
-        let cs = NonZeroU64::new(1);
-        let clusters = vec![
-            Pool::create_cluster(cs, 1, None, 0, &[filename][..])
-        ];
-        let pool = Pool::create("TestPool".to_string(), clusters);
         let cache = Cache::with_capacity(1_000_000_000);
         (rt, DDML::new(pool, Arc::new(Mutex::new(cache))))
     }

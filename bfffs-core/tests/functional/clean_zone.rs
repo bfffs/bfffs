@@ -5,31 +5,22 @@ use bfffs_core::{
     ddml::*,
     fs::*,
     idml::*,
-    pool::*,
 };
 use rstest::rstest;
 use std::{
     ffi::OsString,
-    fs,
-    num::NonZeroU64,
     sync::{Arc, Mutex},
     thread,
     time
 };
-use tempfile::Builder;
 
 type Harness = (Arc<Database>, Fs);
 
 async fn harness(devsize: u64, zone_size: u64) -> Harness {
-    let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
-    let filename = tempdir.path().join("vdev");
-    let file = t!(fs::File::create(&filename));
-    t!(file.set_len(devsize));
-    drop(file);
-    let zone_size = NonZeroU64::new(zone_size);
-    let cluster = Pool::create_cluster(None, 1, zone_size, 0,
-                                       &[filename]);
-    let pool = Pool::create(String::from("test_fs"), vec![cluster]);
+    let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+        .fsize(devsize)
+        .zone_size(zone_size)
+        .build();
     let cache = Arc::new(
         Mutex::new(
             Cache::with_capacity(32_000_000)

@@ -24,7 +24,7 @@ fn harness() -> Harness {
         .tempdir()
         .unwrap();
     let mut paths = Vec::new();
-    for i in 0..6 {
+    for i in 0..12 {
         let filename = tempdir.path().join(format!("vdev.{}", i));
         let file = fs::File::create(&filename).unwrap();
         file.set_len(len).unwrap();
@@ -122,20 +122,38 @@ async fn ok(harness: Harness) {
     open("mypool", &filenames[0..1]).await;
 }
 
-// Create a RAID pool
+// Create a mirrored pool
 #[rstest]
 #[tokio::test]
-async fn raid(harness: Harness) {
+async fn mirror(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
-        .args(["pool", "create", "mypool", "raid", "3", "1"])
-        .args([&filenames[0], &filenames[1], &filenames[2]])
+        .args(["pool", "create", "mypool", "mirror"])
+        .args([&filenames[0], &filenames[1]])
         .assert()
         .success();
 
     // Check that we can actually open them.
-    open("mypool", &filenames[0..3]).await;
+    open("mypool", &filenames[0..2]).await;
+}
+
+// Create a RAID10 pool: a stripe of mirrors
+#[rstest]
+#[tokio::test]
+async fn raid10(harness: Harness) {
+    let (filenames, _tempdir) = harness;
+
+    bfffs()
+        .args(["pool", "create", "mypool", "mirror"])
+        .args([&filenames[0], &filenames[1]])
+        .arg("mirror")
+        .args([&filenames[2], &filenames[3]])
+        .assert()
+        .success();
+
+    // Check that we can actually open them.
+    open("mypool", &filenames[0..4]).await;
 }
 
 #[rstest]
@@ -175,10 +193,10 @@ async fn stripe(harness: Harness) {
     open("mypool", &filenames[0..2]).await;
 }
 
-// Create a pool striped across two raid arrays
+// Create a raid50 pool: striped across two raid arrays
 #[rstest]
 #[tokio::test]
-async fn striped_raid(harness: Harness) {
+async fn raid50(harness: Harness) {
     let (filenames, _tempdir) = harness;
 
     bfffs()
@@ -191,6 +209,68 @@ async fn striped_raid(harness: Harness) {
 
     // Check that we can actually open them.
     open("mypool", &filenames[0..6]).await;
+}
+
+// Create a raid51 pool: a raid of mirrors
+#[rstest]
+#[tokio::test]
+async fn raid51(harness: Harness) {
+    let (filenames, _tempdir) = harness;
+
+    bfffs()
+        .args(["pool", "create", "mypool", "raid", "3", "1", "mirror"])
+        .args([&filenames[0], &filenames[1]])
+        .arg("mirror")
+        .args([&filenames[2], &filenames[3]])
+        .arg("mirror")
+        .args([&filenames[4], &filenames[5]])
+        .assert()
+        .success();
+
+    // Check that we can actually open them.
+    open("mypool", &filenames[0..6]).await;
+}
+
+// Create a raid510 pool: a stripe of raids of mirrors
+#[rstest]
+#[tokio::test]
+async fn raid510(harness: Harness) {
+    let (filenames, _tempdir) = harness;
+
+    bfffs()
+        .args(["pool", "create", "mypool", "raid", "3", "1", "mirror"])
+        .args([&filenames[0], &filenames[1]])
+        .arg("mirror")
+        .args([&filenames[2], &filenames[3]])
+        .arg("mirror")
+        .args([&filenames[4], &filenames[5]])
+        .args(["raid", "3", "1", "mirror"])
+        .args([&filenames[6], &filenames[7]])
+        .arg("mirror")
+        .args([&filenames[8], &filenames[9]])
+        .arg("mirror")
+        .args([&filenames[10], &filenames[11]])
+        .assert()
+        .success();
+
+    // Check that we can actually open them.
+    open("mypool", &filenames).await;
+}
+
+// Create a triply mirrored pool
+#[rstest]
+#[tokio::test]
+async fn triple_mirror(harness: Harness) {
+    let (filenames, _tempdir) = harness;
+
+    bfffs()
+        .args(["pool", "create", "mypool", "mirror"])
+        .args([&filenames[0], &filenames[1], &filenames[2]])
+        .assert()
+        .success();
+
+    // Check that we can actually open them.
+    open("mypool", &filenames[0..3]).await;
 }
 
 #[rstest]

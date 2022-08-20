@@ -1,9 +1,10 @@
 // vim: tw=80
 use bfffs_core::cache::*;
-use bfffs_core::cluster;
+use bfffs_core::cluster::Cluster;
 use bfffs_core::database::*;
 use bfffs_core::ddml::*;
 use bfffs_core::idml::*;
+use bfffs_core::mirror::Mirror;
 use bfffs_core::pool::*;
 use bfffs_core::vdev_block::*;
 use bfffs_core::vdev_file::*;
@@ -11,15 +12,16 @@ use bfffs_core::raid;
 use futures::{StreamExt, TryStreamExt, future};
 use rstest::rstest;
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex}
 };
 
-async fn open_db(path: PathBuf) -> Database {
+async fn open_db(path: &Path) -> Database {
     let (leaf, reader) = VdevFile::open(path).await.unwrap();
     let block = VdevBlock::new(leaf);
-    let (vr, lr) = raid::open(None, vec![(block, reader)]);
-    let cluster = cluster::Cluster::open(vr).await.unwrap();
+    let (mirror, reader) = Mirror::open(None, vec![(block, reader)]);
+    let (vr, lr) = raid::open(None, vec![(mirror, reader)]);
+    let cluster = Cluster::open(vr).await.unwrap();
     let (pool, reader) = Pool::open(None, vec![(cluster, lr)]);
     let cache = Cache::with_capacity(4_194_304);
     let arc_cache = Arc::new(Mutex::new(cache));
@@ -33,10 +35,9 @@ mod persistence {
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
-        num::NonZeroU64,
     };
     use super::*;
-    use tempfile::{Builder, TempDir};
+    use tempfile::TempDir;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -63,22 +64,13 @@ mod persistence {
 
     const POOLNAME: &str = "TestPool";
 
-    async fn harness() -> (Database, TempDir, PathBuf) {
-        let len = 1 << 26;  // 64 MB
-        let tempdir = Builder::new()
-            .prefix("test_database_persistence")
-            .tempdir()
-            .unwrap();
-        let filename = tempdir.path().join("vdev");
-        {
-            let file = fs::File::create(&filename).unwrap();
-            file.set_len(len).unwrap();
-        }
-        let paths = [filename.clone()];
-        let cs = NonZeroU64::new(1);
-        let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-        let clusters = vec![cluster];
-        let pool = Pool::create(POOLNAME.to_string(), clusters);
+    async fn harness() -> (Database, TempDir, Vec<PathBuf>) {
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .chunksize(1)
+            .fsize(1 << 26)     // 64 MB
+            .name(POOLNAME)
+            .build();
+
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
@@ -89,26 +81,26 @@ mod persistence {
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
         // let tree_id = db.create_fs(None, "").await.unwrap();
-        (db, tempdir, filename)
+        (db, tempdir, paths)
     }
 
     // Test open-after-write
     #[tokio::test]
     async fn open() {
-        let (old_db, _tempdir, path) = harness().await;
+        let (old_db, _tempdir, paths) = harness().await;
         old_db.sync_transaction().await.unwrap();
         drop(old_db);
-        let _db = open_db(path);
+        let _db = open_db(&paths[0]);
     }
 
     #[tokio::test]
     async fn sync_transaction() {
-        let (db, _tempdir, path) = harness().await;
+        let (db, _tempdir, paths) = harness().await;
         db.sync_transaction().await.unwrap();
-        let mut f = fs::File::open(path).unwrap();
+        let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, pool, and idml labels
-        f.seek(SeekFrom::Start(294)).unwrap();
+        f.seek(SeekFrom::Start(334)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {
@@ -128,51 +120,36 @@ mod t {
     use bfffs_core::{
         Error,
         cache::*,
-        pool::*,
         ddml::*,
         idml::*,
     };
-    use std::{
-        fs,
-        num::NonZeroU64,
-    };
     use super::*;
-    use tempfile::{Builder, TempDir};
+    use tempfile::TempDir;
 
     const POOLNAME: &str = "TestPool";
 
-    fn new_empty_database() -> (Database, TempDir) {
-        let len = 1 << 26;  // 64 MB
-        let tempdir = Builder::new()
-            .prefix("test_database_t")
-            .tempdir()
-            .unwrap();
-        let filename = tempdir.path().join("vdev");
-        {
-            let file = fs::File::create(&filename).unwrap();
-            file.set_len(len).unwrap();
-        }
-        let paths = [filename];
-        let cs = NonZeroU64::new(1);
-        let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-        let clusters = vec![cluster];
-        let pool = Pool::create(POOLNAME.to_string(), clusters);
+    fn new_empty_database() -> (Database, TempDir, Vec<PathBuf>) {
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .fsize(1 << 26)     // 64 MB
+            .name(POOLNAME)
+            .chunksize(1)
+            .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
-        (db, tempdir)
+        (db, tempdir, paths)
     }
 
-    async fn harness() -> (Database, TempDir, TreeID) {
-        let (db, tempdir) = new_empty_database();
+    async fn harness() -> (Database, TempDir, TreeID, Vec<PathBuf>) {
+        let (db, tempdir, paths) = new_empty_database();
         let tree_id = db.create_fs(None, "").await.unwrap();
-        (db, tempdir, tree_id)
+        (db, tempdir, tree_id, paths)
     }
 
     #[tokio::test]
     async fn dump_forest() {
-        let (db, _tempdir, _tree_id) = harness().await;
+        let (db, _tempdir, _tree_id, _paths) = harness().await;
         db.sync_transaction().await.unwrap();   // Flush forest to disk
         let mut buf = Vec::with_capacity(1024);
         db.dump_forest(&mut buf).await.unwrap();
@@ -224,13 +201,12 @@ root:
 
     #[tokio::test]
     async fn open_filesystem() {
-        let (db, tempdir, tree_id) = harness().await;
+        let (db, _tempdir, tree_id, paths) = harness().await;
         // Sync the database, then drop and reopen it.  That's the only way to
         // clear Inner::fs_trees
         db.sync_transaction().await.unwrap();
         drop(db);
-        let filename = tempdir.path().join("vdev");
-        let db = open_db(filename).await;
+        let db = open_db(&paths[0]).await;
         db.fsread(tree_id, |_| future::ok(())).await.unwrap();
     }
 
@@ -241,13 +217,12 @@ root:
         /// cold, should not reuse a TreeID.
         #[tokio::test]
         async fn cold_cache() {
-            let (db, tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, paths) = harness().await;
             // Sync the database, then drop and reopen it.  That's the only way
             // to clear Inner::fs_trees
             db.sync_transaction().await.unwrap();
             drop(db);
-            let filename = tempdir.path().join("vdev");
-            let db = open_db(filename).await;
+            let db = open_db(&paths[0]).await;
 
             let tree_id = db.create_fs(None, "").await.unwrap();
             assert_ne!(tree_id, first_tree_id);
@@ -255,7 +230,7 @@ root:
 
         #[tokio::test]
         async fn twice() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let tree_id1 = db.create_fs(None, "").await.unwrap();
             assert_ne!(tree_id1, first_tree_id);
 
@@ -293,7 +268,7 @@ root:
         #[case(true)]
         #[tokio::test]
         async fn child(#[case] sync: bool) {
-            let (db, _tempdir, parent) = harness().await;
+            let (db, _tempdir, parent, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(parent), "foo")
                 .await
                 .unwrap();
@@ -311,7 +286,7 @@ root:
         #[case(true)]
         #[tokio::test]
         async fn ebusy(#[case] sync: bool) {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let _tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
@@ -330,7 +305,7 @@ root:
         #[case(true)]
         #[tokio::test]
         async fn enoent(#[case] sync: bool) {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             if sync {
                 db.sync_transaction().await.unwrap();
             }
@@ -345,7 +320,7 @@ root:
         #[case(true)]
         #[tokio::test]
         async fn grandchild(#[case] sync: bool) {
-            let (db, _tempdir, tree_id0) = harness().await;
+            let (db, _tempdir, tree_id0, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(tree_id0), "foo")
                 .await
                 .unwrap();
@@ -365,7 +340,7 @@ root:
         #[case(true)]
         #[tokio::test]
         async fn root(#[case] sync: bool) {
-            let (db, _tempdir, tree_id) = harness().await;
+            let (db, _tempdir, tree_id, _paths) = harness().await;
             if sync {
                 db.sync_transaction().await.unwrap();
             }
@@ -381,7 +356,7 @@ root:
 
         #[tokio::test]
         async fn child() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
@@ -391,7 +366,7 @@ root:
 
         #[tokio::test]
         async fn grandchild() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
@@ -404,13 +379,13 @@ root:
 
         #[tokio::test]
         async fn no_root_filesystem() {
-            let (db, _tempdir) = new_empty_database();
+            let (db, _tempdir, _paths) = new_empty_database();
             assert_eq!(Ok((None, None)), db.lookup_fs("").await);
         }
 
         #[tokio::test]
         async fn root() {
-            let (db, _tempdir, _first_tree_id) = harness().await;
+            let (db, _tempdir, _first_tree_id, _paths) = harness().await;
             assert_eq!(Ok((None, Some(TreeID(0)))), db.lookup_fs("").await);
         }
     }
@@ -421,7 +396,7 @@ root:
 
         #[tokio::test]
         async fn dataset_does_not_exist() {
-            let (db, _tempdir, _first_tree_id) = harness().await;
+            let (db, _tempdir, _first_tree_id, _paths) = harness().await;
             assert_eq!(
                 Ok(vec![]),
                 db.readdir(TreeID(666), 0).try_collect::<Vec<_>>().await
@@ -430,7 +405,7 @@ root:
 
         #[tokio::test]
         async fn no_children() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             assert_eq!(
                 Ok(vec![]),
                 db.readdir(first_tree_id, 0).try_collect::<Vec<_>>().await
@@ -439,7 +414,7 @@ root:
 
         #[tokio::test]
         async fn one_child() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
@@ -453,7 +428,7 @@ root:
 
         #[tokio::test]
         async fn two_children() {
-            let (db, _tempdir, first_tree_id) = harness().await;
+            let (db, _tempdir, first_tree_id, _paths) = harness().await;
             let tree_id1 = db.create_fs(Some(first_tree_id), "foo")
                 .await
                 .unwrap();
@@ -486,18 +461,8 @@ root:
 
     #[tokio::test]
     async fn shutdown() {
-        let len = 1 << 30;  // 1GB
-        let tempdir = Builder::new()
-            .prefix("database.tempdir()::shutdown")
-            .tempdir()
-            .unwrap();
-        let filename = tempdir.path().join("vdev");
-        let file = fs::File::create(&filename).unwrap();
-        file.set_len(len).unwrap();
-        drop(file);
-        let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
-        let pool = Pool::create(String::from("database::shutdown"),
-            vec![cluster]);
+        let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+            .build();
         let cache = Arc::new(
             Mutex::new(
                 Cache::with_capacity(4_194_304)

@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering,
     fmt,
     io::{self, Write},
+    mem,
     path::{Path, PathBuf},
     process::exit,
     str::FromStr,
@@ -627,7 +628,9 @@ mod pool {
         database::*,
         ddml::DDML,
         idml::IDML,
+        mirror::Mirror,
         pool::Pool,
+        raid,
         BYTES_PER_LBA,
     };
 
@@ -688,17 +691,19 @@ mod pool {
             for tvd in spec.0 {
                 match tvd {
                     Tlv::Raid(r) => {
-                        if matches!(r.vdevs[0], RaidChild::Mirror(_)) {
-                            unimplemented!("Needs true mirror support");
+                        for child in r.vdevs {
+                            match child {
+                                RaidChild::Mirror(mchild) => {
+                                    builder.create_mirror(&mchild.0[..]);
+                                }
+                                RaidChild::Disk(dchild) => {
+                                    builder.create_mirror(&[dchild.0]);
+                                }
+                            }
                         }
-                        let s = r
-                            .vdevs
-                            .iter()
-                            .map(|rc| rc.as_disk().unwrap().0)
-                            .collect::<Vec<_>>();
-                        builder.do_create_cluster(r.k, r.f, &s[..]);
+                        builder.create_cluster(r.k, r.f);
                     }
-                    Tlv::Mirror(m) => builder.create_mirror(&m.0[..]),
+                    Tlv::Mirror(m) => builder.create_mirror_tlv(&m.0[..]),
                     Tlv::Disk(d) => builder.create_single(d),
                 }
             }
@@ -709,6 +714,7 @@ mod pool {
 
     struct Builder {
         clusters:   Vec<Cluster>,
+        mirrors:    Vec<Mirror>,
         name:       String,
         properties: Vec<Property>,
         zone_size:  Option<NonZeroU64>,
@@ -724,6 +730,7 @@ mod pool {
             P: Iterator<Item = &'a str> + 'a,
         {
             let clusters = Vec::new();
+            let mirrors = Vec::new();
             let properties = propstrings
                 .map(|ps| {
                     Property::from_str(ps).unwrap_or_else(|_e| {
@@ -734,27 +741,32 @@ mod pool {
                 .collect::<Vec<_>>();
             Builder {
                 clusters,
+                mirrors,
                 name,
                 properties,
                 zone_size,
             }
         }
 
-        // XXX: use real mirror code instead of faking it with RAID
         pub fn create_mirror(&mut self, devs: &[&str]) {
-            // TODO: allow creating declustered mirrors
-            let k = devs.len() as i16;
-            let f = devs.len() as i16 - 1;
-            self.do_create_cluster(k, f, devs)
+            self.mirrors
+                .push(Mirror::create(devs, self.zone_size).unwrap());
+        }
+
+        pub fn create_mirror_tlv(&mut self, devs: &[&str]) {
+            self.create_mirror(devs);
+            self.create_cluster(1, 0);
         }
 
         pub fn create_single(&mut self, dev: &str) {
-            self.do_create_cluster(1, 0, &[dev])
+            self.create_mirror(&[dev]);
+            self.create_cluster(1, 0)
         }
 
-        pub fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str]) {
-            let zone_size = self.zone_size;
-            let c = Cluster::create(None, k, zone_size, f, devs);
+        pub fn create_cluster(&mut self, k: i16, f: i16) {
+            let mirrors = mem::take(&mut self.mirrors);
+            let raid = raid::create(None, k, f, mirrors);
+            let c = Cluster::create(raid);
             self.clusters.push(c);
         }
 

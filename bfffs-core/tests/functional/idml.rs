@@ -2,11 +2,12 @@
 mod persistence {
     use bfffs_core::{
         cache::{self, Cache},
-        cluster,
+        cluster::Cluster,
         ddml::{self, DDML},
         idml::{self, IDML},
         label::*,
-        pool::*,
+        mirror::Mirror,
+        pool::Pool,
         raid,
         types::*,
         vdev_block::*,
@@ -18,11 +19,10 @@ mod persistence {
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
-        num::NonZeroU64,
         path::PathBuf,
         sync::{Arc, Mutex}
     };
-    use tempfile::{Builder, TempDir};
+    use tempfile::TempDir;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -106,24 +106,15 @@ mod persistence {
     const POOLNAME: &str = "TestPool";
 
     #[fixture]
-    fn objects() -> (Arc<IDML>, TempDir, PathBuf) {
-        let len = 1 << 26;  // 64 MB
-        let tempdir =
-            t!(Builder::new().prefix("test_idml_persistence").tempdir());
-        let filename = tempdir.path().join("vdev");
-        {
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
-        }
-        let paths = [filename.clone()];
-        let cs = NonZeroU64::new(1);
-        let cluster = Pool::create_cluster(cs, 1, None, 0, &paths);
-        let clusters = vec![cluster];
-        let pool = Pool::create(POOLNAME.to_string(), clusters);
+    fn objects() -> (Arc<IDML>, TempDir, Vec<PathBuf>) {
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .chunksize(1)
+            .name(POOLNAME)
+            .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        (idml, tempdir, filename)
+        (idml, tempdir, paths)
     }
 
     // Testing IDML::open with golden labels is too hard, because we need to
@@ -131,8 +122,8 @@ mod persistence {
     // check that we can open-after-write
     #[rstest]
     #[tokio::test]
-    async fn open(objects: (Arc<IDML>, TempDir, PathBuf)) {
-        let (old_idml, _tempdir, path) = objects;
+    async fn open(objects: (Arc<IDML>, TempDir, Vec<PathBuf>)) {
+        let (old_idml, _tempdir, paths) = objects;
         let txg = TxgT::from(42);
         let old_idml2 = old_idml.clone();
         old_idml.advance_transaction(|_| {
@@ -144,10 +135,11 @@ mod persistence {
         }).await.unwrap();
         drop(old_idml);
 
-        let (leaf, reader) = VdevFile::open(path).await.unwrap();
+        let (leaf, reader) = VdevFile::open(&paths[0]).await.unwrap();
         let block = VdevBlock::new(leaf);
-        let (vr, reader) = raid::open(None, vec![(block, reader)]);
-        let cluster = cluster::Cluster::open(vr).await.unwrap();
+        let (mirror, reader) = Mirror::open(None, vec![(block, reader)]);
+        let (vr, reader) = raid::open(None, vec![(mirror, reader)]);
+        let cluster = Cluster::open(vr).await.unwrap();
         let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
         let cache = cache::Cache::with_capacity(4_194_304);
         let arc_cache = Arc::new(Mutex::new(cache));
@@ -157,8 +149,8 @@ mod persistence {
 
     #[rstest]
     #[tokio::test]
-    async fn write_label(objects: (Arc<IDML>, TempDir, PathBuf)) {
-        let (idml, _tempdir, path) = objects;
+    async fn write_label(objects: (Arc<IDML>, TempDir, Vec<PathBuf>)) {
+        let (idml, _tempdir, paths) = objects;
         let txg = TxgT::from(42);
         let idml2 = idml.clone();
         idml.advance_transaction(move |_| {
@@ -168,10 +160,10 @@ mod persistence {
                 idml2.write_label(label_writer, txg)
             })
         }).await.unwrap();
-        let mut f = fs::File::open(path).unwrap();
+        let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
-        // Skip leaf, raid, cluster, and pool labels
-        f.seek(SeekFrom::Start(164)).unwrap();
+        // Skip leaf, mirror, raid, cluster, and pool labels
+        f.seek(SeekFrom::Start(204)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {
@@ -190,39 +182,24 @@ mod persistence {
 mod t {
     use bfffs_core::*;
     use bfffs_core::cache::*;
-    use bfffs_core::pool::*;
     use bfffs_core::dml::*;
     use bfffs_core::ddml::*;
     use bfffs_core::idml::*;
     use divbuf::DivBufShared;
-    use futures::StreamExt;
     use rstest::{fixture, rstest};
-    use std::{
-        fs,
-        num::NonZeroU64,
-        sync::{Arc, Mutex}
-    };
-    use tempfile::{Builder, TempDir};
+    use std::sync::{Arc, Mutex};
+    use tempfile::TempDir;
 
     const LBA_PER_ZONE: LbaT = 256;
     const POOLNAME: &str = "TestPool";
 
     #[fixture]
     fn objects() -> (IDML, TempDir) {
-        let len = 1 << 26;  // 64 MB
-        let tempdir =
-            t!(Builder::new().prefix("test_idml_persistence").tempdir());
-        let filename = tempdir.path().join("vdev");
-        {
-            let file = t!(fs::File::create(&filename));
-            t!(file.set_len(len));
-        }
-        let paths = [filename];
-        let cs = NonZeroU64::new(1);
-        let lpz = NonZeroU64::new(LBA_PER_ZONE);
-        let cluster = Pool::create_cluster(cs, 1, lpz, 0, &paths);
-        let clusters = vec![cluster];
-        let pool = Pool::create(POOLNAME.to_string(), clusters);
+        let (tempdir, _paths, pool) = crate::PoolBuilder::new()
+            .chunksize(1)
+            .zone_size(LBA_PER_ZONE)
+            .name(POOLNAME)
+            .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
