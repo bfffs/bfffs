@@ -80,13 +80,13 @@ impl<'a> Label {
 /// * `paths`:              Slice of pathnames of files and/or devices
 pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
     lbas_per_zone: Option<NonZeroU64>, redundancy: i16,
-    mut paths: Vec<P>) -> Arc<dyn VdevRaidApi>
-    where P: AsRef<Path> + 'static
+    paths: &[P]) -> Arc<dyn VdevRaidApi>
+    where P: AsRef<Path>
 {
     if paths.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Arc::new(VdevOneDisk::create(lbas_per_zone, paths.pop().unwrap()))
+        Arc::new(VdevOneDisk::create(lbas_per_zone, &paths[0]))
     } else {
         Arc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
                                  redundancy, paths))

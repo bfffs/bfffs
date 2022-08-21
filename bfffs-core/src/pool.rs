@@ -27,7 +27,7 @@ use std::{
 };
 #[cfg(not(test))] use std::{
     num::NonZeroU64,
-    path::{Path, PathBuf},
+    path::Path,
 };
 use std::collections::BTreeMap;
 
@@ -168,11 +168,8 @@ impl Pool {
         -> Cluster
         where P: AsRef<Path> + Sync
     {
-        let owned_paths = paths.iter()
-            .map(|p| p.as_ref().to_owned())
-            .collect::<Vec<PathBuf>>();
         Cluster::create(chunksize, disks_per_stripe,
-                lbas_per_zone, redundancy, owned_paths)
+                lbas_per_zone, redundancy, paths)
     }
 
     /// Create a new `Pool` from some freshly created `Cluster`s.

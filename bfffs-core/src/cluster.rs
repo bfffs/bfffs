@@ -747,10 +747,11 @@ impl Cluster {
     ///                         disks may fail before the array becomes
     ///                         inoperable.
     /// * `paths`:              Slice of pathnames of files and/or devices
+    #[mockall::concretize]
     pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
-        lbas_per_zone: Option<NonZeroU64>, redundancy: i16, paths: Vec<P>)
+        lbas_per_zone: Option<NonZeroU64>, redundancy: i16, paths: &[P])
         -> Self
-        where P: AsRef<Path> + 'static
+        where P: AsRef<Path>
     {
         let vdev = raid::create(chunksize, disks_per_stripe, lbas_per_zone,
                                 redundancy, paths);

@@ -1,6 +1,6 @@
 // vim: tw=80
 use bfffs_core::raid::VdevRaid;
-use std::fs;
+use std::{fs, path::PathBuf};
 use tempfile::Builder;
 
 #[test]
@@ -15,12 +15,13 @@ fn create_redundancy_too_big() {
     let tempdir =
         t!(Builder::new().prefix("create_redundancy_too_big").tempdir());
     let paths = (0..num_disks).map(|i| {
-        let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+        let mut fname = PathBuf::from(tempdir.path());
+        fname.push(format!("vdev.{}", i));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, paths);
+    VdevRaid::create(None, stripesize, None, redundancy, &paths[..]);
 }
 
 #[test]
@@ -35,12 +36,13 @@ fn create_stripesize_too_big() {
     let tempdir =
         t!(Builder::new().prefix("create_stripesize_too_big").tempdir());
     let paths = (0..num_disks).map(|i| {
-        let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+        let mut fname = PathBuf::from(tempdir.path());
+        fname.push(format!("vdev.{}", i));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, paths);
+    VdevRaid::create(None, stripesize, None, redundancy, &paths[..]);
 }
 
 /// These tests use real VdevBlock and VdevLeaf objects
@@ -64,7 +66,8 @@ mod vdev_raid {
     use pretty_assertions::assert_eq;
     use std::{
         fs,
-        num::NonZeroU64
+        num::NonZeroU64,
+        path::PathBuf
     };
     use super::super::super::*;
     use tempfile::{Builder, TempDir};
@@ -72,7 +75,7 @@ mod vdev_raid {
     struct Harness {
         vdev: VdevRaid,
         _tempdir: TempDir,
-        _paths: Vec<String>,
+        _paths: Vec<PathBuf>,
         n: i16,
         k: i16,
         f: i16,
@@ -83,13 +86,14 @@ mod vdev_raid {
         let len = 1 << 30;  // 1 GB
         let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
         let paths = (0..n).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+            let mut fname = PathBuf::from(tempdir.path());
+            fname.push(format!("vdev.{}", i));
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             fname
         }).collect::<Vec<_>>();
         let cs = NonZeroU64::new(chunksize);
-        let vdev = VdevRaid::create(cs, k, None, f, paths.clone());
+        let vdev = VdevRaid::create(cs, k, None, f, &paths[..]);
         basic_runtime().block_on(
             vdev.open_zone(0)
         ).expect("open_zone");
@@ -624,7 +628,8 @@ mod persistence {
     use std::{
         fs,
         io::{Read, Seek, SeekFrom},
-        num::NonZeroU64
+        num::NonZeroU64,
+        path::PathBuf
     };
     use tempfile::{Builder, TempDir};
     use super::super::super::*;
@@ -662,7 +667,7 @@ mod persistence {
         0xb8, 0x3b, 0x18, 0x8e,
     ];
 
-    type Harness = (VdevRaid, TempDir, Vec<String>);
+    type Harness = (VdevRaid, TempDir, Vec<PathBuf>);
     #[fixture]
     fn harness() -> Harness {
         let num_disks = 5;
@@ -671,13 +676,14 @@ mod persistence {
             Builder::new().prefix("test_vdev_raid_persistence").tempdir()
         );
         let paths = (0..num_disks).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+            let mut fname = PathBuf::from(tempdir.path());
+            fname.push(format!("vdev.{}", i));
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             fname
         }).collect::<Vec<_>>();
         let cs = NonZeroU64::new(2);
-        let vdev_raid = VdevRaid::create(cs, 3, None, 1, paths.clone());
+        let vdev_raid = VdevRaid::create(cs, 3, None, 1, &paths[..]);
         (vdev_raid, tempdir, paths)
     }
 

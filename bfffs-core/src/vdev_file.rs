@@ -706,13 +706,15 @@ impl Future for WritevAt {
 #[cfg(test)]
 mock!{
     pub VdevFile {
+        #[mockall::concretize]
         pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
-            where P: AsRef<Path> + 'static;
+            where P: AsRef<Path>;
         pub fn erase_zone(&mut self, lba: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        #[mockall::concretize]
         pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
-            where P: AsRef<Path> + 'static;
+            where P: AsRef<Path>;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
