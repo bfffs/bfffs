@@ -19,6 +19,8 @@ use clap::{crate_version, Parser};
 use futures::{future, TryStreamExt};
 use tracing_subscriber::EnvFilter;
 
+mod pool_create_ast;
+
 #[derive(Parser, Clone, Debug)]
 /// Consistency check
 struct Check {
@@ -668,6 +670,12 @@ mod pool {
         pub(super) vdev:       Vec<String>,
     }
 
+    use lalrpop_util::lalrpop_mod;
+    lalrpop_mod!(#[allow(clippy::just_underscores_and_digits)] pub pool_create_parser);
+    use pool_create_parser::PoolParser;
+
+    use crate::pool_create_ast::{RaidChild, Tlv};
+
     impl Create {
         pub(super) async fn main(self) -> Result<()> {
             let zone_size = self.zone_size.map(|mbs| {
@@ -677,52 +685,23 @@ mod pool {
 
             let props = self.properties.iter().map(String::as_str);
             let mut builder = Builder::new(self.pool_name, props, zone_size);
-            let mut vdev_tokens = self.vdev.iter().map(String::as_str);
-            let mut cluster_type = None;
-            let mut devs = vec![];
-            loop {
-                let next = vdev_tokens.next();
-                match next {
-                    None => {
-                        if !devs.is_empty() {
-                            match cluster_type {
-                                Some("mirror") => {
-                                    builder.create_mirror(&devs[..])
-                                }
-                                Some("raid") => builder.create_raid(&devs[..]),
-                                None => assert!(devs.is_empty()),
-                                _ => unreachable!(), // LCOV_EXCL_LINE
-                            }
+            let all_vdevs = self.vdev.join(" ");
+            let spec = PoolParser::new().parse(&all_vdevs).unwrap();
+            for tvd in spec.0 {
+                match tvd {
+                    Tlv::Raid(r) => {
+                        if matches!(r.vdevs[0], RaidChild::Mirror(_)) {
+                            unimplemented!("Needs true mirror support");
                         }
-                        break;
+                        let s = r
+                            .vdevs
+                            .iter()
+                            .map(|rc| rc.as_disk().unwrap().0)
+                            .collect::<Vec<_>>();
+                        builder.do_create_cluster(r.k, r.f, &s[..]);
                     }
-                    Some("mirror") => {
-                        if !devs.is_empty() {
-                            builder.create_cluster(
-                                cluster_type.as_ref().unwrap(),
-                                &devs[..],
-                            );
-                        }
-                        devs.clear();
-                        cluster_type = Some("mirror")
-                    }
-                    Some("raid") => {
-                        if !devs.is_empty() {
-                            builder.create_cluster(
-                                cluster_type.as_ref().unwrap(),
-                                &devs[..],
-                            );
-                        }
-                        devs.clear();
-                        cluster_type = Some("raid")
-                    }
-                    Some(dev) => {
-                        if cluster_type.is_none() {
-                            builder.create_single(dev);
-                        } else {
-                            devs.push(dev);
-                        }
-                    }
+                    Tlv::Mirror(m) => builder.create_mirror(&m.0[..]),
+                    Tlv::Disk(d) => builder.create_single(d),
                 }
             }
             builder.format().await;
@@ -763,36 +742,19 @@ mod pool {
             }
         }
 
-        pub fn create_cluster(&mut self, vtype: &str, devs: &[&str]) {
-            match vtype {
-                "mirror" => self.create_mirror(devs),
-                "raid" => self.create_raid(devs),
-                _ => panic!("Unsupported vdev type {}", vtype),
-            }
-        }
-
+        // XXX: use real mirror code instead of faking it with RAID
         pub fn create_mirror(&mut self, devs: &[&str]) {
             // TODO: allow creating declustered mirrors
             let k = devs.len() as i16;
             let f = devs.len() as i16 - 1;
-            self.do_create_cluster(k, f, &devs[2..])
-        }
-
-        pub fn create_raid(&mut self, devs: &[&str]) {
-            let k = devs[0]
-                .parse()
-                .expect("Disks per stripe must be an integer");
-            let f = devs[1]
-                .parse()
-                .expect("Redundancy level must be an integer");
-            self.do_create_cluster(k, f, &devs[2..])
+            self.do_create_cluster(k, f, devs)
         }
 
         pub fn create_single(&mut self, dev: &str) {
             self.do_create_cluster(1, 0, &[dev])
         }
 
-        fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str]) {
+        pub fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str]) {
             let zone_size = self.zone_size;
             let c = Pool::create_cluster(None, k, zone_size, f, devs);
             self.clusters.push(c);
@@ -1257,6 +1219,99 @@ mod t {
 
         mod create {
             use super::*;
+
+            /// test parsing the vdev specification of "bfffs pool create"
+            mod lalrpop {
+                use crate::{pool::pool_create_parser::*, pool_create_ast::*};
+
+                #[test]
+                fn disk() {
+                    let pool = PoolParser::new().parse("/dev/da0").unwrap();
+                    assert_eq!(pool, Pool(vec![Tlv::Disk("/dev/da0")]));
+                }
+
+                #[test]
+                fn mirror() {
+                    let pool = PoolParser::new()
+                        .parse("mirror /dev/da0 /tmp/bfffs.img")
+                        .unwrap();
+                    assert_eq!(
+                        pool,
+                        Pool(vec![Tlv::Mirror(Mirror(vec![
+                            "/dev/da0",
+                            "/tmp/bfffs.img"
+                        ]))])
+                    );
+                }
+
+                #[test]
+                fn raid5() {
+                    let pool = PoolParser::new()
+                        .parse("raid 3 1 /dev/da0 /tmp/bfffs.img /dev/da1")
+                        .unwrap();
+                    assert_eq!(
+                        pool,
+                        Pool(vec![Tlv::Raid(Raid {
+                            k:     3,
+                            f:     1,
+                            vdevs: vec![
+                                RaidChild::Disk(Disk("/dev/da0")),
+                                RaidChild::Disk(Disk("/tmp/bfffs.img")),
+                                RaidChild::Disk(Disk("/dev/da1"))
+                            ],
+                        })])
+                    );
+                }
+
+                #[test]
+                fn raid51() {
+                    let pool = PoolParser::new()
+                        .parse("raid 3 1 mirror da0 da1 mirror da2 da3 mirror da4 da5")
+                        .unwrap();
+                    assert_eq!(
+                        pool,
+                        Pool(vec![Tlv::Raid(Raid {
+                            k:     3,
+                            f:     1,
+                            vdevs: vec![
+                                RaidChild::Mirror(Mirror(vec!["da0", "da1"])),
+                                RaidChild::Mirror(Mirror(vec!["da2", "da3"])),
+                                RaidChild::Mirror(Mirror(vec!["da4", "da5"])),
+                            ],
+                        })])
+                    );
+                }
+
+                #[test]
+                fn raid50() {
+                    let pool = PoolParser::new()
+                        .parse("raid 3 1 /dev/da0 /dev/da1 /dev/da2 raid 3 1 /dev/da3 /dev/da4 /dev/da5")
+                        .unwrap();
+                    assert_eq!(
+                        pool,
+                        Pool(vec![
+                            Tlv::Raid(Raid {
+                                k:     3,
+                                f:     1,
+                                vdevs: vec![
+                                    RaidChild::Disk(Disk("/dev/da0")),
+                                    RaidChild::Disk(Disk("/dev/da1")),
+                                    RaidChild::Disk(Disk("/dev/da2")),
+                                ],
+                            },),
+                            Tlv::Raid(Raid {
+                                k:     3,
+                                f:     1,
+                                vdevs: vec![
+                                    RaidChild::Disk(Disk("/dev/da3")),
+                                    RaidChild::Disk(Disk("/dev/da4")),
+                                    RaidChild::Disk(Disk("/dev/da5")),
+                                ],
+                            },),
+                        ],)
+                    );
+                }
+            }
 
             #[test]
             fn plain() {
