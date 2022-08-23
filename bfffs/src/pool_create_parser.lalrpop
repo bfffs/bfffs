@@ -1,0 +1,42 @@
+// vim: filetype=rust
+
+use std::str::FromStr;
+use crate::pool_create_ast::{Disk, Mirror, Raid, RaidChild, Tlv, Pool};
+
+grammar;
+
+Num: i16 = r"[0-9]+" => i16::from_str(<>).unwrap();
+
+Disk: Disk<'input> = {
+    r"[/a-zA-Z][^ \t\n]*" => Disk(<>)
+}
+
+Mirror: Mirror<'input> = {
+    "mirror" <d:r"[/a-zA-Z][^ \t\n]*"+> => Mirror(d),
+}
+
+Raid: Raid<'input> = {
+    "raid" <k:Num> <f:Num> <d:Disk+> => {
+        let vdevs = d.into_iter().map(RaidChild::Disk).collect::<Vec<_>>();
+        Raid{k, f, vdevs}
+    },
+    "raid" <k:Num> <f:Num> <m:Mirror+> => {
+        let vdevs = m.into_iter().map(RaidChild::Mirror).collect::<Vec<_>>();
+        Raid{k, f, vdevs}
+    }
+}
+
+pub Pool: Pool<'input> = {
+    <d:r"[/a-zA-Z][^ \t\n]*"+> => {
+        let vdevs = d.into_iter().map(Tlv::Disk).collect::<Vec<_>>();
+        Pool(vdevs)
+    },
+    <m:Mirror+> => {
+        let vdevs = m.into_iter().map(Tlv::Mirror).collect::<Vec<_>>();
+        Pool(vdevs)
+    },
+    <r:Raid+> => {
+        let vdevs = r.into_iter().map(Tlv::Raid).collect::<Vec<_>>();
+        Pool(vdevs)
+    }
+}
