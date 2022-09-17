@@ -31,7 +31,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .args(&["pool", "create", "mypool"])
+        .args(["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -67,7 +67,7 @@ async fn eexist(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/foo"])
+        .args(["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
@@ -75,7 +75,7 @@ async fn eexist(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/foo"])
+        .args(["fs", "create", "mypool/foo"])
         .assert()
         .failure()
         .stderr("Error: EEXIST\n");
@@ -83,7 +83,7 @@ async fn eexist(harness: Harness) {
 
 #[test]
 fn help() {
-    bfffs().args(&["fs", "create", "-h"]).assert().success();
+    bfffs().args(["fs", "create", "-h"]).assert().success();
 }
 
 #[rstest]
@@ -92,7 +92,7 @@ async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/foo"])
+        .args(["fs", "create", "mypool/foo"])
         .assert()
         .success();
 }
@@ -103,7 +103,7 @@ async fn noatime(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "create", "-o", "atime=off", "mypool/foo"])
+        .args(["fs", "create", "-o", "atime=off", "mypool/foo"])
         .assert()
         .success();
 }

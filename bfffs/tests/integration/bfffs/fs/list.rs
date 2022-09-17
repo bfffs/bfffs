@@ -30,7 +30,7 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .args(&["pool", "create", "mypool"])
+        .args(["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -57,7 +57,7 @@ fn harness<S: AsRef<str>>(dsnames: &[S]) -> Harness {
         bfffs()
             .arg("--sock")
             .arg(sockpath.as_os_str())
-            .args(&["fs", "create"])
+            .args(["fs", "create"])
             .arg(dsname.as_ref())
             .assert()
             .success();
@@ -82,21 +82,21 @@ async fn depth() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-d", "0", "mypool"])
+        .args(["fs", "list", "-d", "0", "mypool"])
         .assert()
         .success()
         .stdout("NAME\nmypool\n");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-d", "1", "mypool"])
+        .args(["fs", "list", "-d", "1", "mypool"])
         .assert()
         .success()
         .stdout("NAME\nmypool\nmypool/brother\nmypool/sister\n");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-d", "2", "mypool"])
+        .args(["fs", "list", "-d", "2", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -111,7 +111,7 @@ async fn depth() {
 
 #[test]
 fn help() {
-    bfffs().args(&["fs", "list", "-h"]).assert().success();
+    bfffs().args(["fs", "list", "-h"]).assert().success();
 }
 
 /// By default, numeric properties should be printed in human-friendly units
@@ -122,7 +122,7 @@ async fn humanize() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-o", "name,recsize", "mypool"])
+        .args(["fs", "list", "-o", "name,recsize", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -144,7 +144,7 @@ async fn multi_arg() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "mypool/brother", "mypool/sister"])
+        .args(["fs", "list", "mypool/brother", "mypool/sister"])
         .assert()
         .success()
         .stdout(
@@ -174,7 +174,7 @@ async fn lots() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-r", "mypool"])
+        .args(["fs", "list", "-r", "mypool"])
         .assert()
         .success()
         .stdout(expected);
@@ -189,7 +189,7 @@ async fn parseable() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-p", "-o", "name,atime,mountpoint,recsize"])
+        .args(["fs", "list", "-p", "-o", "name,atime,mountpoint,recsize"])
         .arg("mypool")
         .assert()
         .success()
@@ -203,7 +203,7 @@ async fn props() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-o", "name,atime,mountpoint", "mypool"])
+        .args(["fs", "list", "-o", "name,atime,mountpoint", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -219,7 +219,7 @@ async fn pool_only() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "mypool"])
+        .args(["fs", "list", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -240,7 +240,7 @@ async fn recursive() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-r", "mypool"])
+        .args(["fs", "list", "-r", "mypool"])
         .assert()
         .success()
         .stdout(
@@ -254,7 +254,7 @@ async fn recursive() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "list", "-r", "mypool/brother"])
+        .args(["fs", "list", "-r", "mypool/brother"])
         .assert()
         .success()
         .stdout("NAME\nmypool/brother\nmypool/brother/nephew\n");
@@ -267,21 +267,21 @@ async fn sort() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "create", "-o", "atime=off,recsize=65536"])
+        .args(["fs", "create", "-o", "atime=off,recsize=65536"])
         .arg("mypool/a")
         .assert()
         .success();
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "create", "-o", "atime=on,recsize=65536"])
+        .args(["fs", "create", "-o", "atime=on,recsize=65536"])
         .arg("mypool/b")
         .assert()
         .success();
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "create", "-o", "atime=off,recsize=131072"])
+        .args(["fs", "create", "-o", "atime=off,recsize=131072"])
         .arg("mypool/c")
         .assert()
         .success();
@@ -289,7 +289,7 @@ async fn sort() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&[
+        .args([
             "fs",
             "list",
             "-o",
@@ -316,7 +316,7 @@ async fn sort() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&[
+        .args([
             "fs",
             "list",
             "-o",
@@ -345,7 +345,7 @@ async fn sort() {
 #[test]
 fn sort_by_unlisted_property() {
     bfffs()
-        .args(&["fs", "list", "-o", "name,atime", "-s", "recsize", "mypool"])
+        .args(["fs", "list", "-o", "name,atime", "-s", "recsize", "mypool"])
         .assert()
         .failure()
         .stderr(predicates::str::contains(

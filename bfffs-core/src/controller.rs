@@ -355,7 +355,7 @@ impl Controller {
 
     // Strip the pool name.  For now, only one pool is supported.
     fn strip_pool_name<'a>(&self, name: &'a str) -> Result<&'a str> {
-        match name.strip_prefix(&self.db.pool_name()) {
+        match name.strip_prefix(self.db.pool_name()) {
             Some(s) => Ok(s.strip_prefix('/').unwrap_or(s)),
             None => {
                 tracing::debug!("pool name not provided");

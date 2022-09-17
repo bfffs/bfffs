@@ -291,7 +291,7 @@ mod dev {
     impl Drop for Md {
         fn drop(&mut self) {
             Command::new("mdconfig")
-                .args(&["-d", "-u"])
+                .args(["-d", "-u"])
                 .arg(&self.0)
                 .output()
                 .expect("failed to deallocate md(4) device");
@@ -304,13 +304,13 @@ mod dev {
     fn harness() -> Harness {
         if Uid::current().is_root() {
             let output = Command::new("mdconfig")
-                .args(&["-a", "-t",  "swap", "-s", "64m"])
+                .args(["-a", "-t",  "swap", "-s", "64m"])
                 .output()
                 .expect("failed to allocate md(4) device");
             // Strip the trailing "\n"
             let l = output.stdout.len() - 1;
             let mddev = OsStr::from_bytes(&output.stdout[0..l]);
-            let pb = Path::new("/dev").join(&mddev);
+            let pb = Path::new("/dev").join(mddev);
             let zones_per_lba = NonZeroU64::new(8192); // 32 MB zones
             let vd = VdevFile::create(pb.clone(), zones_per_lba).unwrap();
             Some((vd, Md(pb)))

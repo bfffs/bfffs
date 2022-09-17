@@ -75,9 +75,9 @@ mod ddml {
         let (rt, ddml) = objects;
         let ddml2 = &ddml;
         let mut file = fs::File::open(
-                &Path::new("../bfffs-core/src/raid/vdev_raid.rs")
+                Path::new("../bfffs-core/src/raid/vdev_raid.rs")
             ).unwrap_or_else(|_|
-                fs::File::open(&Path::new("bfffs-core/src/raid/vdev_raid.rs")
+                fs::File::open(Path::new("bfffs-core/src/raid/vdev_raid.rs")
             ).unwrap()
         );
         let mut vdev_raid_contents = Vec::new();

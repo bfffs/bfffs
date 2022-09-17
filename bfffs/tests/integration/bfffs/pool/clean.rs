@@ -31,7 +31,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .args(&["pool", "create", "mypool"])
+        .args(["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -70,7 +70,7 @@ async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["pool", "clean", "mypool"])
+        .args(["pool", "clean", "mypool"])
         .assert()
         .success();
 }
@@ -82,7 +82,7 @@ async fn enoent(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["pool", "clean", "does_not_exist_pool"])
+        .args(["pool", "clean", "does_not_exist_pool"])
         .assert()
         .failure()
         .stderr("Error: ENOENT\n");

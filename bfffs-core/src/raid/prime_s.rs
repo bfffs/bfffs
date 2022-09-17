@@ -234,11 +234,7 @@ impl PrimeS {
                 let cb_stripe = ((i32::from(disk) * y_inv - i32::from(j)) *
                                  i32::from(self.m_inv) - 1)
                     .rem_euclid(i32::from(self.n));
-                let x = if s.rem_euclid(i32::from(self.n)) > cb_stripe {
-                    1
-                } else {
-                    0
-                };
+                let x = i32::from(s.rem_euclid(i32::from(self.n)) > cb_stripe);
                 x + acc
             });
         o0 + o1 + o2
