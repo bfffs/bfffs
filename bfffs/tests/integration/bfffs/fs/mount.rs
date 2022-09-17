@@ -42,7 +42,7 @@ fn harness() -> Harness {
     let mountpoint = tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
     bfffs()
-        .args(&["pool", "create", "-p"])
+        .args(["pool", "create", "-p"])
         .arg(format!("mountpoint={}", mountpoint.display()))
         .arg("mypool")
         .arg(&filename)
@@ -85,7 +85,7 @@ async fn mount_again(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 
@@ -94,7 +94,7 @@ async fn mount_again(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 }
@@ -108,7 +108,7 @@ async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 }
@@ -122,7 +122,7 @@ async fn options(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "-o", "atime=off", "mypool"])
+        .args(["fs", "mount", "-o", "atime=off", "mypool"])
         .assert()
         .success();
 
@@ -142,14 +142,14 @@ async fn subfs(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/foo"])
+        .args(["fs", "create", "mypool/foo"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool/foo"])
+        .args(["fs", "mount", "mypool/foo"])
         .assert()
         .success();
 

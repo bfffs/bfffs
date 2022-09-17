@@ -30,7 +30,7 @@ fn harness() -> Harness {
     file.set_len(len).unwrap();
 
     bfffs()
-        .args(&["pool", "create", "mypool"])
+        .args(["pool", "create", "mypool"])
         .arg(&filename)
         .assert()
         .success();
@@ -67,14 +67,14 @@ async fn atime() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "atime=off", "mypool"])
+        .args(["fs", "set", "atime=off", "mypool"])
         .assert()
         .success()
         .stdout("");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-p", "-o", "value,source", "atime", "mypool"])
+        .args(["fs", "get", "-p", "-o", "value,source", "atime", "mypool"])
         .assert()
         .success()
         .stdout("off\tlocal\n");
@@ -87,14 +87,14 @@ async fn mountpoint() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "mountpoint=/mnt", "mypool"])
+        .args(["fs", "set", "mountpoint=/mnt", "mypool"])
         .assert()
         .success()
         .stdout("");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-po", "value,source", "mountpoint", "mypool"])
+        .args(["fs", "get", "-po", "value,source", "mountpoint", "mypool"])
         .assert()
         .success()
         .stdout("/mnt\tlocal\n");
@@ -109,20 +109,20 @@ async fn multiple_datasets() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/a"])
+        .args(["fs", "create", "mypool/a"])
         .assert()
         .success();
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "create", "mypool/b"])
+        .args(["fs", "create", "mypool/b"])
         .assert()
         .success();
 
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "atime=off", "mypool/a", "mypool/b"])
+        .args(["fs", "set", "atime=off", "mypool/a", "mypool/b"])
         .assert()
         .success()
         .stdout("");
@@ -130,8 +130,8 @@ async fn multiple_datasets() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-p", "-o", "name,value,source", "atime"])
-        .args(&["mypool/a", "mypool/b"])
+        .args(["fs", "get", "-p", "-o", "name,value,source", "atime"])
+        .args(["mypool/a", "mypool/b"])
         .assert()
         .success()
         .stdout("mypool/a\toff\tlocal\nmypool/b\toff\tlocal\n");
@@ -144,21 +144,21 @@ async fn multiple_properties() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "atime=on,recsize=16384", "mypool"])
+        .args(["fs", "set", "atime=on,recsize=16384", "mypool"])
         .assert()
         .success()
         .stdout("");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-p", "-o", "value,source", "atime", "mypool"])
+        .args(["fs", "get", "-p", "-o", "value,source", "atime", "mypool"])
         .assert()
         .success()
         .stdout("on\tlocal\n");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-p", "-o", "value,source", "recsize", "mypool"])
+        .args(["fs", "get", "-p", "-o", "value,source", "recsize", "mypool"])
         .assert()
         .success()
         .stdout("16384\tlocal\n");
@@ -171,7 +171,7 @@ async fn name() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "name=otherpool", "mypool"])
+        .args(["fs", "set", "name=otherpool", "mypool"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("This property is read-only"));
@@ -184,14 +184,14 @@ async fn recsize() {
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "set", "recsize=16384", "mypool"])
+        .args(["fs", "set", "recsize=16384", "mypool"])
         .assert()
         .success()
         .stdout("");
     bfffs()
         .arg("--sock")
         .arg(h.sockpath.as_os_str())
-        .args(&["fs", "get", "-p", "-o", "value,source", "recsize", "mypool"])
+        .args(["fs", "get", "-p", "-o", "value,source", "recsize", "mypool"])
         .assert()
         .success()
         .stdout("16384\tlocal\n");

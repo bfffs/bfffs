@@ -39,7 +39,7 @@ fn harness() -> Harness {
     let mountpoint = tempdir.path().join("mnt");
     fs::create_dir(&mountpoint).unwrap();
     bfffs()
-        .args(&["pool", "create", "-p"])
+        .args(["pool", "create", "-p"])
         .arg(format!("mountpoint={}", mountpoint.display()))
         .arg("mypool")
         .arg(&filename)
@@ -82,7 +82,7 @@ async fn ebusy(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 
@@ -92,7 +92,7 @@ async fn ebusy(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "unmount", "mypool"])
+        .args(["fs", "unmount", "mypool"])
         .assert()
         .failure()
         .stderr("Error: EBUSY\n");
@@ -121,7 +121,7 @@ async fn einval(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "unmount", "mypool"])
+        .args(["fs", "unmount", "mypool"])
         .assert()
         .failure()
         .stderr("Error: EINVAL\n");
@@ -137,7 +137,7 @@ async fn force(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 
@@ -147,7 +147,7 @@ async fn force(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "unmount", "-f", "mypool"])
+        .args(["fs", "unmount", "-f", "mypool"])
         .assert()
         .success();
 }
@@ -161,7 +161,7 @@ async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "mount", "mypool"])
+        .args(["fs", "mount", "mypool"])
         .assert()
         .success();
 
@@ -173,7 +173,7 @@ async fn ok(harness: Harness) {
     bfffs()
         .arg("--sock")
         .arg(harness.sockpath.as_os_str())
-        .args(&["fs", "unmount", "mypool"])
+        .args(["fs", "unmount", "mypool"])
         .assert()
         .success();
 

@@ -377,9 +377,7 @@ mod fs {
                         for field in &self.fields {
                             match field {
                                 GetField::Name => row.add_cell(&dsinfo.name),
-                                GetField::Property => {
-                                    row.add_cell(&prop.name())
-                                }
+                                GetField::Property => row.add_cell(prop.name()),
                                 GetField::Value => {
                                     let hprop = humanize_property(&prop);
                                     row.add_cell(hprop)
