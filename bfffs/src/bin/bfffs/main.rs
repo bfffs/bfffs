@@ -754,7 +754,7 @@ mod pool {
 
         pub fn do_create_cluster(&mut self, k: i16, f: i16, devs: &[&str]) {
             let zone_size = self.zone_size;
-            let c = Pool::create_cluster(None, k, zone_size, f, devs);
+            let c = Cluster::create(None, k, zone_size, f, devs);
             self.clusters.push(c);
         }
 

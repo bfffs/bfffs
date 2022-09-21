@@ -741,7 +741,7 @@ impl VdevBlock {
     ///                     zones.
     pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
         -> io::Result<Self>
-        where P: AsRef<Path> + 'static
+        where P: AsRef<Path>
     {
         let leaf = VdevLeaf::create(path, lbas_per_zone)?;
         Ok(VdevBlock::new(leaf))
@@ -989,9 +989,10 @@ impl Vdev for VdevBlock {
 #[cfg(test)]
 mock! {
     pub VdevBlock {
+        #[mockall::concretize]
         pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
-            where P: AsRef<Path> + 'static;
+            where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn new(leaf: VdevLeaf) -> Self;

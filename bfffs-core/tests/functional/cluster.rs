@@ -59,8 +59,7 @@ mod persistence {
         t!(file.set_len(len));
         let rt = basic_runtime();
         let lpz = NonZeroU64::new(65536);
-        let paths = vec![fname.clone()];
-        let cluster = Cluster::create(None, 1, lpz, 0, paths);
+        let cluster = Cluster::create(None, 1, lpz, 0, &[&fname]);
         (rt, cluster, tempdir, fname)
     }
 
