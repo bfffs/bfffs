@@ -125,8 +125,8 @@ impl DevManager {
     /// List every pool that hasn't been imported, but can be
     pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
         let inner = self.inner.lock().unwrap();
-        inner.pools.iter()
-            .map(|(_uuid, label)| {
+        inner.pools.values()
+            .map(|label| {
                 (label.name.clone(), label.uuid)
             }).collect::<Vec<_>>()
     }
