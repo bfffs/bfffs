@@ -39,6 +39,7 @@ pub mod fs;
 pub mod fs_tree;
 pub mod idml;
 pub mod label;
+pub mod mirror;
 pub mod pool;
 pub mod property;
 pub mod raid;

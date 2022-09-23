@@ -1,5 +1,5 @@
 // vim: tw=80
-use bfffs_core::raid::VdevRaid;
+use bfffs_core::{mirror::Mirror, raid::VdevRaid};
 use std::{fs, path::PathBuf};
 use tempfile::Builder;
 
@@ -14,14 +14,14 @@ fn create_redundancy_too_big() {
     let redundancy = 3;
     let tempdir =
         t!(Builder::new().prefix("create_redundancy_too_big").tempdir());
-    let paths = (0..num_disks).map(|i| {
+    let mirrors = (0..num_disks).map(|i| {
         let mut fname = PathBuf::from(tempdir.path());
         fname.push(format!("vdev.{}", i));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
-        fname
+        Mirror::create(&[fname], None).unwrap()
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, &paths[..]);
+    VdevRaid::create(None, stripesize, redundancy, mirrors);
 }
 
 #[test]
@@ -35,14 +35,14 @@ fn create_stripesize_too_big() {
     let redundancy = 1;
     let tempdir =
         t!(Builder::new().prefix("create_stripesize_too_big").tempdir());
-    let paths = (0..num_disks).map(|i| {
+    let mirrors = (0..num_disks).map(|i| {
         let mut fname = PathBuf::from(tempdir.path());
         fname.push(format!("vdev.{}", i));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
-        fname
+        Mirror::create(&[fname], None).unwrap()
     }).collect::<Vec<_>>();
-    VdevRaid::create(None, stripesize, None, redundancy, &paths[..]);
+    VdevRaid::create(None, stripesize, redundancy, mirrors);
 }
 
 /// These tests use real VdevBlock and VdevLeaf objects
@@ -50,6 +50,7 @@ mod vdev_raid {
 
     use bfffs_core::{
         *,
+        mirror::Mirror,
         raid::*,
         vdev::Vdev,
     };
@@ -75,7 +76,6 @@ mod vdev_raid {
     struct Harness {
         vdev: VdevRaid,
         _tempdir: TempDir,
-        _paths: Vec<PathBuf>,
         n: i16,
         k: i16,
         f: i16,
@@ -85,19 +85,19 @@ mod vdev_raid {
     fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
         let len = 1 << 30;  // 1 GB
         let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
-        let paths = (0..n).map(|i| {
+        let mirrors = (0..n).map(|i| {
             let mut fname = PathBuf::from(tempdir.path());
             fname.push(format!("vdev.{}", i));
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
-            fname
+            Mirror::create(&[fname], None).unwrap()
         }).collect::<Vec<_>>();
         let cs = NonZeroU64::new(chunksize);
-        let vdev = VdevRaid::create(cs, k, None, f, &paths[..]);
+        let vdev = VdevRaid::create(cs, k, f, mirrors);
         basic_runtime().block_on(
             vdev.open_zone(0)
         ).expect("open_zone");
-        Harness { vdev, _tempdir: tempdir, _paths: paths, n, k, f, chunksize }
+        Harness { vdev, _tempdir: tempdir, n, k, f, chunksize }
     }
 
     #[template]
@@ -613,15 +613,11 @@ mod vdev_raid {
 mod persistence {
     use bfffs_core::{
         label::*,
+        mirror::Mirror,
         vdev_block::*,
         vdev::Vdev,
         vdev_file::*,
         raid::{self, VdevRaid, VdevRaidApi},
-    };
-    use futures::{
-        TryFutureExt,
-        TryStreamExt,
-        stream::FuturesOrdered
     };
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
@@ -682,8 +678,11 @@ mod persistence {
             t!(file.set_len(len));
             fname
         }).collect::<Vec<_>>();
+        let mirrors = paths.iter().map(|fname|
+            Mirror::create(&[fname], None).unwrap()
+        ).collect::<Vec<_>>();
         let cs = NonZeroU64::new(2);
-        let vdev_raid = VdevRaid::create(cs, 3, None, 1, &paths[..]);
+        let vdev_raid = VdevRaid::create(cs, 3, 1, mirrors);
         (vdev_raid, tempdir, paths)
     }
 
@@ -691,24 +690,21 @@ mod persistence {
     // need to store separate golden labels for each VdevLeaf.  Instead, we'll
     // just check that we can open-after-write
     #[rstest]
-    fn open(harness: Harness) {
+    #[tokio::test]
+    async fn open_after_write(harness: Harness) {
         let (old_raid, _tempdir, paths) = harness;
         let uuid = old_raid.uuid();
-        basic_runtime().block_on(async move {
-            let label_writer = LabelWriter::new(0);
-            old_raid.write_label(label_writer).and_then(move |_| {
-                paths.into_iter()
-                .map(|path| {
-                    VdevFile::open(path).map_ok(|(leaf, reader)| {
-                        (VdevBlock::new(leaf), reader)
-                    })
-                }).collect::<FuturesOrdered<_>>()
-                .try_collect::<Vec<_>>()
-            }).map_ok(move |combined| {
-                let (vdev_raid, _) = raid::open(Some(uuid), combined);
-                assert_eq!(uuid, vdev_raid.uuid());
-            }).await
-        }).unwrap();
+        let label_writer = LabelWriter::new(0);
+        old_raid.write_label(label_writer).await.unwrap();
+        let mut combined = Vec::new();
+        for path in paths {
+            let (leaf, reader) = VdevFile::open(path).await.unwrap();
+            let mirror_children = vec![(VdevBlock::new(leaf), reader)];
+            let (mirror, reader) = Mirror::open(None, mirror_children);
+            combined.push((mirror, reader));
+        }
+        let (vdev_raid, _) = raid::open(Some(uuid), combined);
+        assert_eq!(uuid, vdev_raid.uuid());
     }
 
     #[rstest]
@@ -720,7 +716,7 @@ mod persistence {
         for path in harness.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
+            f.seek(SeekFrom::Start(112)).unwrap();   // Skip leaf, mirror labels
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

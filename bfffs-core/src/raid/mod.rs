@@ -2,7 +2,7 @@
 
 //! BFFFS RAID layer
 //!
-//! This provides vdevs which slot between `cluster` and `vdev_block` and
+//! This provides vdevs which slot between `cluster` and `mirror` and
 //! provide RAID-like functionality.
 
 #[cfg(test)] use async_trait::async_trait;
@@ -12,51 +12,48 @@ use crate::{
     vdev::*,
 };
 #[cfg(test)] use mockall::*;
+use mockall_double::double;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     iter::once,
     num::NonZeroU64,
-    path::Path,
     sync::Arc
 };
 
-#[cfg(test)]
-use crate::vdev_block::MockVdevBlock as VdevBlock;
-#[cfg(not(test))]
-use crate::vdev_block::VdevBlock;
+#[double]
+use crate::mirror::Mirror;
 
 mod codec;
 mod declust;
 mod prime_s;
 mod sgcursor;
-mod vdev_onedisk;
+mod null_raid;
 mod vdev_raid;
 mod vdev_raid_api;
 
-pub use self::vdev_onedisk::VdevOneDisk;
+pub use self::null_raid::NullRaid;
 pub use self::vdev_raid::VdevRaid;
 pub use self::vdev_raid_api::VdevRaidApi;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum Label {
-    // TODO: VdevMirror
-    OneDisk(self::vdev_onedisk::Label),
-    Raid(self::vdev_raid::Label)
+    NullRaid(self::null_raid::Label),
+    Raid(self::vdev_raid::Label),
 }
 
 impl<'a> Label {
     pub fn iter_children(&'a self) -> Box<dyn Iterator<Item=&Uuid> + 'a> {
         match self {
             Label::Raid(l) => Box::new(l.children.iter()),
-            Label::OneDisk(l) => Box::new(once(&l.child))
+            Label::NullRaid(l) => Box::new(once(&l.child)),
         }
     }
 
     pub fn uuid(&self) -> Uuid {
         match self {
             Label::Raid(l) => l.uuid,
-            Label::OneDisk(l) => l.uuid
+            Label::NullRaid(l) => l.uuid,
         }
     }
 }
@@ -71,25 +68,20 @@ impl<'a> Label {
 /// * `disks_per_stripe`:   Number of data plus parity chunks in each
 ///                         self-contained RAID stripe.  Must be less than or
 ///                         equal to the number of disks in `paths`.
-/// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
-///                         simulated zones on devices that don't have
-///                         native zones.
 /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
 ///                         disks may fail before the array becomes
 ///                         inoperable.
-/// * `paths`:              Slice of pathnames of files and/or devices
-pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
-    lbas_per_zone: Option<NonZeroU64>, redundancy: i16,
-    paths: &[P]) -> Arc<dyn VdevRaidApi>
-    where P: AsRef<Path>
+/// * `mirrors`:            Already labeled Mirror devices
+pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
+    redundancy: i16, mut mirrors: Vec<Mirror>) -> Arc<dyn VdevRaidApi>
 {
-    if paths.len() == 1 {
+    if mirrors.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Arc::new(VdevOneDisk::create(lbas_per_zone, &paths[0]))
+        Arc::new(NullRaid::create(mirrors.pop().unwrap()))
     } else {
-        Arc::new(VdevRaid::create(chunksize, disks_per_stripe, lbas_per_zone,
-                                 redundancy, paths))
+        Arc::new(VdevRaid::create(chunksize, disks_per_stripe, redundancy,
+                                  mirrors))
     }
 }
 
@@ -99,15 +91,15 @@ pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 ///
 /// * `uuid`:       Uuid of the desired `Vdev`, if present.  If `None`,
 ///                 then it will not be verified.
-/// * `combined`:   An array of pairs of `VdevBlock`s and their
+/// * `combined`:   An array of pairs of `Mirror`s and their
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
-pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
+pub fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
     -> (Arc<dyn VdevRaidApi>, LabelReader)
 {
     let mut label_pair = None;
-    let all_blockdevs = combined.into_iter()
-        .map(|(vdev_block, mut label_reader)| {
+    let all_mirrors = combined.into_iter()
+        .map(|(mirror, mut label_reader)| {
         let label: Label = label_reader.deserialize().unwrap();
         if let Some(u) = uuid {
             assert_eq!(u, label.uuid(), "Opening disk from wrong cluster");
@@ -115,15 +107,15 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
         if label_pair.is_none() {
             label_pair = Some((label, label_reader));
         }
-        (vdev_block.uuid(), vdev_block)
-    }).collect::<BTreeMap<Uuid, VdevBlock>>();
+        (mirror.uuid(), mirror)
+    }).collect::<BTreeMap<Uuid, Mirror>>();
     let (label, label_reader) = label_pair.unwrap();
     let vdev = match label {
         Label::Raid(l) => {
-            Arc::new(VdevRaid::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
+            Arc::new(VdevRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
         },
-        Label::OneDisk(l) => {
-            Arc::new(VdevOneDisk::open(l, all_blockdevs)) as Arc<dyn VdevRaidApi>
+        Label::NullRaid(l) => {
+            Arc::new(NullRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
         },
     };
     (vdev, label_reader)

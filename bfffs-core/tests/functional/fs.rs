@@ -9,7 +9,6 @@ mod fs {
         ddml::*,
         fs::*,
         idml::*,
-        pool::*,
         property::*
     };
     use futures::TryStreamExt;
@@ -18,27 +17,19 @@ mod fs {
     use std::{
         collections::HashSet,
         ffi::{CString, CStr, OsString, OsStr},
-        fs,
         os::raw::c_char,
         os::unix::ffi::OsStrExt,
         slice,
         sync::{Arc, Mutex}
     };
-    use tempfile::Builder;
 
     type Harness = (Fs, Arc<Mutex<Cache>>, Arc<Database>);
 
     async fn harness(props: Vec<Property>) -> Harness {
-        let len = 1 << 30;  // 1GB
-        let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
-        let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
-        drop(file);
+        let (_, _, pool) = crate::PoolBuilder::new()
+            .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
         let cache2 = cache.clone();
-        let cluster = Pool::create_cluster(None, 1, None, 0, &[filename]);
-        let pool = Pool::create(String::from("test_fs"), vec![cluster]);
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
         let db = Arc::new(Database::create(Arc::new(idml)));
@@ -4126,7 +4117,6 @@ mod torture {
         ddml::*,
         fs::*,
         idml::*,
-        pool::*,
     };
     use futures::{future, StreamExt};
     use tracing::*;
@@ -4142,12 +4132,9 @@ mod torture {
     use rstest::rstest;
     use std::{
         ffi::OsString,
-        fs,
-        num::NonZeroU64,
         sync::{Arc, Mutex, Once},
         time::{Duration, Instant},
     };
-    use tempfile::Builder;
     use tokio::runtime::Runtime;
     use tracing_subscriber::EnvFilter;
 
@@ -4392,16 +4379,9 @@ mod torture {
         });
 
         let rt = Runtime::new().unwrap();
-        let len = 1 << 30;  // 1GB
-        let tempdir = t!(Builder::new().prefix("test_fs").tempdir());
-        let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
-        drop(file);
-        let zone_size = NonZeroU64::new(zone_size);
-        let cluster = Pool::create_cluster(None, 1, zone_size, 0,
-                                           &[filename]);
-        let pool = Pool::create(String::from("test_fs"), vec![cluster]);
+        let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+            .zone_size(zone_size)
+            .build();
         let cache = Arc::new(
             Mutex::new(
                 Cache::with_capacity(32_000_000)

@@ -3,8 +3,8 @@ mod persistence {
     use bfffs_core::vdev_block::*;
     use bfffs_core::raid;
     use bfffs_core::cluster::*;
+    use bfffs_core::mirror::Mirror;
     use bfffs_core::vdev_file::*;
-    use futures::TryFutureExt;
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
     use std::{
@@ -12,23 +12,27 @@ mod persistence {
         io::{Read, Seek, SeekFrom, Write},
         num::NonZeroU64
     };
-    use super::super::*;
     use tempfile::{Builder, TempDir};
-    use tokio::runtime::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
-    const GOLDEN_LABEL: [u8; 132] = [
+    const GOLDEN_LABEL: [u8; 172] = [
         // First the VdevFile label
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
-        0x43, 0x3a, 0xac, 0x65, 0x9a, 0x24, 0xb5, 0x55,
+        0xca, 0xf4, 0x51, 0x4b, 0x59, 0x00, 0x76, 0x4a,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64,
         0x30, 0x55, 0xe2, 0x7d, 0x68, 0xeb, 0x4c, 0x96,
         0xbd, 0x50, 0x88, 0xe4, 0x3f, 0x92, 0xe8, 0x48,
         0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // Then the mirror label
+        0xb9, 0xd8, 0x56, 0x54, 0xbd, 0xe4, 0x40, 0xe5,
+        0xa2, 0xfb, 0x7b, 0x8b, 0xb6, 0x17, 0xff, 0x55,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x57, 0x33, 0x3b, 0x93, 0xce, 0xea, 0x44, 0x42,
+        0xa6, 0xd2, 0x47, 0x07, 0x26, 0x74, 0x76, 0xdb,
         // Then the raid label
         0x00, 0x00, 0x00, 0x00, 0x86, 0x82, 0x03, 0x1d,
         0x3a, 0x06, 0x4b, 0x4a, 0xb0, 0xb5, 0x5e, 0x85,
@@ -50,24 +54,26 @@ mod persistence {
     ];
 
     #[fixture]
-    fn objects() -> (Runtime, Cluster, TempDir, String) {
+    fn objects() -> (Cluster, TempDir, String) {
         let len = 1 << 29;  // 512 MB
         let tempdir =
             t!(Builder::new().prefix("test_cluster_persistence").tempdir());
         let fname = format!("{}/vdev", tempdir.path().display());
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
-        let rt = basic_runtime();
         let lpz = NonZeroU64::new(65536);
-        let cluster = Cluster::create(None, 1, lpz, 0, &[&fname]);
-        (rt, cluster, tempdir, fname)
+        let mirror = Mirror::create(&[&fname], lpz).unwrap();
+        let raid = raid::create(None, 1, 0, vec![mirror]);
+        let cluster = Cluster::create(raid);
+        (cluster, tempdir, fname)
     }
 
     // No need to test dumping non-empty Clusters here.  That's handled by
     // Cluster's unit tests.
     #[rstest]
-    fn dump_empty(objects: (Runtime, Cluster, TempDir, String)) {
-        let (_rt, cluster, _tempdir, _path) = objects;
+    #[tokio::test]
+    async fn dump_empty(objects: (Cluster, TempDir, String)) {
+        let (cluster, _tempdir, _path) = objects;
         let dumped = cluster.dump_fsm();
         assert_eq!(dumped,
 "FreeSpaceMap: 2 Zones: 0 Closed, 2 Empty, 0 Open
@@ -79,34 +85,29 @@ mod persistence {
 
     // Test Cluster::open
     #[rstest]
-    fn open(objects: (Runtime, Cluster, TempDir, String)) {
+    #[tokio::test]
+    async fn open(objects: (Cluster, TempDir, String)) {
         {
             let mut f = fs::OpenOptions::new()
                 .write(true)
-                .open(objects.3.clone()).unwrap();
+                .open(objects.2.clone()).unwrap();
             f.write_all(&GOLDEN_LABEL).unwrap();
             f.seek(SeekFrom::Start(32768)).unwrap();
             f.write_all(&GOLDEN_SPACEMAP).unwrap();
         }
-        basic_runtime().block_on(async {
-            VdevFile::open(objects.3.clone())
-            .map_ok(|(leaf, reader)| {
-                (VdevBlock::new(leaf), reader)
-            }).and_then(move |combined| {
-                let (vdev_raid, _reader) = raid::open(None, vec![combined]);
-                 Cluster::open(vdev_raid)
-            }).map_ok(|cluster| {
-                assert_eq!(cluster.allocated(), 0);
-            }).await
-        }).unwrap();
+        let (leaf, reader) = VdevFile::open(objects.2.clone()).await.unwrap();
+        let mirror_children = vec![(VdevBlock::new(leaf), reader)];
+        let raid_children = Mirror::open(None, mirror_children);
+        let (vdev_raid, _reader) = raid::open(None, vec![raid_children]);
+        let cluster = Cluster::open(vdev_raid).await.unwrap();
+        assert_eq!(cluster.allocated(), 0);
     }
 
     #[rstest]
-    fn flush(objects: (Runtime, Cluster, TempDir, String)) {
-        let (rt, old_cluster, _tempdir, path) = objects;
-        rt.block_on(async {
-            old_cluster.flush(0).await
-        }).unwrap();
+    #[tokio::test]
+    async fn flush(objects: (Cluster, TempDir, String)) {
+        let (old_cluster, _tempdir, path) = objects;
+        old_cluster.flush(0).await.unwrap();
 
         let mut f = fs::File::open(path).unwrap();
         let mut v = vec![0; 4096];

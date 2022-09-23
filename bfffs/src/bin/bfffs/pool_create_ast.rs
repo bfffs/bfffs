@@ -15,15 +15,6 @@ pub enum RaidChild<'a> {
     Mirror(Mirror<'a>),
 }
 
-impl<'a> RaidChild<'a> {
-    pub fn as_disk(&'a self) -> Option<&'a Disk<'a>> {
-        match self {
-            RaidChild::Disk(d) => Some(d),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Raid<'a> {
     pub k:     i16,

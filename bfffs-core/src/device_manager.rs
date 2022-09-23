@@ -1,45 +1,37 @@
 // vim: tw=80
 
-#[cfg(not(test))]
-use crate::vdev::Vdev;
 use crate::{
-    Error, Result, Uuid, cache, database, ddml, idml, label, pool, raid
+    Error, Result, Uuid, vdev::Vdev, cache, database, ddml, idml, label, mirror,
+    pool, raid
 };
 use futures::{
     Future,
-    FutureExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
-    future,
-    stream::{self, FuturesOrdered},
+    stream::{self, FuturesOrdered, FuturesUnordered},
 };
-use std::{
-    collections::BTreeMap,
-    path::PathBuf,
-    sync::{Arc, Mutex}
-};
-#[cfg(not(test))]
+use mockall_double::double;
 use std::{
     borrow::ToOwned,
-    path::Path
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex}
 };
 
-#[cfg(not(test))] use crate::pool::Pool;
-#[cfg(test)] use crate::pool::MockPool as Pool;
+#[double] use crate::pool::Pool;
+#[double] use crate::cluster::Cluster;
+#[double] use crate::mirror::Mirror;
+#[double] use crate::vdev_block::VdevBlock;
+#[double] use crate::vdev_file::VdevFile;
 
-#[cfg(not(test))] use crate::cluster::Cluster;
-#[cfg(test)] use crate::cluster::MockCluster as Cluster;
-
-#[cfg(not(test))] use crate::vdev_block::VdevBlock;
-#[cfg(test)] use crate::vdev_block::MockVdevBlock as VdevBlock;
-
-#[cfg(not(test))] use crate::vdev_file::VdevFile;
-#[cfg(test)] use crate::vdev_file::MockVdevFile as VdevFile;
-
+/// Holds cached labels detected during tasting.
+// NB: these labels may be out-of-date because we don't open devices exclusively
+// until import time.
 #[derive(Default)]
 struct Inner {
     leaves: BTreeMap<Uuid, PathBuf>,
+    mirrors: BTreeMap<Uuid, mirror::Label>,
     raids: BTreeMap<Uuid, raid::Label>,
     pools: BTreeMap<Uuid, pool::Label>,
 }
@@ -86,11 +78,17 @@ impl DevManager {
     /// Import a pool that is already known to exist
     async fn import(&self, uuid: Uuid) -> Result<database::Database>
     {
-        let (_pool, raids, mut leaves) = self.open_labels(uuid)?;
+        let (_pool, raids, mut mirrors, mut leaves) = self.open_labels(uuid)?;
         let combined_clusters = raids.into_iter()
         .map(move |raid| {
-            let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
-            DevManager::open_cluster(leaf_paths, raid.uuid())
+            let mirror_labels = mirrors.remove(&raid.uuid()).unwrap();
+            mirror_labels.iter()
+                .map(|mirror_label| {
+                    let leaf_paths = leaves.remove(&mirror_label.uuid).unwrap();
+                    DevManager::open_mirror(mirror_label.uuid, leaf_paths)
+                }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .and_then(move |mirrors| DevManager::open_cluster(mirrors, raid.uuid()))
         }).collect::<FuturesOrdered<_>>()
         .try_collect::<Vec<_>>().await?;
         let (pool, label_reader) = Pool::open(Some(uuid), combined_clusters);
@@ -106,47 +104,59 @@ impl DevManager {
 
     /// Import all of the clusters from a Pool.  For debugging purposes only.
     #[doc(hidden)]
-    pub fn import_clusters(&self, uuid: Uuid)
-        -> impl Future<Output=Result<Vec<Cluster>>>
+    pub async fn import_clusters(&self, uuid: Uuid) -> Result<Vec<Cluster>>
     {
-        let (_pool, raids, mut leaves) = match self.open_labels(uuid) {
-            Ok((p, r, l)) => (p, r, l),
-            Err(e) => return future::err(e).boxed()
-        };
+        let (_pool, raids, mut mirrors, mut leaves) = self.open_labels(uuid)?;
         raids.into_iter()
         .map(move |raid| {
-            let leaf_paths = leaves.remove(&raid.uuid()).unwrap();
-            DevManager::open_cluster(leaf_paths, raid.uuid())
-            .map_ok(|(cluster, _reader)| cluster)
+            let mirror_labels = mirrors.remove(&raid.uuid()).unwrap();
+            mirror_labels.iter()
+                .map(|mirror_label| {
+                    let leaf_paths = leaves.remove(&mirror_label.uuid).unwrap();
+                    DevManager::open_mirror(mirror_label.uuid, leaf_paths)
+                }).collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .and_then(move |mirrors| DevManager::open_cluster(mirrors, raid.uuid()))
         }).collect::<FuturesOrdered<_>>()
-        .try_collect::<Vec<_>>()
-        .boxed()
+        .map_ok(|(cluster, _reader)| cluster)
+        .try_collect::<Vec<_>>().await
     }
 
     /// List every pool that hasn't been imported, but can be
     pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
         let inner = self.inner.lock().unwrap();
-        inner.pools.iter()
-            .map(|(_uuid, label)| {
+        inner.pools.values()
+            .map(|label| {
                 (label.name.clone(), label.uuid)
             }).collect::<Vec<_>>()
     }
 
-    fn open_cluster(leaf_paths: Vec<PathBuf>, uuid: Uuid)
-        -> impl Future<Output=Result<(Cluster, label::LabelReader)>>
+    fn open_cluster(
+        mirrors: Vec<(Mirror, label::LabelReader)>,
+        uuid: Uuid
+    ) -> impl Future<Output=Result<(Cluster, label::LabelReader)>>
+    {
+        let (vdev_raid_api, reader) = raid::open(Some(uuid), mirrors);
+        Cluster::open(vdev_raid_api)
+            .map_ok(move |cluster| (cluster, reader))
+    }
+
+    fn open_mirror(uuid: Uuid, leaf_paths: Vec<PathBuf>)
+        -> impl Future<Output=Result<(Mirror, label::LabelReader)>>
     {
         DevManager::open_vdev_blocks(leaf_paths)
-        .and_then(move |vdev_blocks| {
-            let (vdev_raid_api, reader) = raid::open(Some(uuid), vdev_blocks);
-            Cluster::open(vdev_raid_api)
-            .map_ok(move |cluster| (cluster, reader))
+        .map_ok(move |vdev_blocks| {
+            Mirror::open(Some(uuid), vdev_blocks)
         })
     }
 
     fn open_labels(&self, uuid: Uuid)
-        -> Result<
-            (pool::Label, Vec<raid::Label>, BTreeMap<Uuid, Vec<PathBuf>>)
-        >
+        -> Result<(
+            pool::Label,
+            Vec<raid::Label>,
+            BTreeMap<Uuid, Vec<mirror::Label>>,
+            BTreeMap<Uuid, Vec<PathBuf>>
+        )>
     {
         let mut inner = self.inner.lock().unwrap();
         inner.pools.remove(&uuid)
@@ -154,14 +164,23 @@ impl DevManager {
             let raids = pool.children.iter()
                 .map(|child_uuid| inner.raids.remove(child_uuid).unwrap())
                 .collect::<Vec<_>>();
-            let leaves = raids.iter().map(|raid| {
-                let leaves = raid.iter_children().map(|uuid| {
-                    inner.leaves.remove(uuid).unwrap()
+            let mirrors = raids.iter().map(|raid| {
+                let mirrors = raid.iter_children().map(|uuid| {
+                    inner.mirrors.remove(uuid).unwrap()
                 }).collect::<Vec<_>>();
-                (raid.uuid(), leaves)
+                (raid.uuid(), mirrors)
             }).collect::<BTreeMap<_, _>>();
+            let mut leaves = BTreeMap::new();
+            for vmirrors in mirrors.values() {
+                for mirror in vmirrors {
+                    let vleaves = mirror.children.iter().map(|uuid| {
+                        inner.leaves.remove(uuid).unwrap()
+                    }).collect::<Vec<_>>();
+                    leaves.insert(mirror.uuid, vleaves);
+                }
+            }
             // Drop the self.inner mutex
-            (pool, raids, leaves)
+            (pool, raids, mirrors, leaves)
         }).ok_or(Error::ENOENT)
     }
 
@@ -180,14 +199,14 @@ impl DevManager {
     ///
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.
-    // Disable in test mode because MockVdevFile::Open requires P: 'static
     // TODO: add a method for tasting disks in parallel.
-    #[cfg(not(test))]
     pub async fn taste<P: AsRef<Path>>(&self, p: P) -> Result<()> {
         let pathbuf = p.as_ref().to_owned();
         let (vdev_file, mut reader) = VdevFile::open(p).await?;
         let mut inner = self.inner.lock().unwrap();
         inner.leaves.insert(vdev_file.uuid(), pathbuf);
+        let ml: mirror::Label = reader.deserialize().unwrap();
+        inner.mirrors.insert(ml.uuid, ml);
         let rl: raid::Label = reader.deserialize().unwrap();
         inner.raids.insert(rl.uuid(), rl);
         let pl: pool::Label = reader.deserialize().unwrap();

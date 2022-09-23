@@ -1,8 +1,8 @@
 // vim: tw=80
-use super::*;
 use bfffs_core::{
-    cluster,
+    cluster::Cluster,
     label::*,
+    mirror::Mirror,
     pool::*,
     raid,
     vdev_block::*,
@@ -14,16 +14,15 @@ use divbuf::DivBufShared;
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    num::NonZeroU64
+    path::PathBuf
 };
-use tempfile::{Builder, TempDir};
+use tempfile::TempDir;
 
 mod persistence {
     use futures::{TryFutureExt, future};
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
     use super::*;
-    use tokio::runtime::Runtime;
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
@@ -44,76 +43,64 @@ mod persistence {
         0xab, 0x9d, 0xa5, 0x1a, 0x9d, 0x11, 0x5f, 0xfb,
     ];
 
-    type Harness = (Runtime, Pool, TempDir, Vec<String>);
+    type Harness = (Pool, TempDir, Vec<PathBuf>);
     #[fixture]
     fn harness() -> Harness {
-        let num_disks = 2;
-        let len = 1 << 26;  // 64 MB
-        let tempdir =
-            t!(Builder::new().prefix("test_pool_persistence").tempdir());
-        let paths = (0..num_disks).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-            let file = t!(fs::File::create(&fname));
-            t!(file.set_len(len));
-            fname
-        }).collect::<Vec<_>>();
-        let rt = basic_runtime();
-        let clusters = paths.iter().map(|p| {
-            let cs = NonZeroU64::new(1);
-            Pool::create_cluster(cs, 1, None, 0, &[p][..])
-        }).collect::<Vec<_>>();
-        let pool = Pool::create("TestPool".to_string(), clusters);
-        (rt, pool, tempdir, paths)
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .disks(2)
+            .nclusters(2)
+            .name("TestPool")
+            .chunksize(1)
+            .zone_size(16)
+            .build();
+        (pool, tempdir, paths)
     }
 
     // Test open-after-write for Pool
     #[rstest]
-    fn open(harness: Harness) {
-        let (rt, old_pool, _tempdir, paths) = harness;
+    #[tokio::test]
+    async fn open(harness: Harness) {
+        let (old_pool, _tempdir, paths) = harness;
         let name = old_pool.name().to_string();
         let uuid = old_pool.uuid();
-        rt.block_on(async {
-            let label_writer = LabelWriter::new(0);
-            future::try_join(old_pool.flush(0),
-                             old_pool.write_label(label_writer)).await
-        }).unwrap();
+        let label_writer = LabelWriter::new(0);
+        future::try_join(old_pool.flush(0), old_pool.write_label(label_writer))
+            .await.unwrap();
         drop(old_pool);
-        let (pool, _label_reader) = rt.block_on(async {
-            let c0_fut = VdevFile::open(paths[0].clone())
-                .and_then(|(leaf, reader)| {
-                    let block = VdevBlock::new(leaf);
-                    let (vr, lr) = raid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr)
-                    .map_ok(move |cluster| (cluster, lr))
-            });
-            let c1_fut = VdevFile::open(paths[1].clone())
-                .and_then(|(leaf, reader)| {
-                    let block = VdevBlock::new(leaf);
-                    let (vr, lr) = raid::open(None, vec![(block, reader)]);
-                    cluster::Cluster::open(vr)
-                    .map_ok(move |cluster| (cluster, lr))
-            });
-            future::try_join(c0_fut, c1_fut)
-            .map_ok(move |((c0, c0r), (c1,c1r))| {
-                Pool::open(Some(uuid), vec![(c0, c0r), (c1,c1r)])
-            }).await
-        }).unwrap();
+        let c0_fut = VdevFile::open(paths[0].clone())
+            .and_then(|(leaf, reader)| {
+                let block = VdevBlock::new(leaf);
+                let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
+                let (vr, lr) = raid::open(None, vec![(mirror, lr)]);
+                Cluster::open(vr)
+                .map_ok(move |cluster| (cluster, lr))
+        });
+        let c1_fut = VdevFile::open(paths[1].clone())
+            .and_then(|(leaf, reader)| {
+                let block = VdevBlock::new(leaf);
+                let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
+                let (vr, lr) = raid::open(None, vec![(mirror, lr)]);
+                Cluster::open(vr)
+                .map_ok(move |cluster| (cluster, lr))
+        });
+        let ((c0, c0r), (c1, c1r)) = future::try_join(c0_fut, c1_fut)
+            .await.unwrap();
+        let (pool, _) = Pool::open(Some(uuid), vec![(c0, c0r), (c1,c1r)]);
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());
     }
 
     #[rstest]
-    fn write_label(harness: Harness) {
-        let (rt, old_pool, _tempdir, paths) = harness;
-        rt.block_on(async {
-            let label_writer = LabelWriter::new(0);
-            old_pool.write_label(label_writer).await
-        }).unwrap();
+    #[tokio::test]
+    async fn write_label(harness: Harness) {
+        let (old_pool, _tempdir, paths) = harness;
+        let label_writer = LabelWriter::new(0);
+        old_pool.write_label(label_writer).await.unwrap();
         for path in paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels
-            f.seek(SeekFrom::Start(108)).unwrap();
+            f.seek(SeekFrom::Start(148)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {
@@ -137,16 +124,10 @@ mod t {
 
     #[tokio::test]
     async fn enospc() {
-        let len = 1 << 16;  // 64 KB
-        let tempdir =
-            t!(Builder::new().prefix("test_pool_enospc").tempdir());
-        let path = format!("{}/vdev", tempdir.path().display());
-        let file = t!(fs::File::create(&path));
-        t!(file.set_len(len));
-        let clusters = vec![
-            Pool::create_cluster(None, 1, NonZeroU64::new(16), 0, &[path][..])
-        ];
-        let pool = Pool::create("TestPool".to_string(), clusters);
+        let (_, _, pool) = crate::PoolBuilder::new()
+            .fsize(1 << 16)     // 64 kB
+            .zone_size(16)
+            .build();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let txg = TxgT::from(1);

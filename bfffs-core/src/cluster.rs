@@ -2,7 +2,7 @@
 
 use crate::{
     label::*,
-    raid::{self, VdevRaidApi},
+    raid::VdevRaidApi,
     types::*,
     util::*,
     vdev::BoxVdevFut
@@ -27,9 +27,7 @@ use std::{
     convert::TryFrom,
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
-    num::NonZeroU64,
     ops::Range,
-    path::Path,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -733,28 +731,9 @@ impl Cluster {
 
     /// Create a new `Cluster` from unused files or devices
     ///
-    /// * `chunksize`:          RAID chunksize in LBAs, if specified.  This is
-    ///                         the largest amount of data that will be
-    ///                         read/written to a single device before the
-    ///                         `Locator` switches to the next device.
-    /// * `disks_per_stripe`:   Number of data plus parity chunks in each
-    ///                         self-contained RAID stripe.  Must be less than
-    ///                         or equal to the number of disks in `paths`.
-    /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
-    ///                         simulated zones on devices that don't have
-    ///                         native zones.
-    /// * `redundancy`:         Degree of RAID redundancy.  Up to this many
-    ///                         disks may fail before the array becomes
-    ///                         inoperable.
-    /// * `paths`:              Slice of pathnames of files and/or devices
-    #[mockall::concretize]
-    pub fn create<P>(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
-        lbas_per_zone: Option<NonZeroU64>, redundancy: i16, paths: &[P])
-        -> Self
-        where P: AsRef<Path>
+    /// * `raids`:              Already labeled raid vdev
+    pub fn create(vdev: Arc<dyn VdevRaidApi>) -> Self
     {
-        let vdev = raid::create(chunksize, disks_per_stripe, lbas_per_zone,
-                                redundancy, paths);
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
         Cluster::new((fsm, vdev))

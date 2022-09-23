@@ -1,4 +1,4 @@
 // vim: tw=80
 
-mod vdev_onedisk;
+mod null_raid;
 mod vdev_raid;

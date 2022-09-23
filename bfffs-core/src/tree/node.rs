@@ -551,8 +551,8 @@ impl<K: Key, V: Value> LeafData<K, V> {
         // Unlike cache_space, we need to be able to update the credit when
         // adding and removing individual items.  So we simplify the
         // calculation, trading accuracy for mutatability.
-        let allocated: usize = self.items.iter()
-            .map(|(_k, v)| v.allocated_space())
+        let allocated: usize = self.items.values()
+            .map(V::allocated_space)
             .sum();
         let kvs = self.items.len() * mem::size_of::<(K, V)>();
         allocated + kvs
@@ -1318,8 +1318,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 let cutoff_idx = other_items.len() - keys_to_share;
                 let cutoff = *other_items.keys().nth(cutoff_idx).unwrap();
                 let mut other_right_half = other_items.split_off(&cutoff);
-                let allocated: usize = other_right_half.iter()
-                    .map(|(_k, v)| v.allocated_space())
+                let allocated: usize = other_right_half.values()
+                    .map(V::allocated_space)
                     .sum();
                 let kvs = other_right_half.len() * mem::size_of::<(K, V)>();
                 leaf.items.append(&mut other_right_half);
@@ -1346,8 +1346,8 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 let other_right_half = other_items.split_off(&cutoff);
                 let mut other_left_half =
                     mem::replace(other_items, other_right_half);
-                let allocated: usize = other_left_half.iter()
-                    .map(|(_k, v)| v.allocated_space())
+                let allocated: usize = other_left_half.values()
+                    .map(V::allocated_space)
                     .sum();
                 let kvs = other_left_half.len() * mem::size_of::<(K, V)>();
                 leaf.items.append(&mut other_left_half);
@@ -1385,8 +1385,8 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
         if let Ok(guard) = self.0.try_read() {
             match guard.deref() {
                 NodeData::Leaf(leaf) => {
-                    let allocated: usize = leaf.items.iter()
-                        .map(|(_k, v)| v.allocated_space())
+                    let allocated: usize = leaf.items.values()
+                        .map(V::allocated_space)
                         .sum();
                     // Rust's BTreeMap doesn't have any method to get its memory
                     // consumption.  It's hard to calculate theoretically, so

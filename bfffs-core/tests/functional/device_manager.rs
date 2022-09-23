@@ -10,42 +10,35 @@ mod device_manager {
         device_manager::*,
         cache::*,
         ddml::*,
-        idml::*,
-        pool::*,
+        idml::*
     };
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use rstest_reuse::{apply, template};
     use std::{
-        fs,
+        path::PathBuf,
         sync::{Arc, Mutex}
     };
-    use tempfile::{Builder, TempDir};
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
-    type Harness = (Runtime, DevManager, Vec<String>, TempDir);
+    type Harness = (Runtime, DevManager, Vec<PathBuf>, TempDir);
 
-    fn harness(n: i16, k: i16, f: i16, cs: Option<usize>, wb: Option<usize>)
+    fn harness(n: usize, m: usize, k: i16, f: i16, cs: Option<usize>,
+               wb: Option<usize>)
         -> Harness
     {
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .disks(n)
+            .mirror_size(m)
+            .stripe_size(k)
+            .redundancy_level(f)
+            .build();
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_io()
             .enable_time()
             .build()
             .unwrap();
-        let len = 1 << 30;  // 1GB
-        let tempdir =
-            t!(Builder::new().prefix("test_device_manager").tempdir());
-        let paths = (0..n).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-            let file = t!(fs::File::create(&fname));
-            t!(file.set_len(len));
-            fname
-        }).collect::<Vec<_>>();
-        let pathsclone = paths.clone();
-        let cluster = Pool::create_cluster(None, k, None, f, &paths);
-        let pool = Pool::create(String::from("test_device_manager"),
-            vec![cluster]);
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
@@ -60,13 +53,15 @@ mod device_manager {
         if let Some(wb) = wb {
             dev_manager.writeback_size(wb);
         }
-        (rt, dev_manager, pathsclone, tempdir)
+        (rt, dev_manager, paths, tempdir)
     }
 
     #[template]
     #[rstest(h,
-             case(harness(1, 1, 0, None, None)),    // Single-disk configuration
-             case(harness(3, 3, 1, None, None)),    // RAID configuration
+             case(harness(1, 1, 1, 0, None, None)), // Single-disk configuration
+             case(harness(2, 2, 1, 0, None, None)), // RAID1
+             case(harness(3, 1, 3, 1, None, None)), // RAID5 configuration
+             case(harness(6, 2, 3, 1, None, None)), // RAID51 configuration
      )]
     fn all_configs(h: Harness) {}
 
@@ -76,12 +71,12 @@ mod device_manager {
         assert!(h.1.importable_pools().is_empty());
     }
 
-    #[rstest(h, case(harness(1, 1, 0, Some(100_000_000), None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, Some(100_000_000), None)))]
     fn cache_size(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
         let db = rt.block_on(async move {
             dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
-            dm.import_by_name("test_device_manager").await
+            dm.import_by_name("functional_test_pool").await
         }).unwrap();
         assert_eq!(db.cache_size(), 100_000_000);
     }
@@ -94,12 +89,12 @@ mod device_manager {
             for path in paths.iter() {
                 dm.taste(path).await.unwrap();
             }
-            dm.import_by_name("test_device_manager").await.unwrap();
+            dm.import_by_name("functional_test_pool").await.unwrap();
         })
     }
 
     /// Fail to import a nonexistent pool by name
-    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, None, None)))]
     fn import_by_name_enoent(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
         let e = rt.block_on(async move {
@@ -119,13 +114,13 @@ mod device_manager {
                 dm.taste(path).await.unwrap();
             }
             let (name, uuid) = dm.importable_pools().pop().unwrap();
-            assert_eq!(name, "test_device_manager");
+            assert_eq!(name, "functional_test_pool");
             dm.import_by_uuid(uuid).await.unwrap();
         });
     }
 
     /// Fail to import a nonexistent pool by UUID
-    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, None, None)))]
     fn import_by_uuid_enoent(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
         let e = rt.block_on(async move {
@@ -144,14 +139,14 @@ mod device_manager {
                 dm.taste(path).await?;
             }
             let (name, uuid) = dm.importable_pools().pop().unwrap();
-            assert_eq!(name, "test_device_manager");
+            assert_eq!(name, "functional_test_pool");
             dm.import_clusters(uuid).await
         }).unwrap();
         assert_eq!(clusters.len(), 1);
     }
 
     /// DeviceManager::import_clusters for a nonexistent pool
-    #[rstest(h, case(harness(1, 1, 0, None, None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, None, None)))]
     fn import_clusters_enoent(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
         let e = rt.block_on(async move {
@@ -161,14 +156,13 @@ mod device_manager {
         assert_eq!(e, Error::ENOENT);
     }
 
-    #[rstest(h, case(harness(1, 1, 0, None, Some(100_000_000))))]
+    #[rstest(h, case(harness(1, 1, 1, 0, None, Some(100_000_000))))]
     fn writeback_size(h: Harness) {
         let (rt, dm, paths, _tempdir) = h;
         let db = rt.block_on(async move {
             dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
-            dm.import_by_name("test_device_manager").await
+            dm.import_by_name("functional_test_pool").await
         }).unwrap();
         assert_eq!(db.writeback_size(), 100_000_000);
     }
-
 }

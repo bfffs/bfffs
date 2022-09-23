@@ -9,20 +9,15 @@ use crate::{
     vdev::*,
 };
 use futures::future;
-use std::{
-    collections::BTreeMap,
-    num::NonZeroU64,
-    path::Path
-};
+use mockall_double::double;
+use std::collections::BTreeMap;
 use serde_derive::{Deserialize, Serialize};
 use super::{
     vdev_raid_api::*,
 };
 
-#[cfg(test)]
-use crate::vdev_block::MockVdevBlock as VdevBlock;
-#[cfg(not(test))]
-use crate::vdev_block::VdevBlock;
+#[double]
+use crate::mirror::Mirror;
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Label {
@@ -32,66 +27,60 @@ pub struct Label {
     pub child:  Uuid
 }
 
-/// `VdevOneDisk`: RAID-level Virtual Device for single-disk clusters
+/// `NullRaid`: RAID-level passthrough Virtual Device
 ///
-/// This Vdev adapts a Cluster to a single disk, without providing any
-/// redundancy.
-pub struct VdevOneDisk {
-    /// Underlying block device.
-    blockdev: VdevBlock,
+/// This Vdev adapts a Cluster to a single disk or a single mirror, without
+/// providing any additional redundancy.
+pub struct NullRaid {
+    /// Underlying mirror.
+    mirror: Mirror,
 
     uuid: Uuid,
 }
 
-impl VdevOneDisk {
-    /// Create a new VdevOneDisk from an unused file or device
+impl NullRaid {
+    /// Create a new NullRaid from an unused file or device
     ///
-    /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
-    ///                         simulated zones on devices that don't have
-    ///                         native zones.
-    /// * `path`:               Pathnames of file or device
+    /// * `mirror`:             Already labeled Mirror device
     // Hide from docs.  The public API should just be raid::create, but this
     // function technically needs to be public for testing purposes.
     #[doc(hidden)]
-    pub fn create<P>(lbas_per_zone: Option<NonZeroU64>, path: P) -> Self
-        where P: AsRef<Path>
+    pub fn create(mirror: Mirror) -> Self
     {
         let uuid = Uuid::new_v4();
-        let blockdev = VdevBlock::create(path, lbas_per_zone).unwrap();
-        VdevOneDisk{blockdev, uuid}
+        NullRaid{mirror, uuid}
     }
 
-    /// Open an existing `VdevOneDisk`
+    /// Open an existing `NullRaid`
     ///
     /// # Parameters
     ///
-    /// * `label`:      The `VdevOneDisk`'s label
-    /// * `blockdevs`:  A map containing a single `VdevBlock`, indexed by UUID
-    pub(super) fn open(label: Label, blockdevs: BTreeMap<Uuid, VdevBlock>)
-        -> Self
+    /// * `label`:      The `NullRaid`'s label
+    /// * `mirrors`:  A map containing a single `Mirror`, indexed by UUID
+    pub(super) fn open(label: Label, mirrors: BTreeMap<Uuid, Mirror>) -> Self
     {
-        assert_eq!(blockdevs.len(), 1);
-        let blockdev = blockdevs.into_iter().next().unwrap().1;
-        VdevOneDisk{uuid: label.uuid, blockdev}
+        assert_eq!(mirrors.len(), 1);
+        let mirror = mirrors.into_iter().next().unwrap().1;
+        NullRaid{uuid: label.uuid, mirror}
     }
 
 }
 
-impl Vdev for VdevOneDisk {
+impl Vdev for NullRaid {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.blockdev.lba2zone(lba)
+        self.mirror.lba2zone(lba)
     }
 
     fn optimum_queue_depth(&self) -> u32 {
-        self.blockdev.optimum_queue_depth()
+        self.mirror.optimum_queue_depth()
     }
 
     fn size(&self) -> LbaT {
-        self.blockdev.size()
+        self.mirror.size()
     }
 
     fn sync_all(&self) -> BoxVdevFut {
-        self.blockdev.sync_all()
+        self.mirror.sync_all()
     }
 
     fn uuid(&self) -> Uuid {
@@ -99,24 +88,24 @@ impl Vdev for VdevOneDisk {
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.blockdev.zone_limits(zone)
+        self.mirror.zone_limits(zone)
     }
 
     fn zones(&self) -> ZoneT {
-        self.blockdev.zones()
+        self.mirror.zones()
     }
 }
 
 #[async_trait]
-impl VdevRaidApi for VdevOneDisk {
+impl VdevRaidApi for NullRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
-        let limits = self.blockdev.zone_limits(zone);
-        Box::pin(self.blockdev.erase_zone(limits.0, limits.1 - 1))
+        let limits = self.mirror.zone_limits(zone);
+        Box::pin(self.mirror.erase_zone(limits.0, limits.1 - 1))
     }
 
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
-        let limits = self.blockdev.zone_limits(zone);
-        Box::pin(self.blockdev.finish_zone(limits.0, limits.1 - 1))
+        let limits = self.mirror.zone_limits(zone);
+        Box::pin(self.mirror.finish_zone(limits.0, limits.1 - 1))
     }
 
     fn flush_zone(&self, _zone: ZoneT) -> (LbaT, BoxVdevFut) {
@@ -124,17 +113,17 @@ impl VdevRaidApi for VdevOneDisk {
     }
 
     fn open_zone(&self, zone: ZoneT) -> BoxVdevFut {
-        let limits = self.blockdev.zone_limits(zone);
-        Box::pin(self.blockdev.open_zone(limits.0))
+        let limits = self.mirror.zone_limits(zone);
+        Box::pin(self.mirror.open_zone(limits.0))
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
-        Box::pin(self.blockdev.read_at(buf, lba))
+        Box::pin(self.mirror.read_at(buf, lba))
     }
 
     fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
-        Box::pin(self.blockdev.read_spacemap(buf, idx))
+        Box::pin(self.mirror.read_spacemap(buf, idx))
     }
 
     fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT) -> BoxVdevFut
@@ -145,34 +134,34 @@ impl VdevRaidApi for VdevOneDisk {
     fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut
     {
         // Pad up to a whole number of LBAs.  Upper layers don't do this because
-        // VdevRaidApi doesn't have a writev_at method.  But VdevBlock does, so
+        // VdevRaidApi doesn't have a writev_at method.  But Mirror does, so
         // the raid layer is the most efficient place to pad.
         let partial = buf.len() % BYTES_PER_LBA;
         if partial == 0 {
-            Box::pin(self.blockdev.write_at(buf, lba))
+            Box::pin(self.mirror.write_at(buf, lba))
         } else {
             let remainder = BYTES_PER_LBA - partial;
             let zbuf = ZERO_REGION.try_const().unwrap().slice_to(remainder);
             let sglist = vec![buf, zbuf];
-            Box::pin(self.blockdev.writev_at(sglist, lba))
+            Box::pin(self.mirror.writev_at(sglist, lba))
         }
     }
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
-        let onedisk_label = Label {
+        let nullraid_label = Label {
             uuid: self.uuid,
-            child: self.blockdev.uuid()
+            child: self.mirror.uuid()
         };
-        let label = super::Label::OneDisk(onedisk_label);
+        let label = super::Label::NullRaid(nullraid_label);
         labeller.serialize(&label).unwrap();
-        Box::pin(self.blockdev.write_label(labeller))
+        Box::pin(self.mirror.write_label(labeller))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> BoxVdevFut
     {
-        Box::pin(self.blockdev.write_spacemap(sglist, idx, block))
+        Box::pin(self.mirror.write_spacemap(sglist, idx, block))
     }
 }
 
