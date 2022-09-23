@@ -9,14 +9,22 @@ use std::{
     io,
     num::NonZeroU64,
     path::Path,
-    sync::atomic::{AtomicU32, Ordering}
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering}
+    }
 };
 
+use divbuf::{DivBufInaccessible, DivBufMut};
 use futures::{
+    Future,
     TryFutureExt,
     TryStreamExt,
-    stream::FuturesUnordered
+    stream::FuturesUnordered,
+    task::{Context, Poll}
 };
+use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 
 use crate::{
@@ -24,6 +32,8 @@ use crate::{
     types::*,
     vdev::*,
 };
+#[cfg(not(test))]
+use crate::vdev_block::VdevBlockFut;
 #[cfg(test)] use mockall::mock;
 #[cfg(test)]
 use crate::vdev_block::MockVdevBlock as VdevBlock;
@@ -44,7 +54,7 @@ pub struct Label {
 /// mirrors and for children which are spared or being replaced.
 pub struct Mirror {
     /// Underlying block devices.
-    blockdevs: Box<[VdevBlock]>,
+    blockdevs: Arc<Box<[VdevBlock]>>,
 
     /// Wrapping index of the next child to read from during read operations
     // To eliminate the need for atomic divisions, the index is allowed to wrap
@@ -133,7 +143,7 @@ impl Mirror {
             next_read_idx,
             optimum_queue_depth,
             size,
-            blockdevs
+            blockdevs: Arc::new(blockdevs)
         }
     }
 
@@ -173,12 +183,19 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut
-    {
+    pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> ReadAt {
         let idx = self.read_idx();
-        let fut = self.blockdevs[idx].read_at(buf, lba)
-        .map_ok(drop);
-        Box::pin(fut)
+        // TODO: optimize for null-mirror case; reduce clones
+        let dbi = buf.clone_inaccessible();
+        let fut = self.blockdevs[idx].read_at(buf, lba);
+        ReadAt {
+            blockdevs: self.blockdevs.clone(),
+            issued: 1,
+            initial_idx: idx,
+            dbi,
+            lba,
+            fut
+        }
     }
 
     /// Return the index of the next child to read from
@@ -187,21 +204,37 @@ impl Mirror {
             self.blockdevs.len()
     }
 
-    pub fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> BoxVdevFut
+    pub fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> ReadSpacemap
     {
         let ridx = self.read_idx();
-        let fut = self.blockdevs[ridx].read_spacemap(buf, smidx)
-        .map_ok(drop);
-        Box::pin(fut)
+        let dbi = buf.clone_inaccessible();
+        let fut = self.blockdevs[ridx].read_spacemap(buf, smidx);
+        ReadSpacemap {
+            blockdevs: self.blockdevs.clone(),
+            issued: 1,
+            initial_idx: ridx,
+            dbi,
+            smidx,
+            fut
+        }
     }
 
     #[tracing::instrument(skip(self, bufs))]
-    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut
+    pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> ReadvAt
     {
         let idx = self.read_idx();
-        let fut = self.blockdevs[idx].readv_at(bufs, lba)
-        .map_ok(drop);
-        Box::pin(fut)
+        let dbis = bufs.iter()
+            .map(DivBufMut::clone_inaccessible)
+            .collect::<Vec<_>>();
+        let fut = self.blockdevs[idx].readv_at(bufs, lba);
+        ReadvAt {
+            blockdevs: self.blockdevs.clone(),
+            issued: 1,
+            initial_idx: idx,
+            dbis,
+            lba,
+            fut
+        }
     }
 
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
@@ -286,6 +319,158 @@ impl Vdev for Mirror {
 
     fn zones(&self) -> ZoneT {
         self.blockdevs[0].zones()
+    }
+}
+
+/// Future type of [`Mirror::read_at`]
+#[pin_project]
+pub struct ReadAt {
+    blockdevs: Arc<Box<[VdevBlock]>>,
+    /// Reads already issued so far
+    issued: usize,
+    /// Index of the first child read from
+    initial_idx: usize,
+    dbi: DivBufInaccessible,
+    lba: LbaT,
+    #[cfg(not(test))]
+    #[pin]
+    fut: VdevBlockFut,
+    #[cfg(test)]
+    #[pin]
+    fut: BoxVdevFut,
+}
+impl Future for ReadAt {
+    type Output = Result<()>;
+
+    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    {
+        let nchildren = self.blockdevs.len();
+        Poll::Ready(loop {
+            let pinned = self.as_mut().project();
+            let r = futures::ready!(pinned.fut.poll(cx));
+            if r.is_ok() {
+                break Ok(());
+            }
+            if *pinned.issued >= nchildren {
+                // Out of children.  Fail the Read.
+                break r;
+            }
+            // Try a different child.
+            let buf = pinned.dbi.try_mut().unwrap();
+            let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
+            let new_fut = pinned.blockdevs[idx].read_at(buf, *pinned.lba);
+            self.set(ReadAt {
+                blockdevs: self.blockdevs.clone(),
+                issued: self.issued + 1,
+                initial_idx: self.initial_idx,
+                dbi: self.dbi.clone(),
+                lba: self.lba,
+                fut: new_fut
+            });
+        })
+    }
+}
+
+/// Future type of [`Mirror::read_spacemap`]
+#[pin_project]
+pub struct ReadSpacemap {
+    blockdevs: Arc<Box<[VdevBlock]>>,
+    /// Reads already issued so far
+    issued: usize,
+    /// Index of the first child read from
+    initial_idx: usize,
+    dbi: DivBufInaccessible,
+    /// Spacemap index to read
+    smidx: u32,
+    #[cfg(not(test))]
+    #[pin]
+    fut: VdevBlockFut,
+    #[cfg(test)]
+    #[pin]
+    fut: BoxVdevFut,
+}
+impl Future for ReadSpacemap {
+    type Output = Result<()>;
+
+    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    {
+        let nchildren = self.blockdevs.len();
+        Poll::Ready(loop {
+            let pinned = self.as_mut().project();
+            let r = futures::ready!(pinned.fut.poll(cx));
+            if r.is_ok() {
+                break Ok(());
+            }
+            if *pinned.issued >= nchildren {
+                // Out of children.  Fail the Read.
+                break r;
+            }
+            // Try a different child.
+            let buf = pinned.dbi.try_mut().unwrap();
+            let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
+            let new_fut = pinned.blockdevs[idx].read_spacemap(buf,
+                *pinned.smidx);
+            self.set(ReadSpacemap {
+                blockdevs: self.blockdevs.clone(),
+                issued: self.issued + 1,
+                initial_idx: self.initial_idx,
+                dbi: self.dbi.clone(),
+                smidx: self.smidx,
+                fut: new_fut
+            });
+        })
+    }
+}
+
+/// Future type of [`Mirror::readv_at`]
+#[pin_project]
+pub struct ReadvAt {
+    blockdevs: Arc<Box<[VdevBlock]>>,
+    /// Reads already issued so far
+    issued: usize,
+    /// Index of the first child read from
+    initial_idx: usize,
+    dbis: Vec<DivBufInaccessible>,
+    /// Address to read from the lower devices
+    lba: LbaT,
+    #[cfg(not(test))]
+    #[pin]
+    fut: VdevBlockFut,
+    #[cfg(test)]
+    #[pin]
+    fut: BoxVdevFut,
+}
+impl Future for ReadvAt {
+    type Output = Result<()>;
+
+    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    {
+        let nchildren = self.blockdevs.len();
+        Poll::Ready(loop {
+            let pinned = self.as_mut().project();
+            let r = futures::ready!(pinned.fut.poll(cx));
+            if r.is_ok() {
+                break Ok(());
+            }
+            if *pinned.issued >= nchildren {
+                // Out of children.  Fail the Read.
+                break r;
+            }
+            // Try a different child.
+            let bufs = pinned.dbis.iter()
+                .map(|dbi| dbi.try_mut().unwrap())
+                .collect::<Vec<_>>();
+            let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
+            let new_fut = pinned.blockdevs[idx].readv_at(bufs, *pinned.lba);
+            self.set(ReadvAt {
+                blockdevs: self.blockdevs.clone(),
+                issued: self.issued + 1,
+                initial_idx: self.initial_idx,
+                dbis: self.dbis.clone(),
+                lba: self.lba,
+                fut: new_fut
+            });
+        })
     }
 }
 
@@ -414,31 +599,32 @@ mod t {
     mod read_at {
         use super::*;
 
+        fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
+            -> VdevBlock
+        {
+            let mut bd = mock_vdev_block();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd.expect_read_at()
+                .times(times)
+                .withf(|buf, _lba| buf.len() == 4096)
+                .returning(move |_, _| {
+                    total_reads.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(future::ready(r))
+                });
+            bd
+        }
+
         #[test]
         fn basic() {
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let buf = dbs.try_mut().unwrap();
             let total_reads = Arc::new(AtomicU32::new(0));
 
-            let mock = || {
-                let total_reads2 = total_reads.clone();
-                let mut bd = mock_vdev_block();
-                bd.expect_open_zone()
-                    .once()
-                    .with(eq(0))
-                    .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd.expect_read_at()
-                    .withf(|buf, lba|
-                        buf.len() == 4096
-                        && *lba == 3
-                ).returning(move |_, _| {
-                    total_reads2.fetch_add(1, Ordering::Relaxed);
-                    Box::pin(future::ok::<(), Error>(()))
-                });
-                bd
-            };
-            let bd0 = mock();
-            let bd1 = mock();
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(0, Ok(()), total_reads.clone());
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.read_at(buf, 3).now_or_never().unwrap().unwrap();
@@ -449,24 +635,11 @@ mod t {
         #[test]
         fn distributes() {
             let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let total_reads = Arc::new(AtomicU32::new(0));
 
-            let mock = || {
-                let mut bd = mock_vdev_block();
-                bd.expect_open_zone()
-                    .once()
-                    .with(eq(0))
-                    .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd.expect_read_at()
-                    .times(3)
-                    .withf(|buf, _lba| buf.len() == 4096)
-                    .returning(|_, _| {
-                        Box::pin(future::ok::<(), Error>(()))
-                    });
-                bd
-            };
-            let bd0 = mock();
-            let bd1 = mock();
-            let bd2 = mock();
+            let bd0 = mock(3, Ok(()), total_reads.clone());
+            let bd1 = mock(3, Ok(()), total_reads.clone());
+            let bd2 = mock(3, Ok(()), total_reads);
             let uuid = Uuid::new_v4();
             let mirror = Mirror::new(uuid, vec![bd0, bd1, bd2].into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
@@ -475,10 +648,64 @@ mod t {
                 mirror.read_at(buf, i).now_or_never().unwrap().unwrap();
             }
         }
+
+        /// If a read returns EIO, Mirror should retry it on another child.
+        #[test]
+        fn recoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let buf = dbs.try_mut().unwrap();
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Ok(()), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
+                "Need to swap the disks' return values to fix the test");
+            mirror.read_at(buf, 3).now_or_never().unwrap().unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+
+        /// If all children fail a read, it should be passed upstack
+        #[test]
+        fn unrecoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+
+            let buf = dbs.try_mut().unwrap();
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let r = mirror.read_at(buf, 3).now_or_never().unwrap();
+            assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
     }
 
     mod read_spacemap {
         use super::*;
+
+        fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
+            -> VdevBlock
+        {
+            let mut bd = mock_vdev_block();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd.expect_read_spacemap()
+                .times(times)
+                .withf(|buf, idx|
+                    buf.len() == 4096
+                    && *idx == 1
+                ).returning(move |_, _| {
+                    total_reads.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(future::ready(r))
+                });
+            bd
+        }
 
         #[test]
         fn basic() {
@@ -486,34 +713,72 @@ mod t {
             let buf = dbs.try_mut().unwrap();
             let total_reads = Arc::new(AtomicU32::new(0));
 
-            let mock = || {
-                let total_reads2 = total_reads.clone();
-                let mut bd = mock_vdev_block();
-                bd.expect_open_zone()
-                    .once()
-                    .with(eq(0))
-                    .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd.expect_read_spacemap()
-                    .withf(|buf, idx|
-                        buf.len() == 4096
-                        && *idx == 1
-                ).returning(move |_, _| {
-                    total_reads2.fetch_add(1, Ordering::Relaxed);
-                    Box::pin(future::ok::<(), Error>(()))
-                });
-                bd
-            };
-            let bd0 = mock();
-            let bd1 = mock();
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(0, Ok(()), total_reads.clone());
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.read_spacemap(buf, 1).now_or_never().unwrap().unwrap();
             assert_eq!(total_reads.load(Ordering::Relaxed), 1);
         }
+
+        /// If a read returns EIO, Mirror should retry it on another child.
+        #[test]
+        fn recoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let buf = dbs.try_mut().unwrap();
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Ok(()), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
+                "Need to swap the disks' return values to fix the test");
+            mirror.read_spacemap(buf, 1).now_or_never().unwrap().unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+
+        /// If all children fail a read, it should be passed upstack
+        #[test]
+        fn unrecoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+
+            let buf = dbs.try_mut().unwrap();
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let r = mirror.read_spacemap(buf, 1).now_or_never().unwrap();
+            assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
     }
 
     mod readv_at {
         use super::*;
+
+        fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
+            -> VdevBlock
+        {
+            let mut bd = mock_vdev_block();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd.expect_readv_at()
+                .times(times)
+                .withf(|sglist, lba|
+                    sglist.len() == 1
+                    && sglist[0].len() == 4096
+                    && *lba == 3
+                ).returning(move |_, _| {
+                    total_reads.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(future::ready(r))
+                });
+            bd
+        }
 
         #[test]
         fn basic() {
@@ -522,30 +787,48 @@ mod t {
             let sglist = vec![buf];
             let total_reads = Arc::new(AtomicU32::new(0));
 
-            let mock = || {
-                let total_reads2 = total_reads.clone();
-                let mut bd = mock_vdev_block();
-                bd.expect_open_zone()
-                    .once()
-                    .with(eq(0))
-                    .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd.expect_readv_at()
-                    .withf(|sglist, lba|
-                        sglist.len() == 1
-                        && sglist[0].len() == 4096
-                        && *lba == 3
-                ).returning(move |_, _| {
-                    total_reads2.fetch_add(1, Ordering::Relaxed);
-                    Box::pin(future::ok::<(), Error>(()))
-                });
-                bd
-            };
-            let bd0 = mock();
-            let bd1 = mock();
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(0, Ok(()), total_reads.clone());
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.readv_at(sglist, 3).now_or_never().unwrap().unwrap();
             assert_eq!(total_reads.load(Ordering::Relaxed), 1);
+        }
+
+        /// If a read returns EIO, Mirror should retry it on another child.
+        #[test]
+        fn recoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let buf = dbs.try_mut().unwrap();
+            let sglist = vec![buf];
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Ok(()), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
+                "Need to swap the disks' return values to fix the test");
+            mirror.readv_at(sglist, 3).now_or_never().unwrap().unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+
+        /// If all children fail a read, it should be passed upstack
+        #[test]
+        fn unrecoverable_eio() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+
+            let buf = dbs.try_mut().unwrap();
+            let sglist = vec![buf];
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let r = mirror.readv_at(sglist, 3).now_or_never().unwrap();
+            assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
         }
     }
 
