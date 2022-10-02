@@ -250,15 +250,15 @@ mod basic {
 
 /// Tests that use a device file
 mod dev {
+    use crate::require_root;
     use bfffs_core::vdev_file::*;
     use divbuf::DivBufShared;
-    use nix::unistd::Uid;
+    use function_name::named;
     use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
     use std::{
         ffi::OsStr,
         fs,
-        io::{Read, Seek, SeekFrom},
+        io::{self, Read, Seek, SeekFrom},
         num::NonZeroU64,
         ops::Deref,
         os::unix::ffi::OsStrExt,
@@ -277,61 +277,52 @@ mod dev {
         }
     }
 
-    type Harness = Option<(VdevFile, Md)>;
-
-    #[fixture]
-    fn harness() -> Harness {
-        if Uid::current().is_root() {
-            let output = Command::new("mdconfig")
-                .args(["-a", "-t",  "swap", "-s", "64m"])
-                .output()
-                .expect("failed to allocate md(4) device");
-            // Strip the trailing "\n"
-            let l = output.stdout.len() - 1;
-            let mddev = OsStr::from_bytes(&output.stdout[0..l]);
-            let pb = Path::new("/dev").join(mddev);
-            let zones_per_lba = NonZeroU64::new(8192); // 32 MB zones
-            let vd = VdevFile::create(pb.clone(), zones_per_lba).unwrap();
-            Some((vd, Md(pb)))
-        } else {
-            None
-        }
+    fn harness() -> io::Result<(VdevFile, Md)> {
+        let output = Command::new("mdconfig")
+            .args(["-a", "-t",  "swap", "-s", "64m"])
+            .output()?;
+        // Strip the trailing "\n"
+        let l = output.stdout.len() - 1;
+        let mddev = OsStr::from_bytes(&output.stdout[0..l]);
+        let pb = Path::new("/dev").join(mddev);
+        let zones_per_lba = NonZeroU64::new(8192); // 32 MB zones
+        let vd = VdevFile::create(pb.clone(), zones_per_lba).unwrap();
+        Ok((vd, Md(pb)))
     }
 
     /// For devices that support TRIM, erase_zone should do it.
-    #[rstest]
+    #[named]
     #[tokio::test]
-    async fn erase_zone(harness: Harness) {
-        if let Some((mut vd, md)) = harness {
-            let mut rbuf = vec![0u8; 4096];
-            let mut f = t!(fs::File::open(md.0.as_path()));
+    async fn erase_zone() {
+        require_root!();
 
-            // First, write a record
-            {
-                let dbs = DivBufShared::from(vec![42u8; 4096]);
-                let wbuf = dbs.try_const().unwrap();
-                vd.write_at(wbuf.clone(), 10).await.unwrap();
-                f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
-                t!(f.read_exact(&mut rbuf));
-                assert_eq!(rbuf, wbuf.deref().deref());
-            }
+        let (mut vd, md) = harness().unwrap();
+        let mut rbuf = vec![0u8; 4096];
+        let mut f = t!(fs::File::open(&md.0));
 
-            // Actually erase the zone
-            vd.erase_zone(0).await.unwrap();
-
-            // verify that it got erased
-            {
-                let expected = vec![0u8; 4096];
-                f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
-                t!(f.read_exact(&mut rbuf));
-                assert_eq!(rbuf, expected);
-            }
-
-            // Must drop vdev before md
-            drop(vd);
-        } else {
-            println!("This test requires root privileges");
+        // First, write a record
+        {
+            let dbs = DivBufShared::from(vec![42u8; 4096]);
+            let wbuf = dbs.try_const().unwrap();
+            vd.write_at(wbuf.clone(), 10).await.unwrap();
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
+            t!(f.read_exact(&mut rbuf));
+            assert_eq!(rbuf, wbuf.deref().deref());
         }
+
+        // Actually erase the zone
+        vd.erase_zone(0).await.unwrap();
+
+        // verify that it got erased
+        {
+            let expected = vec![0u8; 4096];
+            f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
+            t!(f.read_exact(&mut rbuf));
+            assert_eq!(rbuf, expected);
+        }
+
+        // Must drop vdev before md
+        drop(vd);
     }
 }
 

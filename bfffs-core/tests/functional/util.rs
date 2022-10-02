@@ -12,6 +12,22 @@ use bfffs_core::{
     pool::Pool,
 };
 
+#[macro_export]
+macro_rules! require_root {
+    () => {
+        if ! ::nix::unistd::Uid::current().is_root() {
+            use ::std::io::Write;
+
+            let stderr = ::std::io::stderr();
+            let mut handle = stderr.lock();
+            writeln!(handle, "{} requires root privileges.  Skipping test.",
+                concat!(::std::module_path!(), "::", function_name!()))
+                .unwrap();
+            return;
+        }
+    }
+}
+
 /// Helper to create a fresh pool
 #[derive(Debug)]
 pub struct PoolBuilder {

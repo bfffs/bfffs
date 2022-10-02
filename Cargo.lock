@@ -126,7 +126,7 @@ dependencies = [
  "clap",
  "divbuf",
  "freebsd-libgeom",
- "function_name",
+ "function_name 0.3.0",
  "fuse3",
  "futures",
  "lalrpop",
@@ -165,6 +165,7 @@ dependencies = [
  "downcast",
  "enum-primitive-derive",
  "fixedbitset",
+ "function_name 0.2.3",
  "futures",
  "futures-locks",
  "futures-test",
@@ -723,11 +724,31 @@ dependencies = [
 
 [[package]]
 name = "function_name"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bef632c665dc6e2b99ffa4d913f7160bd902c4d3e4cb732d81dc3d221f848512"
+dependencies = [
+ "function_name-proc-macro 0.2.3",
+]
+
+[[package]]
+name = "function_name"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1ab577a896d09940b5fe12ec5ae71f9d8211fff62c919c03a3750a9901e98a7"
 dependencies = [
- "function_name-proc-macro",
+ "function_name-proc-macro 0.3.0",
+]
+
+[[package]]
+name = "function_name-proc-macro"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "569d2238870f92cff64fc810013b61edaf446ebcfba36b649b96bc5b4078328a"
+dependencies = [
+ "proc-macro-crate 0.1.5",
+ "quote",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -1284,7 +1305,7 @@ version = "0.5.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
 dependencies = [
- "proc-macro-crate",
+ "proc-macro-crate 1.3.1",
  "proc-macro2",
  "quote",
  "syn 1.0.109",
@@ -1484,6 +1505,15 @@ dependencies = [
  "diff",
  "output_vt100",
  "yansi",
+]
+
+[[package]]
+name = "proc-macro-crate"
+version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d6ea3c4595b96363c13943497db34af4460fb474a95c43f4446ad341b8c9785"
+dependencies = [
+ "toml",
 ]
 
 [[package]]
@@ -2068,6 +2098,15 @@ dependencies = [
  "filedesc",
  "libc",
  "tokio",
+]
+
+[[package]]
+name = "toml"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4f7f0dd8d50a853a531c426359045b1998f04219d88799810762cd4ad314234"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
