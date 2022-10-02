@@ -250,44 +250,23 @@ mod basic {
 
 /// Tests that use a device file
 mod dev {
-    use crate::require_root;
+    use crate::{require_root, Md};
     use bfffs_core::vdev_file::*;
     use divbuf::DivBufShared;
     use function_name::named;
     use pretty_assertions::assert_eq;
     use std::{
-        ffi::OsStr,
         fs,
         io::{self, Read, Seek, SeekFrom},
         num::NonZeroU64,
         ops::Deref,
-        os::unix::ffi::OsStrExt,
-        path::{Path, PathBuf},
-        process::Command
     };
 
-    struct Md(PathBuf);
-    impl Drop for Md {
-        fn drop(&mut self) {
-            Command::new("mdconfig")
-                .args(["-d", "-u"])
-                .arg(&self.0)
-                .output()
-                .expect("failed to deallocate md(4) device");
-        }
-    }
-
     fn harness() -> io::Result<(VdevFile, Md)> {
-        let output = Command::new("mdconfig")
-            .args(["-a", "-t",  "swap", "-s", "64m"])
-            .output()?;
-        // Strip the trailing "\n"
-        let l = output.stdout.len() - 1;
-        let mddev = OsStr::from_bytes(&output.stdout[0..l]);
-        let pb = Path::new("/dev").join(mddev);
+        let md = Md::new()?;
         let zones_per_lba = NonZeroU64::new(8192); // 32 MB zones
-        let vd = VdevFile::create(pb.clone(), zones_per_lba).unwrap();
-        Ok((vd, Md(pb)))
+        let vd = VdevFile::create(md.as_path(), zones_per_lba).unwrap();
+        Ok((vd, md))
     }
 
     /// For devices that support TRIM, erase_zone should do it.

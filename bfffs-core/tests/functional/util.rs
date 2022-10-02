@@ -1,6 +1,10 @@
 use std::{
+    ffi::OsStr,
+    io,
     num::NonZeroU64,
-    path::PathBuf
+    os::unix::ffi::OsStrExt,
+    path::{PathBuf, Path},
+    process::Command
 };
 
 use itertools::Itertools;
@@ -25,6 +29,34 @@ macro_rules! require_root {
                 .unwrap();
             return;
         }
+    }
+}
+
+/// An md(4) device.
+pub struct Md(pub PathBuf);
+impl Md {
+    pub fn new() -> io::Result<Self> {
+        let output = Command::new("mdconfig")
+            .args(["-a", "-t",  "swap", "-s", "64m"])
+            .output()?;
+        // Strip the trailing "\n"
+        let l = output.stdout.len() - 1;
+        let mddev = OsStr::from_bytes(&output.stdout[0..l]);
+        let pb = Path::new("/dev").join(mddev);
+        Ok(Self(pb))
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.0.as_path()
+    }
+}
+impl Drop for Md {
+    fn drop(&mut self) {
+        Command::new("mdconfig")
+            .args(["-d", "-u"])
+            .arg(&self.0)
+            .output()
+            .expect("failed to deallocate md(4) device");
     }
 }
 

@@ -29,4 +29,4 @@ mod util;
 mod vdev_block;
 mod vdev_file;
 
-use util::PoolBuilder;
+use util::{Md, PoolBuilder};
