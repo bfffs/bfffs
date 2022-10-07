@@ -36,7 +36,7 @@ default-features = true
 features=  [ "cargo", "derive", "wrap_help"]
 
 [dependencies.tracing-subscriber]
-version = "0.2.15"
+version = "0.3.16"
 default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 
@@ -46,7 +46,7 @@ lalrpop = "0.19.7"
 [dev-dependencies]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
-freebsd-libgeom = "0.2.0"
+freebsd-libgeom = "0.2.1"
 function_name = "0.2.0"
 mockall = "0.11.0"
 nix = { version = "0.25.0", default-features = false, features = ["mount", "process", "signal", "user"] }

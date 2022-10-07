@@ -19,7 +19,7 @@ memoffset = "0.5.1"
 tokio = { version = "1.10.0", features = ["rt", "rt-multi-thread", "sync", "time"] }
 
 [dependencies.tracing-subscriber]
-version = "0.2.15"
+version = "0.3.16"
 default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 
