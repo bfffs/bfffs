@@ -435,10 +435,10 @@ impl VdevRaid {
                 (col, disk_lba)
             };
             let disk = loc.disk as usize;
-            if start_lbas[disk as usize] == SENTINEL {
+            if start_lbas[disk] == SENTINEL {
                 // First chunk assigned to this disk
-                start_lbas[disk as usize] = disk_lba;
-            } else if next_lbas[disk as usize] < disk_lba {
+                start_lbas[disk] = disk_lba;
+            } else if next_lbas[disk] < disk_lba {
                 // There must've been a parity chunk on this disk, which we
                 // skipped.  Fire off a readv_at and keep going
                 let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
@@ -449,8 +449,8 @@ impl VdevRaid {
                 ));
                 start_lbas[disk] = disk_lba;
             }
-            sglists[disk as usize].push(col);
-            next_lbas[disk as usize] = disk_lba + self.chunksize;
+            sglists[disk].push(col);
+            next_lbas[disk] = disk_lba + self.chunksize;
         }
 
         futs.extend(multizip((self.mirrors.iter(),
@@ -471,7 +471,7 @@ impl VdevRaid {
     fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let m = self.codec.stripesize() as usize - f;
 
         let data: Vec<IoVecMut> = if lba % self.chunksize == 0 {
             buf.into_chunks(col_len).collect()
@@ -499,7 +499,7 @@ impl VdevRaid {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
-        let m = k - f as usize;
+        let m = k - f;
         let n = self.mirrors.len();
         let chunks = buf.len() / col_len;
         let stripes = chunks / m;
@@ -519,18 +519,18 @@ impl VdevRaid {
                 let end = (chunk + 1) * col_len;
                 let col = buf.slice(begin, end);
                 data_refs[i] = col.as_ptr();
-                for p in 0..f {
-                    let begin = s * col_len;
-                    debug_assert!(begin + col_len <= parity[p].capacity());
-                    // Safe because the assertion passed
-                    unsafe {
-                        parity_refs[p] = parity[p].as_mut_ptr().add(begin);
-                    }
+            }
+            for p in 0..f {
+                let begin = s * col_len;
+                debug_assert!(begin + col_len <= parity[p].capacity());
+                // Safe because the assertion passed
+                unsafe {
+                    parity_refs[p] = parity[p].as_mut_ptr().add(begin);
                 }
             }
             // Safe because the above assertion passed
             unsafe {
-                self.codec.encode(col_len, &data_refs, &parity_refs);
+                self.codec.encode(col_len, &data_refs, &mut parity_refs);
             }
         }
 
@@ -588,7 +588,7 @@ impl VdevRaid {
     fn write_at_one(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let m = self.codec.stripesize() as usize - f;
 
         let mut parity = (0..f)
             .map(|_| Vec::<u8>::with_capacity(col_len))
@@ -601,13 +601,13 @@ impl VdevRaid {
                 .collect();
             debug_assert_eq!(dcols.len(), m);
 
-            let prefs = parity.iter_mut()
+            let mut prefs = parity.iter_mut()
                 .map(|v| v.as_mut_ptr())
                 .collect::<Vec<_>>();
 
             // Safe because each parity column is sized for `col_len`
             unsafe {
-                self.codec.encode(col_len, &drefs, &prefs);
+                self.codec.encode(col_len, &drefs, &mut prefs);
             }
         }
         let pw = parity.into_iter()
@@ -639,7 +639,7 @@ impl VdevRaid {
     {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let m = self.codec.stripesize() as usize - f;
 
         let mut dcols = Vec::<SGList>::with_capacity(m);
         let mut dcursor = SGCursor::from(&buf);
@@ -979,7 +979,7 @@ impl VdevRaidApi for VdevRaid {
     {
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
-        let m = self.codec.stripesize() as usize - f as usize;
+        let m = self.codec.stripesize() as usize - f;
         let stripe_len = col_len * m;
         debug_assert_eq!(zone, self.lba2zone(lba).unwrap(),
             "Write to wrong zone");

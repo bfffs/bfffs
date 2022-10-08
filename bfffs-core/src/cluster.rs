@@ -551,7 +551,7 @@ impl Display for FreeSpaceMap {
         let max_txg: u32 = cmp::max(1, (0..self.zones.len())
             .filter(|zid| !self.is_empty(*zid as ZoneT))
             .map(|zid| {
-                let z = &self.zones[zid as usize];
+                let z = &self.zones[zid];
                 if self.is_open(zid as ZoneT) {
                     z.txgs.start
                 } else {

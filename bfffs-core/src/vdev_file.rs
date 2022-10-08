@@ -146,7 +146,7 @@ pub struct VdevFile {
 impl Vdev for VdevFile {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= self.reserved_space() {
-            Some((lba / (self.lbas_per_zone as u64)) as ZoneT)
+            Some((lba / self.lbas_per_zone) as ZoneT)
         } else {
             None
         }
@@ -480,7 +480,7 @@ impl VdevFile {
     }
 
     fn reserved_space(&self) -> LbaT {
-        LABEL_COUNT * (LABEL_LBAS as u64 + self.spacemap_space)
+        LABEL_COUNT * (LABEL_LBAS + self.spacemap_space)
     }
 
     /// Size of a single serialized spacemap, in LBAs, rounded up.

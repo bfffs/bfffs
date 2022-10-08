@@ -36,13 +36,20 @@ pub const fn version() -> u32 {
 ///
 /// Caller must ensure that the `data` and `parity` fields are of sufficient
 /// size and point to allocated memory.  `parity` need not be initialized.
+// Note:
+// * `data`'s type can't be `&[&[u8]]`, because the memory layout of `&[u8]`
+//   is a fat pointer, not a plain pointer, and we don't want to allocate new
+//   storage here for an array of pointers.  That can be done more cheaply
+//   upstack.
+// * `parity`'s type can't be &mut[&mut [u8]] for the same reason, and also
+//   because we want to operate on potentially uninitialized parity arrays.
 pub unsafe fn ec_encode_data(
     len: usize,
     k: u32,
     f: u32,
     gftbls: &[u8],
     data: &[*const u8],
-    parity: &[*mut u8],
+    parity: &mut [*mut u8],
 ) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), k as usize);
@@ -93,7 +100,7 @@ pub unsafe fn ec_encode_data_update(
     vec_i: u32,
     gftbls: &[u8],
     data: &[u8],
-    parity: &[*mut u8],
+    parity: &mut [*mut u8],
 ) {
     assert_eq!(gftbls.len(), (32 * f * k) as usize);
     assert_eq!(data.len(), len);

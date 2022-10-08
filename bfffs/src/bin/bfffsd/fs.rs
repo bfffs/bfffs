@@ -968,7 +968,7 @@ impl Filesystem for FuseFs {
             .expect("setattr before lookup or after forget")
             .handle();
         let attr = fs::SetAttr {
-            perm:      set_attr.mode.map(|m| (m & 0o7777) as u16),
+            perm:      set_attr.mode.map(|m| m & 0o7777),
             uid:       set_attr.uid,
             gid:       set_attr.gid,
             size:      set_attr.size,
