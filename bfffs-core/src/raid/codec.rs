@@ -111,7 +111,7 @@ impl Codec {
     ///                     with the original data of the missing columns.
     /// - `erasures`:       Bitmap of the column indices of the missing columns.
     pub unsafe fn decode(&self, len: usize, surviving: &[*const u8],
-                       missing: &[*mut u8], erasures: &FixedBitSet) {
+                       missing: &mut [*mut u8], erasures: &FixedBitSet) {
         let k = self.m - self.f;
         let errs = erasures.count_ones(..k as usize) as u32;
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
@@ -132,7 +132,7 @@ impl Codec {
     /// Caller must ensure that the `data` and `parity` fields are of sufficient
     /// size and point to allocated memory.  `parity` need not be initialized.
     pub unsafe fn encode(&self, len: usize, data: &[*const u8],
-                         parity: &[*mut u8])
+                         parity: &mut [*mut u8])
     {
         let k = self.m - self.f;
         isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
@@ -173,10 +173,10 @@ impl Codec {
                            (iovec.as_ptr(), iovec)
                        })
                        .unzip();
-            let prefs: Vec<*mut u8> = parity.iter_mut()
+            let mut prefs: Vec<*mut u8> = parity.iter_mut()
                 .map(|iov| unsafe{iov.add(l)})
                 .collect();
-            self.encode(ncl, &refs, &prefs);
+            self.encode(ncl, &refs, &mut prefs);
             l += ncl;
         }
     }
@@ -199,7 +199,7 @@ impl Codec {
     /// Caller must ensure that the `parity` field is of sufficient size and
     /// points to allocated memory.  It need not be initialized.
     pub unsafe fn encode_update(&self, len: usize, data: &[u8],
-        parity: &[*mut u8], data_idx: u32)
+        parity: &mut [*mut u8], data_idx: u32)
     {
         let k = self.m - self.f;
         isa_l::ec_encode_data_update(len, k, self.f, data_idx, &self.enc_tables,
@@ -324,7 +324,7 @@ mod tests {
             for x in parity.iter_mut().take(f as usize) {
                 output.push(x.as_mut_ptr());
             }
-            unsafe{ codec.encode(len, &input, &output); }
+            unsafe{ codec.encode(len, &input, &mut output); }
 
             // Iterate over all possible failure combinations
             for erasures_vec in (0..m).combinations(f as usize) {
@@ -356,7 +356,7 @@ mod tests {
                 for x in reconstructed.iter_mut().take(data_errs as usize) {
                     decoded.push(x.as_mut_ptr());
                 }
-                unsafe { codec.decode(len, &surviving, &decoded, &erasures); }
+                unsafe { codec.decode(len, &surviving, &mut decoded, &erasures); }
 
                 // Finally, compare
                 for i in 0..(data_errs as usize) {
@@ -384,7 +384,7 @@ mod tests {
             d1[i] = rng.gen();
         }
         unsafe {
-            codec.encode(len, &[d0.as_ptr(), d1.as_ptr()], &[p0.as_mut_ptr()]);
+            codec.encode(len, &[d0.as_ptr(), d1.as_ptr()], &mut [p0.as_mut_ptr()]);
         }
 
         // Now delete column 0 and rebuild
@@ -392,7 +392,7 @@ mod tests {
         let mut erasures = FixedBitSet::with_capacity(3);
         erasures.insert(0);
         unsafe {
-            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
+            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &mut [r0.as_mut_ptr()],
                          &erasures);
         }
 
@@ -417,7 +417,7 @@ mod tests {
         }
         unsafe {
             codec.encode(len, &[da0.as_ptr(), da1.as_ptr()],
-                &[pa0.as_mut_ptr()]);
+                &mut [pa0.as_mut_ptr()]);
         }
 
         // Next, split the same data into discontiguous SGLists
@@ -466,8 +466,8 @@ mod tests {
             d1[i] = rng.gen();
         }
         unsafe {
-            codec.encode_update(len, &d0, &[p0.as_mut_ptr()], 0);
-            codec.encode_update(len, &d1, &[p0.as_mut_ptr()], 1);
+            codec.encode_update(len, &d0, &mut [p0.as_mut_ptr()], 0);
+            codec.encode_update(len, &d1, &mut [p0.as_mut_ptr()], 1);
         }
 
         // Now delete column 0 and rebuild
@@ -475,7 +475,7 @@ mod tests {
         let mut erasures = FixedBitSet::with_capacity(3);
         erasures.insert(0);
         unsafe {
-            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &[r0.as_mut_ptr()],
+            codec.decode(len, &[d1.as_ptr(), p0.as_ptr()], &mut [r0.as_mut_ptr()],
                 &erasures);
         }
 

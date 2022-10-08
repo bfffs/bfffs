@@ -519,18 +519,18 @@ impl VdevRaid {
                 let end = (chunk + 1) * col_len;
                 let col = buf.slice(begin, end);
                 data_refs[i] = col.as_ptr();
-                for p in 0..f {
-                    let begin = s * col_len;
-                    debug_assert!(begin + col_len <= parity[p].capacity());
-                    // Safe because the assertion passed
-                    unsafe {
-                        parity_refs[p] = parity[p].as_mut_ptr().add(begin);
-                    }
+            }
+            for p in 0..f {
+                let begin = s * col_len;
+                debug_assert!(begin + col_len <= parity[p].capacity());
+                // Safe because the assertion passed
+                unsafe {
+                    parity_refs[p] = parity[p].as_mut_ptr().add(begin);
                 }
             }
             // Safe because the above assertion passed
             unsafe {
-                self.codec.encode(col_len, &data_refs, &parity_refs);
+                self.codec.encode(col_len, &data_refs, &mut parity_refs);
             }
         }
 
@@ -601,13 +601,13 @@ impl VdevRaid {
                 .collect();
             debug_assert_eq!(dcols.len(), m);
 
-            let prefs = parity.iter_mut()
+            let mut prefs = parity.iter_mut()
                 .map(|v| v.as_mut_ptr())
                 .collect::<Vec<_>>();
 
             // Safe because each parity column is sized for `col_len`
             unsafe {
-                self.codec.encode(col_len, &drefs, &prefs);
+                self.codec.encode(col_len, &drefs, &mut prefs);
             }
         }
         let pw = parity.into_iter()
