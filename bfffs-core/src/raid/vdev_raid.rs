@@ -23,7 +23,7 @@ use std::{
     mem,
     num::NonZeroU64,
     ptr,
-    sync::RwLock
+    sync::{Arc, RwLock}
 };
 use serde_derive::{Deserialize, Serialize};
 use super::{
@@ -397,7 +397,7 @@ impl VdevRaid {
     }
 
     /// Read more than one whole stripe
-    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
+    fn read_at_multi(self: Arc<Self>, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.mirrors.len();
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
@@ -465,7 +465,7 @@ impl VdevRaid {
     }
 
     /// Read a (possibly improper) subset of one stripe
-    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
+    fn read_at_one(self: Arc<Self>, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f;
@@ -891,7 +891,7 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, 0)
     }
 
-    fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at(self: Arc<Self>, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as LbaT;
         assert_eq!(buf.len() % BYTES_PER_LBA, 0, "reads must be LBA-aligned");
@@ -1470,10 +1470,10 @@ fn read_at_one_stripe() {
         }).return_once(|_, _|  Box::pin( future::ok::<(), Error>(())));
     mirrors.push(m2);
 
-    let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
-                                  Uuid::new_v4(),
-                                  LayoutAlgorithm::PrimeS,
-                                  mirrors.into_boxed_slice());
+    let vdev_raid = Arc::new(
+        VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(), LayoutAlgorithm::PrimeS,
+                      mirrors.into_boxed_slice())
+    );
     let dbs = DivBufShared::from(vec![0u8; 16384]);
     let rbuf = dbs.try_mut().unwrap();
     vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();

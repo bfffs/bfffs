@@ -950,7 +950,7 @@ impl Cluster {
     /// Asynchronously read from the cluster
     pub fn read(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut
     {
-        self.vdev.read_at(buf, lba)
+        self.vdev.clone().read_at(buf, lba)
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.

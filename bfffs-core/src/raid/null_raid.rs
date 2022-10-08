@@ -1,5 +1,10 @@
 // vim: tw=80
 
+use std::{
+    collections::BTreeMap,
+    sync::Arc
+};
+
 use async_trait::async_trait;
 use crate::{
     BYTES_PER_LBA,
@@ -10,7 +15,6 @@ use crate::{
 };
 use futures::future;
 use mockall_double::double;
-use std::collections::BTreeMap;
 use serde_derive::{Deserialize, Serialize};
 use super::{
     vdev_raid_api::*,
@@ -117,7 +121,7 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.open_zone(limits.0))
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         Box::pin(self.mirror.read_at(buf, lba))
     }
 

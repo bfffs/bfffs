@@ -68,13 +68,14 @@ mod vdev_raid {
     use std::{
         fs,
         num::NonZeroU64,
-        path::PathBuf
+        path::PathBuf,
+        sync::Arc
     };
     use super::super::super::*;
     use tempfile::{Builder, TempDir};
 
     struct Harness {
-        vdev: VdevRaid,
+        vdev: Arc<VdevRaid>,
         _tempdir: TempDir,
         n: i16,
         k: i16,
@@ -93,7 +94,7 @@ mod vdev_raid {
             Mirror::create(&[fname], None).unwrap()
         }).collect::<Vec<_>>();
         let cs = NonZeroU64::new(chunksize);
-        let vdev = VdevRaid::create(cs, k, f, mirrors);
+        let vdev = Arc::new(VdevRaid::create(cs, k, f, mirrors));
         vdev.open_zone(0).await
             .expect("open_zone");
         Harness { vdev, _tempdir: tempdir, n, k, f, chunksize }
@@ -137,7 +138,7 @@ mod vdev_raid {
     }
 
     async fn write_read(
-        vr: &VdevRaid,
+        vr: Arc<VdevRaid>,
         wbufs: Vec<IoVec>,
         rbufs: Vec<IoVecMut>,
         zone: ZoneT,
@@ -157,7 +158,7 @@ mod vdev_raid {
             rbufs.into_iter()
             .map(|rb| {
                 let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                let fut = vr.read_at(rb, read_lba);
+                let fut = vr.clone().read_at(rb, read_lba);
                 read_lba += lbas;
                 fut
             }).collect::<FuturesUnordered<_>>()
@@ -167,7 +168,7 @@ mod vdev_raid {
     }
 
     async fn write_read0(
-        vr: &VdevRaid,
+        vr: Arc<VdevRaid>,
         wbufs: Vec<IoVec>,
         rbufs: Vec<IoVecMut>)
     {
@@ -176,7 +177,7 @@ mod vdev_raid {
     }
 
     async fn write_read_n_stripes(
-        vr: &VdevRaid,
+        vr: Arc<VdevRaid>,
         chunksize: LbaT,
         k: i16,
         f: i16,
@@ -190,7 +191,8 @@ mod vdev_raid {
     }
 
     async fn writev_read_n_stripes(
-        vr: &VdevRaid, chunksize: LbaT,
+        vr: Arc<VdevRaid>,
+        chunksize: LbaT,
         k: i16,
         f: i16,
         s: usize)
@@ -222,7 +224,7 @@ mod vdev_raid {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_begin = rbuf.split_to(BYTES_PER_LBA);
             let rbuf_middle = rbuf.split_to(BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf.clone()],
+            write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf_begin, rbuf_middle]).await;
         }
         assert_eq!(&wbuf[..],
@@ -254,7 +256,7 @@ mod vdev_raid {
             // rbuf5 will get one and a half chunks
             // rbuf6 will get the last half chunk
             let rbuf6 = rbuf5.split_off(3 * cs / 2 * BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf.clone()],
+            write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6])
             .await;
         }
@@ -273,7 +275,7 @@ mod vdev_raid {
             let rbuf_b = rbuf_m.split_to(BYTES_PER_LBA);
             let l = rbuf_m.len();
             let rbuf_e = rbuf_m.split_off(l - BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf.clone()],
+            write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf_b, rbuf_m, rbuf_e]).await;
         }
         assert_eq!(wbuf, dbsr.try_const().unwrap());
@@ -288,7 +290,7 @@ mod vdev_raid {
         let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let rbuf = dbsr.try_mut().unwrap();
-        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf]).await;
+        write_read0(h.vdev, vec![wbuf_short], vec![rbuf]).await;
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -302,14 +304,14 @@ mod vdev_raid {
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let mut rbuf = dbsr.try_mut().unwrap();
         let rbuf_r = rbuf.split_off(BYTES_PER_LBA);
-        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_r]).await;
+        write_read0(h.vdev, vec![wbuf_short], vec![rbuf_r]).await;
     }
 
     #[apply(raid_configs)]
     #[tokio::test]
     #[awt]
     async fn write_read_one_stripe(#[future] h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1).await;
+        write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 1).await;
     }
 
     // read_at_one/write_at_one with a large configuration
@@ -317,14 +319,14 @@ mod vdev_raid {
     #[tokio::test]
     #[awt]
     async fn write_read_one_stripe_jumbo(#[future] h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1).await;
+        write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 1).await;
     }
 
     #[apply(raid_configs)]
     #[tokio::test]
     #[awt]
     async fn write_read_two_stripes(#[future] h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2).await;
+        write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 2).await;
     }
 
     // read_at_multi/write_at_multi with a large configuration
@@ -332,7 +334,7 @@ mod vdev_raid {
     #[tokio::test]
     #[awt]
     async fn write_read_two_stripes_jumbo(#[future] h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2).await;
+        write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 2).await;
     }
 
     // Write at least three rows to the layout.  Writing three rows guarantees
@@ -345,7 +347,7 @@ mod vdev_raid {
     async fn write_read_three_rows(#[future] h: Harness) {
         let rows = 3;
         let stripes = div_roundup((rows * h.n) as usize, h.k as usize);
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, stripes).await;
+        write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, stripes).await;
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -356,7 +358,7 @@ mod vdev_raid {
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
+        write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
@@ -378,7 +380,7 @@ mod vdev_raid {
             let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
+            write_read0(h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
@@ -392,7 +394,7 @@ mod vdev_raid {
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
+        write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
@@ -405,7 +407,7 @@ mod vdev_raid {
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
-        write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
+        write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
@@ -427,7 +429,7 @@ mod vdev_raid {
             let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
+            write_read0(h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
@@ -443,7 +445,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
+            write_read0(h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -462,7 +464,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
+            write_read0(h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -487,7 +489,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(rcut);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
+            write_read0(h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -512,7 +514,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let _ = rbuf.split_off(2 * BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_begin, wbuf_middle], vec![rbuf]).await;
+            write_read0(h.vdev, vec![wbuf_begin, wbuf_middle], vec![rbuf]).await;
         }
         assert_eq!(&wbuf[..],
                    &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
@@ -536,7 +538,7 @@ mod vdev_raid {
         {
             let wbuf = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf], vec![rbuf]).await;
+            write_read0(h.vdev, vec![wbuf], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
@@ -546,7 +548,7 @@ mod vdev_raid {
     #[tokio::test]
     #[awt]
     async fn writev_read_one_stripe(#[future] h: Harness) {
-        writev_read_n_stripes(&h.vdev, h.chunksize,
+        writev_read_n_stripes(h.vdev, h.chunksize,
                               h.k, h.f, 1).await;
     }
 
@@ -572,13 +574,9 @@ mod vdev_raid {
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        h.vdev.write_at(wbuf0, zone, zl.0)
-            .and_then(|_| {
-                h.vdev.finish_zone(zone)
-            }).and_then(|_| {
-                h.vdev.read_at(rbuf, zl.0)
-            }).await
-            .unwrap();
+        h.vdev.write_at(wbuf0, zone, zl.0).await.unwrap();
+        h.vdev.finish_zone(zone).await.unwrap();
+        h.vdev.read_at(rbuf, zl.0).await.unwrap();
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
@@ -595,13 +593,9 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            h.vdev.write_at(wbuf_short, zone, zl.0)
-                .and_then(|_| {
-                    h.vdev.finish_zone(zone)
-                }).and_then(|_| {
-                    h.vdev.read_at(rbuf_short, zl.0)
-                }).await
-                .unwrap();
+            h.vdev.write_at(wbuf_short, zone, zl.0).await.unwrap();
+            h.vdev.finish_zone(zone).await.unwrap();
+            h.vdev.read_at(rbuf_short, zl.0).await.unwrap();
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
@@ -622,7 +616,7 @@ mod vdev_raid {
         h.vdev.open_zone(zone)
             .and_then(|_| h.vdev.finish_zone(zone)).await
             .expect("open and finish");
-        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
+        write_read(h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
@@ -651,7 +645,7 @@ mod vdev_raid {
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
         h.vdev.open_zone(zone).await.expect("open_zone");
-        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
+        write_read(h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
@@ -668,7 +662,7 @@ mod vdev_raid {
             let wbuf1 = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
             vdev_raid.open_zone(zone).await.expect("open_zone");
-            write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start).await;
+            write_read(vdev_raid.clone(), vec![wbuf0], vec![rbuf], zone, start).await;
             assert_eq!(wbuf1, dbsr.try_const().unwrap());
         }
     }
@@ -689,7 +683,8 @@ mod persistence {
         fs,
         io::{Read, Seek, SeekFrom},
         num::NonZeroU64,
-        path::PathBuf
+        path::PathBuf,
+        sync::Arc
     };
     use tempfile::{Builder, TempDir};
 
@@ -726,7 +721,7 @@ mod persistence {
         0xb8, 0x3b, 0x18, 0x8e,
     ];
 
-    type Harness = (VdevRaid, TempDir, Vec<PathBuf>);
+    type Harness = (Arc<VdevRaid>, TempDir, Vec<PathBuf>);
     #[fixture]
     fn harness() -> Harness {
         let num_disks = 5;
@@ -745,7 +740,7 @@ mod persistence {
             Mirror::create(&[fname], None).unwrap()
         ).collect::<Vec<_>>();
         let cs = NonZeroU64::new(2);
-        let vdev_raid = VdevRaid::create(cs, 3, 1, mirrors);
+        let vdev_raid = Arc::new(VdevRaid::create(cs, 3, 1, mirrors));
         (vdev_raid, tempdir, paths)
     }
 

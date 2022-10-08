@@ -139,7 +139,7 @@ mock!{
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;

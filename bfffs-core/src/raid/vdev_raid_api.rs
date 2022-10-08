@@ -1,4 +1,6 @@
 // vim: tw=80
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use crate::{
     label::*,
@@ -39,7 +41,9 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Returns `()` on success, or an error on failure
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+    // We can't use &Arc<Self> because that isn't object-safe.  But we could use
+    // it if we eliminate this trait and just use an enum instead.
+    fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
 
     /// Read one of the spacemaps from disk.
     ///
