@@ -334,7 +334,7 @@ impl Locator for PrimeS {
         let b = (disk * y_inv - i32::from(s) * i32::from(self.m))
             .rem_euclid(i32::from(self.n)) as u8;
         // number of data chunks preceding this repetition
-        let o = r * self.datachunks() as u64;
+        let o = r * self.datachunks();
         if b >= self.m {
             ChunkId::Parity(o + (s as u64 * u64::from(self.m)),
                             i16::from(b - self.m))

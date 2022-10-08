@@ -352,14 +352,14 @@ mod tests {
                     }
                 }
                 let data_errs = erasures.count_ones(..k as usize);
-                let mut decoded = Vec::<*mut u8>::with_capacity(data_errs as usize);
-                for x in reconstructed.iter_mut().take(data_errs as usize) {
+                let mut decoded = Vec::<*mut u8>::with_capacity(data_errs);
+                for x in reconstructed.iter_mut().take(data_errs) {
                     decoded.push(x.as_mut_ptr());
                 }
                 unsafe { codec.decode(len, &surviving, &mut decoded, &erasures); }
 
                 // Finally, compare
-                for i in 0..(data_errs as usize) {
+                for i in 0..data_errs {
                     assert_eq!(&data[erasures_vec[i] as usize], &reconstructed[i],
                         "miscompare for m={:?}, f={:?}, erasures={:?}",
                         m, f, erasures_vec);

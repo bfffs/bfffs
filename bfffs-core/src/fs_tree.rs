@@ -256,7 +256,7 @@ impl FSKey {
 
 impl Debug for FSKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let objtype = ObjKeyDiscriminant::from(self.objtype() as u8);
+        let objtype = ObjKeyDiscriminant::from(self.objtype());
         write!(f, "FSKey {{ object: {:#x}, objtype: {:?}, offset: {:#x} }}",
                self.object(), objtype, self.offset())
     }

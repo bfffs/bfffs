@@ -1701,7 +1701,7 @@ mod lseek {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(SeekWhence::Hole),
                 )
                 .returning(|_ino, _ofs, _whence| Ok(4096));
@@ -2293,7 +2293,7 @@ mod read {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(len as usize),
                 )
                 .return_const(Err(libc::EIO));
@@ -2329,7 +2329,7 @@ mod read {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(len as usize),
                 )
                 .return_const(Ok(SGList::new()));
@@ -2365,7 +2365,7 @@ mod read {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(len as usize),
                 )
                 .returning(|_ino, _ofs, _len| {
@@ -2406,7 +2406,7 @@ mod read {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(len as usize),
                 )
                 .returning(|_ino, _ofs, _len| {
@@ -3665,7 +3665,7 @@ mod write {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(DATA),
                     predicate::always(),
                 )
@@ -3700,7 +3700,7 @@ mod write {
                 .times(1)
                 .with(
                     predicate::function(move |fd: &FileData| fd.ino() == ino),
-                    predicate::eq(ofs as u64),
+                    predicate::eq(ofs),
                     predicate::eq(DATA),
                     predicate::always(),
                 )
