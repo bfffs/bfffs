@@ -28,7 +28,7 @@ fn harness() -> Harness {
         .build();
     let filename = tempdir.path().join("vdev");
     {
-        let file = fs::File::create(&filename).unwrap();
+        let file = fs::File::create(filename).unwrap();
         file.set_len(len).unwrap();
     }
     let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));

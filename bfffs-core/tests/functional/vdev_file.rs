@@ -60,7 +60,7 @@ mod basic {
     fn erase_zone(harness: Harness) {
         let (mut vd, pb, _tempdir) = harness;
         let rt = runtime::Runtime::new().unwrap();
-        let mut f = fs::File::open(&pb).unwrap();
+        let mut f = fs::File::open(pb).unwrap();
         let mut rbuf = vec![0u8; 4096];
 
         // First, write a record
@@ -324,7 +324,7 @@ mod dev {
     fn erase_zone(harness: Harness) {
         if let Some((mut vd, md)) = harness {
             let mut rbuf = vec![0u8; 4096];
-            let mut f = t!(fs::File::open(&md.0));
+            let mut f = t!(fs::File::open(md.0.as_path()));
             let rt = runtime::Runtime::new().unwrap();
 
             // First, write a record
