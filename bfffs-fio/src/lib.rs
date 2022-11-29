@@ -1,7 +1,7 @@
 // vim: tw=80
 
-// https://github.com/Gilnaa/memoffset/issues/34
-#![allow(clippy::unneeded_field_pattern)]
+// https://github.com/rust-lang/rust-clippy/issues/9986
+#![allow(clippy::unnecessary_safety_doc)]
 
 use std::{
     borrow::Borrow,
@@ -208,10 +208,9 @@ pub unsafe extern "C" fn fio_bfffs_close(
     0
 }
 
-///
 /// # Safety
 ///
-/// Caller must ensure validity of the pointer arguments
+/// Safe because the pointer argument is unused.
 #[no_mangle]
 pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int {
     unimplemented!()

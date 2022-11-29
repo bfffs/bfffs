@@ -1169,7 +1169,7 @@ mod cluster {
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Arc::new(vr)));
-        let _ = cluster.free(900, 200);
+        drop(cluster.free(900, 200));
     }
 
     #[test]
@@ -1186,7 +1186,7 @@ mod cluster {
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, Arc::new(vr)));
-        let _ = cluster.free(1000, 10);
+        drop(cluster.free(1000, 10));
     }
 
     // FreeSpaceMap::open with the following conditions:
