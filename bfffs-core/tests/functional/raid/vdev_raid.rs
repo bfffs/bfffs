@@ -572,7 +572,7 @@ mod vdev_raid {
         let (start, _) = h.vdev.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);
         let wbuf = dbsw.try_const().unwrap();
-        let _ = h.vdev.write_at(wbuf, zone, start);
+        drop(h.vdev.write_at(wbuf, zone, start));
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
