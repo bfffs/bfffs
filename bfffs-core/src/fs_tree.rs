@@ -282,7 +282,7 @@ impl Serialize for FSKey {
             let object = self.0 >> 64;
             let objtype = (self.0 >> 56) & 0xFF;
             let offset = self.0 & 0x00FFFFFFFFFFFFFF;
-            format!("{:x}-{}-{:014x}", object, objtype, offset)
+            format!("{object:x}-{objtype}-{offset:014x}")
                 .serialize(serializer)
         } else {
             self.0.serialize(serializer)

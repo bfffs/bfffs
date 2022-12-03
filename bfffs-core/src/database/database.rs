@@ -838,7 +838,7 @@ mod database {
     #[test]
     fn debug() {
         let label = Label{forest: TreeOnDisk::default()};
-        format!("{:?}", label);
+        format!("{label:?}");
     }
 
     // await_holding_lock is ok, because the tests don't share reactors
@@ -1095,7 +1095,7 @@ mod syncer_msg {
     #[test]
     fn debug() {
         let sm = SyncerMsg::Shutdown;
-        format!("{:?}", sm);
+        format!("{sm:?}");
     }
 }
 }

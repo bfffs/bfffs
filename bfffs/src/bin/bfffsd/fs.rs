@@ -223,7 +223,7 @@ impl FuseFs {
         } else if ns_str == "system" {
             ExtAttrNamespace::System
         } else {
-            panic!("Unknown namespace {:?}", ns_str)
+            panic!("Unknown namespace {ns_str:?}")
         };
         let name = OsStr::from_bytes(groups.next().unwrap());
         (ns, name)
@@ -784,7 +784,7 @@ impl Filesystem for FuseFs {
                     libc::DT_REG => FileType::RegularFile,
                     libc::DT_LNK => FileType::Symlink,
                     libc::DT_SOCK => FileType::Socket,
-                    e => panic!("Unknown dirent type {:?}", e),
+                    e => panic!("Unknown dirent type {e:?}"),
                 };
                 let nameptr = dirent.d_name.as_ptr() as *const u8;
                 let namelen = usize::from(dirent.d_namlen);

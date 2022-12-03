@@ -55,7 +55,7 @@ impl Benchmark for FsCreate {
         let bfffs = self.bfffs.as_ref().unwrap();
         for i in 0..self.count {
             bfffs
-                .fs_create(format!("testpool/{}", i), Vec::new())
+                .fs_create(format!("testpool/{i}"), Vec::new())
                 .await
                 .unwrap();
         }

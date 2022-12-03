@@ -178,7 +178,7 @@ impl Controller {
                     // inherited BaseMountpoint with 0 or more components of the
                     // dataset name
                     let mp = match source {
-                        PropertySource::Default => format!("/{}", dataset),
+                        PropertySource::Default => format!("/{dataset}"),
                         PropertySource::LOCAL => bmp,
                         PropertySource::Set(i) => {
                             debug_assert!(i > 0);

@@ -380,7 +380,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
                 0
             }
             Err(e) => {
-                eprintln!("fio_bfffs_open: {:?}", e);
+                eprintln!("fio_bfffs_open: {e:?}");
                 1
             }
         }

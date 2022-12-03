@@ -109,7 +109,7 @@ impl LruCache {
             {
                 let new_entry = &self.store[&key];
                 assert!(old_entry.buf.eq(&*new_entry.buf),
-                    "Conflicting value cached with key={:?}", key);
+                    "Conflicting value cached with key={key:?}");
             }
             event!(Level::WARN, "duplicate_cache_insertion");
             // Just put the old entry back so we don't have to fix the linkages
@@ -171,11 +171,11 @@ use divbuf::{DivBuf, DivBufShared};
 #[test]
 fn debug() {
     let cache = LruCache::with_capacity(100);
-    format!("{:?}", cache);
+    format!("{cache:?}");
     assert_eq!(100, cache.capacity());
     let dbs = DivBufShared::from(Vec::new());
     let entry = LruEntry{buf: Box::new(dbs), lru: None, mru: None};
-    assert_eq!("LruEntry { lru: None, mru: None }", format!("{:?}", entry));
+    assert_eq!("LruEntry { lru: None, mru: None }", format!("{entry:?}"));
 }
 
 #[test]

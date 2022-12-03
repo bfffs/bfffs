@@ -92,12 +92,12 @@ async fn clean_zone_leak(#[case] devsize: u64, #[case] zone_size: u64) {
     let root = fs.root();
     let rooth = root.handle();
     for i in 0..16384 {
-        let fname = format!("f.{}", i);
+        let fname = format!("f.{i}");
         fs.mkdir(&rooth, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
     fs.sync().await;
     for i in 0..8000 {
-        let fname = format!("f.{}", i);
+        let fname = format!("f.{i}");
         fs.rmdir(&rooth, &OsString::from(fname)).await.unwrap();
     }
     fs.sync().await;
@@ -129,7 +129,7 @@ async fn get_mut(#[case] devsize: u64, #[case] zone_size: u64) {
     let root = fs.root();
     let rooth = root.handle();
     for i in 0..16384 {
-        let fname = format!("f.{}", i);
+        let fname = format!("f.{i}");
         fs.mkdir(&rooth, &OsString::from(fname), 0o755, 0, 0).await.unwrap();
     }
     fs.sync().await;

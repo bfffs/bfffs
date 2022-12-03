@@ -177,7 +177,7 @@ fn debug() {
         uuid: Uuid::new_v4(),
         child: Uuid::new_v4()
     };
-    format!("{:?}", label);
+    format!("{label:?}");
 }
 
 }

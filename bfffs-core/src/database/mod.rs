@@ -179,7 +179,7 @@ impl Forest {
         match self.0.get(ForestKey::tree(tree_id)).await? {
             Some(ForestValue::Tree(tree)) => Ok(tree.tod),
             Some(ForestValue::TreeEnt(te)) => {
-                panic!("TreeEnt unexpected with offset 0 {:?}", te);
+                panic!("TreeEnt unexpected with offset 0 {te:?}");
             },
             None => Err(Error::ENOENT)
         }
@@ -244,7 +244,7 @@ impl Forest {
                         ForestValue::TreeEnt(tree_ent) => {
                             Poll::Ready(Some(Ok((tree_ent, k.offset + 1))))
                         }
-                        x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                        x => panic!("Unexpected value {x:?} for key {k:?}")
                     },
                     Poll::Ready(None) => Poll::Ready(None),
                     Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
@@ -292,8 +292,7 @@ impl Forest {
                         tree_id = te.tree_id;
                     }
                     Some(ForestValue::Tree(tv)) => {
-                        panic!("Unexpected ForestValue::Tree for key {:?}: {:?}",
-                               te_key, tv);
+                        panic!("Unexpected ForestValue::Tree for key {te_key:?}: {tv:?}");
                     }
                     None => return Ok((None, None))
                 }
@@ -316,8 +315,7 @@ impl Forest {
                 match otv {
                     Some(ForestValue::Tree(tree)) => tree.parent,
                     Some(ForestValue::TreeEnt(te)) => panic!(
-                        "Unexpected ForestValue::TreeEnt for key {:?}: {:?}",
-                        key, te),
+                        "Unexpected ForestValue::TreeEnt for key {key:?}: {te:?}"),
                     None => None
                 }
             })
@@ -387,13 +385,13 @@ impl Forest {
             None => return Err(Error::ENOENT),
             Some(ForestValue::Tree(tree)) => tree.parent,
             Some(ForestValue::TreeEnt(te)) =>
-                panic!("TreeEnt unexpected with offset 0 {:?}", te)
+                panic!("TreeEnt unexpected with offset 0 {te:?}")
         };
         let v = ForestValue::Tree(Tree::new(parent, tod));
         match self.0.clone().insert(key, v, txg, Credit::null()).await? {
             Some(ForestValue::Tree(tree)) => Ok(Some(tree.tod)),
             Some(ForestValue::TreeEnt(te)) =>
-                panic!("TreeEnt unexpected with offset 0 {:?}", te),
+                panic!("TreeEnt unexpected with offset 0 {te:?}"),
             None => Ok(None)
         }
     }

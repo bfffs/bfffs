@@ -593,7 +593,7 @@ root:
     let r = tree.clone().insert(4, NeedsDcloneV(400), txg, Credit::forge(16))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(Some(NeedsDcloneV(4))));
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -671,7 +671,7 @@ root:
     let r = tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(80))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -803,7 +803,7 @@ root:
     let r = tree.clone().insert(0, 0, TxgT::from(42), Credit::forge(8))
         .now_or_never().unwrap();
     assert_eq!(r, Ok(None));
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -1765,7 +1765,7 @@ root:
         .now_or_never()
         .unwrap();
     assert_eq!(Ok(Some(NeedsDcloneV(4))), r);
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -2287,7 +2287,7 @@ root:
     let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
 
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -2485,7 +2485,7 @@ root:
 
     let r = tree.clone().flush(TxgT::from(42)).now_or_never().unwrap();
     assert!(r.is_ok());
-    assert_eq!(format!("{}", tree),
+    assert_eq!(format!("{tree}"),
 r#"---
 limits:
   min_int_fanout: 2
@@ -2794,7 +2794,7 @@ root:
         .now_or_never().unwrap();
     assert_eq!(r, Ok(true));
 
-    assert_eq!(format!("{}", tref),
+    assert_eq!(format!("{tref}"),
 r#"---
 limits:
   min_int_fanout: 2

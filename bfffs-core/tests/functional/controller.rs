@@ -53,7 +53,7 @@ mod create_fs {
     #[rstest]
     #[tokio::test]
     async fn eexist(harness: Harness) {
-        let fsname = format!("{}/child", POOLNAME);
+        let fsname = format!("{POOLNAME}/child");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&fsname).await.unwrap();
         assert_eq!(
@@ -66,7 +66,7 @@ mod create_fs {
     #[rstest]
     #[tokio::test]
     async fn child(harness: Harness) {
-        let fsname = format!("{}/child", POOLNAME);
+        let fsname = format!("{POOLNAME}/child");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&fsname).await.unwrap();
         harness.0.new_fs(&fsname).await.unwrap();
@@ -76,8 +76,8 @@ mod create_fs {
     #[rstest]
     #[tokio::test]
     async fn grandchild(harness: Harness) {
-        let cname = format!("{}/child", POOLNAME);
-        let gcname = format!("{}/child/grandchild", POOLNAME);
+        let cname = format!("{POOLNAME}/child");
+        let gcname = format!("{POOLNAME}/child/grandchild");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&cname).await.unwrap();
         harness.0.create_fs(&gcname).await.unwrap();
@@ -89,7 +89,7 @@ mod create_fs {
     #[tokio::test]
     /// Missing or wrong pool name
     async fn missing_parent(harness: Harness) {
-        let gcname = format!("{}/child/grandchild", POOLNAME);
+        let gcname = format!("{POOLNAME}/child/grandchild");
         harness.0.create_fs(POOLNAME).await.unwrap();
         assert_eq!(
             harness.0.create_fs(&gcname).await.unwrap_err(),
@@ -155,7 +155,7 @@ mod get_prop {
         mounted: bool,
         propname: PropertyName)
     {
-        let dsname = format!("{}/child", POOLNAME);
+        let dsname = format!("{POOLNAME}/child");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&dsname).await.unwrap();
         let expected = if PropertySource::Default == source {
@@ -227,16 +227,15 @@ mod get_prop {
             source: PropertySource,
             mounted: bool)
         {
-            let grandparentname = format!("{}/grandparent", POOLNAME);
-            let parentname = format!("{}/grandparent/parent", POOLNAME);
-            let childname = format!("{}/grandparent/parent/child", POOLNAME);
+            let grandparentname = format!("{POOLNAME}/grandparent");
+            let parentname = format!("{POOLNAME}/grandparent/parent");
+            let childname = format!("{POOLNAME}/grandparent/parent/child");
             harness.0.create_fs(POOLNAME).await.unwrap();
             harness.0.create_fs(&grandparentname).await.unwrap();
             harness.0.create_fs(&parentname).await.unwrap();
             harness.0.create_fs(&childname).await.unwrap();
             let expected = if source == PropertySource::Default {
-                Property::mountpoint(format!("/{}/grandparent/parent/child",
-                    POOLNAME))
+                Property::mountpoint(format!("/{POOLNAME}/grandparent/parent/child"))
             } else if source == PropertySource::FROM_PARENT {
                 harness.0.set_prop(&parentname, Property::mountpoint("/xxx"))
                     .await
@@ -295,7 +294,7 @@ mod get_prop {
         #[rstest]
         #[tokio::test]
         async fn name(harness: Harness) {
-            let childname = format!("{}/child", POOLNAME);
+            let childname = format!("{POOLNAME}/child");
             harness.0.create_fs(POOLNAME).await.unwrap();
             harness.0.create_fs(&childname).await.unwrap();
             assert_eq!(
@@ -351,7 +350,7 @@ mod list_fs {
     #[rstest]
     #[tokio::test]
     async fn one_child(harness: Harness) {
-        let dsname = format!("{}/child", POOLNAME);
+        let dsname = format!("{POOLNAME}/child");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&dsname).await.unwrap();
         let datasets = harness.0.list_fs(POOLNAME, None)
@@ -365,8 +364,8 @@ mod list_fs {
     #[rstest]
     #[tokio::test]
     async fn two_children(harness: Harness) {
-        let dsname1 = format!("{}/child", POOLNAME);
-        let dsname2 = format!("{}/other_child", POOLNAME);
+        let dsname1 = format!("{POOLNAME}/child");
+        let dsname2 = format!("{POOLNAME}/other_child");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&dsname1).await.unwrap();
         harness.0.create_fs(&dsname2).await.unwrap();
@@ -392,8 +391,8 @@ mod list_fs {
     #[rstest]
     #[tokio::test]
     async fn one_grandchild(harness: Harness) {
-        let childname = format!("{}/child", POOLNAME);
-        let grandchildname = format!("{}/child/grandchild", POOLNAME);
+        let childname = format!("{POOLNAME}/child");
+        let grandchildname = format!("{POOLNAME}/child/grandchild");
         harness.0.create_fs(POOLNAME).await.unwrap();
         harness.0.create_fs(&childname).await.unwrap();
         harness.0.create_fs(&grandchildname).await.unwrap();

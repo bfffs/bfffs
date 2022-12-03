@@ -561,8 +561,7 @@ impl Display for FreeSpaceMap {
             .unwrap_or(0));
 
         // First print the header
-        writeln!(f, "FreeSpaceMap: {} Zones: {} Closed, {} Empty, {} Open",
-            t, c, e, o)?;
+        writeln!(f, "FreeSpaceMap: {t} Zones: {c} Closed, {e} Empty, {o} Open")?;
         let zone_width = cmp::max(5, f64::from(t + 1).log(16.0).ceil() as usize);
         let txg_width = cmp::max(1,
             f64::from(max_txg + 1).log(16.0).ceil() as usize);
@@ -595,11 +594,11 @@ impl Display for FreeSpaceMap {
                 format!("{0:1$}", "", txg_width)
             } else {
                 let x: u32 = self.zones[i].txgs.start.into();
-                format!("{0:>1$x}", x, txg_width)
+                format!("{x:>txg_width$x}")
             };
             let end = if self.is_closed(i as ZoneT) {
                 let x: u32 = self.zones[i].txgs.end.into();
-                format!("{0:>1$x}", x, txg_width)
+                format!("{x:>txg_width$x}")
             } else {
                 format!("{0:1$}", "", txg_width)
             };
@@ -613,7 +612,7 @@ impl Display for FreeSpaceMap {
                     continue;
                 }
             }
-            writeln!(f, "{0:>1$x} | {2}|", i, zone_width, this_row)?;
+            writeln!(f, "{i:>zone_width$x} | {this_row}|")?;
             last_row = Some(this_row);
         }
 
@@ -957,7 +956,7 @@ mod open_zone {
     #[test]
     fn debug() {
         let oz = OpenZone{start: 0, allocated_blocks: 0};
-        format!("{:?}", oz);
+        format!("{oz:?}");
     }
 }
 
@@ -1654,7 +1653,7 @@ mod free_space_map {
     #[test]
     fn debug() {
         let fsm = FreeSpaceMap::new(10);
-        format!("{:?}", fsm);
+        format!("{fsm:?}");
     }
 
     #[test]
@@ -1757,7 +1756,7 @@ r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
     3 | a-  |                       ================================           |
     4 |  -  |                                                                  |
 "#;
-        assert_eq!(expected, format!("{}", fsm));
+        assert_eq!(expected, format!("{fsm}"));
     }
 
     // FreeSpaceMap::display with no closed zones.  Just an empty and an open
@@ -1773,7 +1772,7 @@ r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
     0 | 0-  |                ===============================================   |
     1 |  -  |                                                                  |
 "#;
-        assert_eq!(expected, format!("{}", fsm));
+        assert_eq!(expected, format!("{fsm}"));
     }
 
     // FreeSpaceMap::display where the used and free space both want to round
@@ -1789,7 +1788,7 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
 ------|-------|----------------------------------------------------------------|
     0 |  0-10 |            ====================================================|
 "#;
-        assert_eq!(expected, format!("{}", fsm));
+        assert_eq!(expected, format!("{fsm}"));
     }
 
     #[test]

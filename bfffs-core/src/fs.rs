@@ -117,7 +117,7 @@ mod htable {
                             Err(T::ENOTFOUND)
                         },
                         HTValue::Other(x) =>
-                            panic!("Unexpected value {:?} for key {:?}", x, key)
+                            panic!("Unexpected value {x:?} for key {key:?}")
                     }
                 },
                 Err(e) => Err(e)
@@ -183,7 +183,7 @@ mod htable {
                     }).boxed()
                 },
                 HTValue::Other(x) => {
-                    panic!("Unexpected value {:?} for key {:?}", x, key)
+                    panic!("Unexpected value {x:?} for key {key:?}")
                 },
                 HTValue::None => {
                     future::ok::<Option<T>, Error>(None).boxed()
@@ -253,7 +253,7 @@ mod htable {
                     future::err(T::ENOTFOUND).boxed()
                 },
                 HTValue::Other(x) =>
-                    panic!("Unexpected value {:?} for key {:?}", x, key)
+                    panic!("Unexpected value {x:?} for key {key:?}")
             }
         })
     }
@@ -667,7 +667,7 @@ impl Fs {
             assert!(dirent_r.is_none(),
             "Create of an existing file.  The VFS should prevent this");
             assert!(inode_r.is_none(),
-            "Inode double-create detected, ino={}", ino);
+            "Inode double-create detected, ino={ino}");
             Ok(FileDataMut::new(fd_parent, ino))
         }).map_err(Error::into)
     }
@@ -903,7 +903,7 @@ impl Fs {
                 }.boxed(),
                 // Some(FSValue::BlobExtent(be)) should never happen, because
                 // FSValue::dpop will change it to an inline extent.
-                x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                x => panic!("Unexpected value {x:?} for key {k:?}")
             }
         } else {
             future::ok(0).boxed()
@@ -952,7 +952,7 @@ impl Fs {
                     }.boxed(),
                     // Some(FSValue::BlobExtent(be)) should never happen,
                     // because FSValue::dpop will change it to an inline extent.
-                    x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                    x => panic!("Unexpected value {x:?} for key {k:?}")
                 }
             },
             _ => future::ok(0).boxed()
@@ -1508,7 +1508,7 @@ impl Fs {
                             f(&mut buf, &xattr);
                         }
                     },
-                    _ => panic!("Unexpected value {:?} for key {:?}", v, k)
+                    _ => panic!("Unexpected value {v:?} for key {k:?}")
                 }
                 future::ok::<Vec<u8>, Error>(buf)
             })
@@ -1540,7 +1540,7 @@ impl Fs {
                     FSValue::ExtAttrs(v) => {
                         v.iter().map(&f).sum()
                     },
-                    _ => panic!("Unexpected value {:?} for key {:?}", v, k)
+                    _ => panic!("Unexpected value {v:?} for key {k:?}")
                 };
                 future::ok::<u32, Error>(len)
             })
@@ -1924,8 +1924,7 @@ impl Fs {
                                 self.poll_next(cx)
                             }
                         },
-                        x => panic!("Unexpected value {:?} for key {:?}",
-                                    x, k)
+                        x => panic!("Unexpected value {x:?} for key {k:?}")
                     },
                     Poll::Ready(None) => Poll::Ready(None),
                     Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
@@ -2511,7 +2510,7 @@ impl Fs {
                 },
                 // Some(FSValue::BlobExtent(be)) should never happen, because
                 // FSValue::dpop will change it to an inline extent.
-                x => panic!("Unexpected value {:?} for key {:?}", x, k)
+                x => panic!("Unexpected value {x:?} for key {k:?}")
             };
             let mut base = dbs.try_mut().unwrap();
             let overlay = data.try_const().unwrap();

@@ -446,8 +446,7 @@ fn measure(name: &str, pos: &str, n: usize, verbose: bool,
     wb.repay(c.forget());
     let err = 100.0 * (calc as f64) / (actual as f64) - 100.0;
     if verbose {
-        println!("{:>8}{:>22}{:>8}{:>12}{:>12}{:>12.2}%", name, pos, n, actual,
-                 calc, err);
+        println!("{name:>8}{pos:>22}{n:>8}{actual:>12}{calc:>12}{err:>12.2}%");
     }
     err.abs() <= 5.0
 }
@@ -541,7 +540,7 @@ fn main() {
     let cli = Cli::parse();
     if cli.list {
         if !cli.ignored{
-            println!("{}: test", TCNAME);
+            println!("{TCNAME}: test");
         }
         return;
     }

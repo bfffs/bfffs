@@ -752,7 +752,7 @@ mod label {
             lbas: 0,
             spacemap_space: 0
         };
-        format!("{:?}", label);
+        format!("{label:?}");
     }
 }
 }

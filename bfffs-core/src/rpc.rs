@@ -165,63 +165,63 @@ impl Response {
     pub fn into_debug_drop_cache(self) -> Result<()> {
         match self {
             Response::DebugDropCache(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_create(self) -> Result<TreeID> {
         match self {
             Response::FsCreate(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_destroy(self) -> Result<()> {
         match self {
             Response::FsDestroy(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_list(self) -> Result<Vec<fs::DsInfo>> {
         match self {
             Response::FsList(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_mount(self) -> Result<()> {
         match self {
             Response::FsMount(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_set(self) -> Result<()> {
         match self {
             Response::FsSet(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_stat(self) -> Result<fs::DsInfo> {
         match self {
             Response::FsStat(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_pool_clean(self) -> Result<()> {
         match self {
             Response::PoolClean(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 
     pub fn into_fs_unmount(self) -> Result<()> {
         match self {
             Response::FsUnmount(r) => r,
-            x => panic!("Unexpected response type {:?}", x)
+            x => panic!("Unexpected response type {x:?}")
         }
     }
 }

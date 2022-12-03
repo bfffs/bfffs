@@ -106,7 +106,7 @@ impl Cleaner {
             if e.is_full() {
                 // No worries; cleaning is idempotent
             } else {
-                panic!("{:?}", e);
+                panic!("{e:?}");
             }
         }
         rx

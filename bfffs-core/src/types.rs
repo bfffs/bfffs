@@ -167,13 +167,13 @@ impl Error {
     // futures-0.2
     // https://github.com/rust-lang/rust/issues/35121
     pub fn unhandled<E: fmt::Debug>(e: E) {
-        panic!("Unhandled error {:?}", e)
+        panic!("Unhandled error {e:?}")
     }
     //pub fn unhandled_canceled<E: fmt::Debug>(e: E) -> futures::Canceled {
-        //panic!("Unhandled error {:?}", e)
+        //panic!("Unhandled error {e:?}")
     //}
     pub fn unhandled_error<E: fmt::Debug>(e: E) -> Error {
-        panic!("Unhandled error {:?}", e)
+        panic!("Unhandled error {e:?}")
     }
 }
 

@@ -209,10 +209,7 @@ impl Bfffs {
             eprintln!("Server did not send response");
             Err(Error::EIO)
         } else if nread >= BUFSIZ {
-            eprintln!(
-                "Server sent unexpectedly large response {} bytes",
-                nread
-            );
+            eprintln!("Server sent unexpectedly large response {nread} bytes");
             Err(Error::EIO)
         } else {
             buf.truncate(nread);

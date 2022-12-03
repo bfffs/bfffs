@@ -200,7 +200,7 @@ mod fs {
                 .iter()
                 .map(|ps| {
                     Property::from_str(ps.as_str()).unwrap_or_else(|_e| {
-                        eprintln!("Invalid property specification {}", ps);
+                        eprintln!("Invalid property specification {ps}");
                         std::process::exit(2);
                     })
                 })
@@ -389,7 +389,7 @@ mod fs {
                         table.add_row(row);
                     }
                 }
-                print!("{}", table);
+                print!("{table}");
             }
             Ok(())
         }
@@ -481,7 +481,7 @@ mod fs {
                 for dsinfo in all {
                     let mut row = Vec::new();
                     for (prop, _source) in dsinfo.props {
-                        row.push(format!("{}", prop));
+                        row.push(format!("{prop}"));
                     }
                     writeln!(buf, "{}", row.join("\t")).unwrap();
                 }
@@ -503,7 +503,7 @@ mod fs {
                     }
                     table.add_row(row);
                 }
-                print!("{}", table);
+                print!("{table}");
             }
             Ok(())
         }
@@ -734,7 +734,7 @@ mod pool {
             let properties = propstrings
                 .map(|ps| {
                     Property::from_str(ps).unwrap_or_else(|_e| {
-                        eprintln!("Invalid property specification {}", ps);
+                        eprintln!("Invalid property specification {ps}");
                         std::process::exit(2);
                     })
                 })

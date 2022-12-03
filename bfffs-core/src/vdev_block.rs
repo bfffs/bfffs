@@ -537,7 +537,7 @@ impl Inner {
                 // Out of resources to issue this future.  Delay it.
                 return Some((senders, fut));
             },
-            Poll::Ready(Err(e)) => panic!("Unhandled error {:?}", e),
+            Poll::Ready(Err(e)) => panic!("Unhandled error {e:?}"),
             Poll::Pending => {
                 let schfut = self.reschedule();
                 tokio::spawn( async move {
@@ -1499,15 +1499,15 @@ mod t {
             let dbs = DivBufShared::from(vec![0u8]);
             {
                 let read_at = Cmd::ReadAt(dbs.try_mut().unwrap());
-                format!("{:?}", read_at);
+                format!("{read_at:?}");
             }
             {
                 let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
-                format!("{:?}", readv_at);
+                format!("{readv_at:?}");
             }
             {
                 let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
-                format!("{:?}", read_spacemap);
+                format!("{read_spacemap:?}");
             }
             let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
             let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
@@ -1518,9 +1518,8 @@ mod t {
             let write_label = Cmd::WriteLabel(label_writer);
             let write_spacemap = Cmd::WriteSpacemap(
                 vec![dbs.try_const().unwrap()], 0, 0);
-            format!("{:?} {:?} {:?} {:?} {:?} {:?} {:?}", write_at, writev_at,
-                    erase_zone, finish_zone, sync_all, write_label,
-                    write_spacemap);
+            format!("{write_at:?} {writev_at:?} {erase_zone:?} {finish_zone:?}\
+ {sync_all:?} {write_label:?} {write_spacemap:?}");
         }
 
         // pet kcov
