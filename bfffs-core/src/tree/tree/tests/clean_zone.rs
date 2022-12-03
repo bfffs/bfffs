@@ -208,7 +208,7 @@ root:
     tree.clone().clean_zone(start..end, txgs, TxgT::from(42))
     .now_or_never().unwrap()
     .unwrap();
-    let clean_tree = format!("{}", tree);
+    let clean_tree = format!("{tree}");
     assert_eq!(clean_tree,
 r#"---
 limits:

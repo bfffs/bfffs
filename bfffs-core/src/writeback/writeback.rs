@@ -275,7 +275,7 @@ use futures_test::task::noop_context;
 #[test]
 fn debug() {
     let wb = WriteBack::with_capacity(1000);
-    format!("{:?}", wb);
+    format!("{wb:?}");
 }
 
 /// A borrow must sleep, but abandon his loan application (drops his future)

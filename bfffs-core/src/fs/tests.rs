@@ -289,7 +289,7 @@ fn debug_getattr() {
         blksize: 131072,
         flags: 0,
     };
-    let s = format!("{:?}", attr);
+    let s = format!("{attr:?}");
     assert_eq!("GetAttr { ino: 1, size: 4096, bytes: 4096, atime: Timespec { sec: 1, nsec: 2 }, mtime: Timespec { sec: 3, nsec: 4 }, ctime: Timespec { sec: 5, nsec: 6 }, birthtime: Timespec { sec: 7, nsec: 8 }, mode: Mode { .0: 33188, perm: 420 }, nlink: 1, uid: 1000, gid: 1000, rdev: 0, blksize: 131072, flags: 0 }", s);
 }
 
@@ -330,7 +330,7 @@ fn debug_setattr() {
         gid: None,
         flags: None,
     };
-    let s = format!("{:?}", attr);
+    let s = format!("{attr:?}");
     assert_eq!("SetAttr { size: None, atime: None, mtime: None, ctime: None, birthtime: None, perm: None, uid: None, gid: None, flags: None }", s);
 }
 

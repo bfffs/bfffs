@@ -1125,17 +1125,17 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
         let id = NodeId{height, key};
         let l = self.len();
         let len_ok = if (!is_root) && l < self.min_fanout(limits) as usize {
-            eprintln!("Node underflow.  Node {:?} has {} items", id, l);
+            eprintln!("Node underflow.  Node {id:?} has {l} items");
             false
         } else if l > self.max_fanout(limits) as usize {
-            eprintln!("Node overflow.  Node {:?} has {} items", id, l);
+            eprintln!("Node overflow.  Node {id:?} has {l} items");
             false
         } else {
             true
         };
         let key_ok = if !is_root && key > *self.key() {
-            eprintln!("Bad key.  Node {:?} has lowest element {:?} but key {:?}"
-                      , id, self.key(), key);
+            eprintln!("Bad key.  Node {id:?} has lowest element {:?} but key {key:?}"
+                      , self.key());
             false
         } else {
             true
@@ -1515,7 +1515,7 @@ fn debug() {
     };
     let items: BTreeMap<u32, u32> = BTreeMap::new();
     let node: Node<DRP, u32, u32> = leaf_node!(items);
-    format!("{:?} {:?}", ld, node);
+    format!("{ld:?} {node:?}");
 
     let mut children: Vec<IntElem<u32, u32, u32>> = Vec::new();
     let txgs = TxgT(1)..TxgT(3);

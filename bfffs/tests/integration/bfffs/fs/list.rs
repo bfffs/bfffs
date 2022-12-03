@@ -163,7 +163,7 @@ async fn lots() {
 
     let mut dsnames = vec![];
     for i in 0..=CHUNKQTY {
-        dsnames.push(format!("mypool/{}", i))
+        dsnames.push(format!("mypool/{i}"))
     }
     let h = harness(&dsnames);
     dsnames.sort();

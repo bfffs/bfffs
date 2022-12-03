@@ -46,7 +46,7 @@ fn invmod<T>(a: T, n: T) -> T
         r = temp;
     }
 
-    debug_assert_eq!(r, T::from(1), "{:?} is not invertible mod {:?}", a, n);
+    debug_assert_eq!(r, T::from(1), "{a:?} is not invertible mod {n:?}");
 
     if t < T::from(0) {
         t += n;
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn debug() {
         let locator = PrimeS::new(7, 4, 2);
-        format!("{:?}", locator);
+        format!("{locator:?}");
     }
 
     // Exhaustive placement test for a small array

@@ -111,7 +111,7 @@ mod t {
     fn debug() {
         let cr = CreditRequirements{insert: 0, range_delete: 0, remove: 0};
         let tod = TreeOnDisk::<RID>::default();
-        format!("{:?} {:?}", cr, tod);
+        format!("{cr:?} {tod:?}");
     }
 }
 // LCOV_EXCL_STOP

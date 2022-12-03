@@ -4185,7 +4185,7 @@ mod torture {
 
         fn mkdir(&mut self) {
             let num: u64 = self.rng.gen();
-            let fname = format!("{:x}", num);
+            let fname = format!("{num:x}");
             info!("mkdir {}", fname);
             let fd = self.rt.as_ref().unwrap().block_on(async {
                 self.fs.mkdir(&self.root.handle(), &OsString::from(&fname),
@@ -4255,7 +4255,7 @@ mod torture {
             // Generate a random name that corresponds to no real file, but
             // could be sorted anywhere amongst them.
             let num: u64 = self.rng.gen();
-            let fname = format!("{:x}_x", num);
+            let fname = format!("{num:x}_x");
             let fd = FileDataMut::new_for_tests(Some(1), num);
             let fdh = fd.handle();
             info!("rm {}", fname);
@@ -4271,7 +4271,7 @@ mod torture {
             if !self.files.is_empty() {
                 let idx = self.rng.gen_range(0..self.files.len());
                 let (basename, fd) = self.files.remove(idx);
-                let fname = format!("{:x}", basename);
+                let fname = format!("{basename:x}");
                 info!("rm {}", fname);
                 self.rt.as_ref().unwrap().block_on(async {
                     self.fs.unlink(&self.root.handle(), Some(&fd.handle()),
@@ -4330,7 +4330,7 @@ mod torture {
             // coverage to be gained by testing a hierarchical directory
             // structure.  Instead, we'll stick all files in the root directory,
             let num: u64 = self.rng.gen();
-            let fname = format!("{:x}", num);
+            let fname = format!("{num:x}");
             info!("Touch {}", fname);
             let fd = self.rt.as_ref().unwrap().block_on(async {
                 self.fs.create(&self.root.handle(), &OsString::from(&fname),

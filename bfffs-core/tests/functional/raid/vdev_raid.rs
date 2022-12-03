@@ -16,7 +16,7 @@ fn create_redundancy_too_big() {
         t!(Builder::new().prefix("create_redundancy_too_big").tempdir());
     let mirrors = (0..num_disks).map(|i| {
         let mut fname = PathBuf::from(tempdir.path());
-        fname.push(format!("vdev.{}", i));
+        fname.push(format!("vdev.{i}"));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
         Mirror::create(&[fname], None).unwrap()
@@ -37,7 +37,7 @@ fn create_stripesize_too_big() {
         t!(Builder::new().prefix("create_stripesize_too_big").tempdir());
     let mirrors = (0..num_disks).map(|i| {
         let mut fname = PathBuf::from(tempdir.path());
-        fname.push(format!("vdev.{}", i));
+        fname.push(format!("vdev.{i}"));
         let file = t!(fs::File::create(&fname));
         t!(file.set_len(len));
         Mirror::create(&[fname], None).unwrap()
@@ -87,7 +87,7 @@ mod vdev_raid {
         let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
         let mirrors = (0..n).map(|i| {
             let mut fname = PathBuf::from(tempdir.path());
-            fname.push(format!("vdev.{}", i));
+            fname.push(format!("vdev.{i}"));
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             Mirror::create(&[fname], None).unwrap()
@@ -673,7 +673,7 @@ mod persistence {
         );
         let paths = (0..num_disks).map(|i| {
             let mut fname = PathBuf::from(tempdir.path());
-            fname.push(format!("vdev.{}", i));
+            fname.push(format!("vdev.{i}"));
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             fname

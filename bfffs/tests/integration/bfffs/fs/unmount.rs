@@ -106,7 +106,7 @@ async fn ebusy(harness: Harness) {
             Err(nix::Error::EBUSY) => {
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            Err(e) => panic!("unmount: {}", e),
+            Err(e) => panic!("unmount: {e}"),
         }
     }
 }

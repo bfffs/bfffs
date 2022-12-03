@@ -25,7 +25,7 @@ fn harness() -> Harness {
         .unwrap();
     let mut paths = Vec::new();
     for i in 0..12 {
-        let filename = tempdir.path().join(format!("vdev.{}", i));
+        let filename = tempdir.path().join(format!("vdev.{i}"));
         let file = fs::File::create(&filename).unwrap();
         file.set_len(len).unwrap();
         let pb = filename.to_path_buf();

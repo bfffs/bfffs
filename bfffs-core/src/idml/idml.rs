@@ -500,7 +500,7 @@ impl DML for IDML {
             .and_then(move |oentry| {
                 let mut entry = match oentry {
                     Some(e) => e,
-                    None => panic!("Double delete detected for {:?}.", rid)
+                    None => panic!("Double delete detected for {rid:?}.")
                 };
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
@@ -759,7 +759,7 @@ mod t {
     fn ridtentry_debug() {
         let drp = DRP::random(Compression::None, 4096);
         let ridt_entry = RidtEntry::new(drp);
-        format!("{:?}", ridt_entry);
+        format!("{ridt_entry:?}");
 
         let label = Label{
             alloct:     TreeOnDisk::default(),
@@ -767,7 +767,7 @@ mod t {
             ridt:       TreeOnDisk::default(),
             txg:        TxgT(0)
         };
-        format!("{:?}", label);
+        format!("{label:?}");
     }
 
     #[test]

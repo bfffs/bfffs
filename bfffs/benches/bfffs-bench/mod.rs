@@ -155,7 +155,7 @@ where
     let mut dtrace = Command::new("dtrace")
         .stdout(Stdio::piped())
         .arg("-p")
-        .arg(format!("{}", pid))
+        .arg(format!("{pid}"))
         .arg("-n")
         .arg("profile-497 /pid == $target && arg1/ { @[ustack()] = count(); }")
         .spawn()

@@ -106,8 +106,8 @@ impl StripeBuffer {
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
         assert!(lba % stripe_lbas == 0,
-                "Can't create a non-stripe-aligned StripeBuffer at lba {:?}",
-                lba);
+                "Can't create a non-stripe-aligned StripeBuffer at lba {lba:?}"
+        );
         let stripesize = stripe_lbas as usize * BYTES_PER_LBA;
         StripeBuffer{ buf: SGList::new(), lba, stripesize}
     }
@@ -1249,7 +1249,7 @@ fn debug() {
         layout_algorithm: LayoutAlgorithm::PrimeS,
         children: vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()]
     };
-    format!("{:?}", label);
+    format!("{label:?}");
 }
 
 /// Test basic layout properties

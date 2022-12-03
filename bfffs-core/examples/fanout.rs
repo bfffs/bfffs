@@ -383,7 +383,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     ).unwrap();
 
     let fs_metadata_size = idml.stats.metadata_size();
-    println!("FS Metadata size:      {} bytes", fs_metadata_size);
+    println!("FS Metadata size:      {fs_metadata_size} bytes");
     println!("FS Padding fraction:   {:#.3}%",
              100.0 * idml.stats.padding_fraction());
     let fs_guard = idml.stats.put_counts.lock().unwrap();
@@ -391,8 +391,8 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 
     println!();
     let alloct_metadata_size = alloct_ddml.stats.metadata_size();
-    println!("AllocT entries:          {:?}", alloct_entries);
-    println!("AllocT Metadata size:    {} bytes", alloct_metadata_size);
+    println!("AllocT entries:          {alloct_entries:?}");
+    println!("AllocT Metadata size:    {alloct_metadata_size} bytes");
     println!("AllocT Padding fraction: {:#.3}%",
              100.0 * alloct_ddml.stats.padding_fraction());
     let alloct_guard = alloct_ddml.stats.put_counts.lock().unwrap();
@@ -400,8 +400,8 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 
     println!();
     let ridt_metadata_size = ridt_ddml.stats.metadata_size();
-    println!("RIDT entries:          {:?}", ridt_entries);
-    println!("RIDT Metadata size:    {} bytes", ridt_metadata_size);
+    println!("RIDT entries:          {ridt_entries:?}");
+    println!("RIDT Metadata size:    {ridt_metadata_size} bytes");
     println!("RIDT Padding fraction: {:#.3}%",
              100.0 * ridt_ddml.stats.padding_fraction());
     let ridt_guard = ridt_ddml.stats.put_counts.lock().unwrap();
@@ -439,7 +439,7 @@ fn main() {
             Ok(_) => (),
             Err(ref e) if e.kind() == ErrorKind::AlreadyExists => (),
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("{e}");
                 std::process::exit(1);
             }
         }

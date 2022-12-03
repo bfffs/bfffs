@@ -396,7 +396,7 @@ mod label {
             uuid: Uuid::new_v4(),
             children: vec![]
         };
-        format!("{:?}", label);
+        format!("{label:?}");
     }
 }
 

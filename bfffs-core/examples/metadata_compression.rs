@@ -58,7 +58,7 @@ fn main() {
                 speeds[i].insert(z, Histogram::new());
             }
         }
-        let pat = format!("/tmp/fanout/{}.*.bin", ds);
+        let pat = format!("/tmp/fanout/{ds}.*.bin");
         for path in glob::glob(&pat).unwrap() {
             found = true;
             let pb = path.unwrap();
@@ -99,7 +99,7 @@ fn main() {
         }
         for z in COMPRESSORS.iter() {
             for (i, (shufname, _)) in SHUFFLES.iter().enumerate() {
-                let zname = format!("{:?}", z);
+                let zname = format!("{z:?}");
 
                 let ratio = &ratios[i][z];
                 let zmin = ratio.minimum().unwrap() as f64 / 10.0;
@@ -111,10 +111,8 @@ fn main() {
                 let tmean = speed.mean().unwrap();
                 let tstddev = speed.stddev().unwrap();
 
-                print!("{:10}{:8}{:8}| {:5.1}% {:5.1}% {:5.1}% {:5.1}%", ds,
-                         zname, shufname, zmin, zmean, zmax, zstddev);
-                println!(" | {:5.1}MiBps {:4.1}MiBps",
-                         tmean, tstddev);
+                print!("{ds:10}{zname:8}{shufname:8}| {zmin:5.1}% {zmean:5.1}% {zmax:5.1}% {zstddev:5.1}%");
+                println!(" | {tmean:5.1}MiBps {tstddev:4.1}MiBps");
             }
         }
     }

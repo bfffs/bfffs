@@ -100,7 +100,7 @@ impl Collidable for CExtattr {
 }
 
 fn report(collisions: u64, tries: u64) {
-    println!("Found {} collisions among {} filenames", collisions, tries);
+    println!("Found {collisions} collisions among {tries} filenames");
 }
 
 struct Worker {
@@ -170,7 +170,7 @@ fn main() {
     }
 
     let ncpu = num_cpus::get();
-    println!("Using {} threads", ncpu);
+    println!("Using {ncpu} threads");
     for _ in 0..ncpu {
         let mut worker = Worker::new(&HM);
         thread::spawn(move || {

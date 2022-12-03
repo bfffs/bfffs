@@ -1,8 +1,5 @@
 // vim: tw=80
 
-// https://github.com/rust-lang/rust-clippy/issues/9986
-#![allow(clippy::unnecessary_safety_doc)]
-
 use std::{
     borrow::Borrow,
     collections::hash_map::HashMap,
@@ -380,7 +377,7 @@ pub unsafe extern "C" fn fio_bfffs_open(
                 0
             }
             Err(e) => {
-                eprintln!("fio_bfffs_open: {:?}", e);
+                eprintln!("fio_bfffs_open: {e:?}");
                 1
             }
         }

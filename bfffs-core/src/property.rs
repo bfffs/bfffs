@@ -89,7 +89,7 @@ impl Property {
     pub fn as_bool(&self) -> bool {
         match self {
             Property::Atime(atime) => *atime,
-            _ => panic!("{:?} is not a boolean Property", self)
+            _ => panic!("{self:?} is not a boolean Property")
         }
     }
 
@@ -98,14 +98,14 @@ impl Property {
             Property::BaseMountpoint(mp) => mp,
             Property::Mountpoint(mp) => mp,
             Property::Name(s) => s,
-            _ => panic!("{:?} is not a str Property", self)
+            _ => panic!("{self:?} is not a str Property")
         }
     }
 
     pub fn as_u8(&self) -> u8 {
         match self {
             Property::RecordSize(rs) => *rs,
-            _ => panic!("{:?} is not a u8 Property", self)
+            _ => panic!("{self:?} is not a u8 Property")
         }
     }
 }
@@ -140,7 +140,7 @@ impl fmt::Display for ParsePropertyError {
             Self::Name(e) => e.fmt(f),
             Self::ReadOnly => write!(f, "This property is read-only"),
             Self::Value(s) =>
-                write!(f, "{} is not a valid value for this property", s)
+                write!(f, "{s} is not a valid value for this property")
         }
     }
 }
