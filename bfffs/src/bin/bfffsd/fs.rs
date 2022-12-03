@@ -1,5 +1,9 @@
 // vim: tw=80
 //! FUSE filesystem access
+// Some conversions are only necessary for one of FreeBSD 11 or 12.  After libc
+// makes the switchover, delete this line and clean them up.
+#![allow(clippy::useless_conversion)]
+#![allow(clippy::unnecessary_cast)]
 
 use std::{
     collections::hash_map::HashMap,
@@ -163,7 +167,7 @@ impl FuseFs {
                     nlink: attr.nlink as u32,
                     uid: attr.uid,
                     gid: attr.gid,
-                    rdev: attr.rdev,
+                    rdev: attr.rdev as u32,
                     blksize: attr.blksize,
                     generation,
                 };
@@ -710,12 +714,26 @@ impl Filesystem for FuseFs {
             }
             libc::S_IFCHR => {
                 self.fs
-                    .mkchar(&parent_fd, name, perm, req.uid, req.gid, rdev)
+                    .mkchar(
+                        &parent_fd,
+                        name,
+                        perm,
+                        req.uid,
+                        req.gid,
+                        rdev.into(),
+                    )
                     .await
             }
             libc::S_IFBLK => {
                 self.fs
-                    .mkblock(&parent_fd, name, perm, req.uid, req.gid, rdev)
+                    .mkblock(
+                        &parent_fd,
+                        name,
+                        perm,
+                        req.uid,
+                        req.gid,
+                        rdev.into(),
+                    )
                     .await
             }
             libc::S_IFSOCK => {

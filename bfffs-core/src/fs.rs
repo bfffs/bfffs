@@ -21,6 +21,7 @@ use futures::{
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
+use libc::dev_t;
 use std::{
     cmp,
     ffi::{OsStr, OsString},
@@ -455,7 +456,7 @@ pub struct GetAttr {
     /// Group id
     pub gid:        u32,
     /// Device number, for device nodes only
-    pub rdev:       u32,
+    pub rdev:       dev_t,
     /// Optimal I/O block size
     pub blksize:    u32,
     /// File flags
@@ -1686,7 +1687,7 @@ impl Fs {
 
     /// Make a block device
     pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                   gid: u32, rdev: u32) -> std::result::Result<FileDataMut, i32>
+                   gid: u32, rdev: dev_t) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Block(rdev));
@@ -1695,7 +1696,7 @@ impl Fs {
 
     /// Make a character device
     pub async fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
-                  gid: u32, rdev: u32) -> std::result::Result<FileDataMut, i32>
+                  gid: u32, rdev: dev_t) -> std::result::Result<FileDataMut, i32>
     {
         let create_args = CreateArgs::new(parent, name, perm, uid, gid,
                                           FileType::Char(rdev));
@@ -1937,13 +1938,12 @@ impl Fs {
 
         fn dirent2dirent(bfffs_dirent: Dirent) -> libc::dirent {
             let namlen = bfffs_dirent.name.as_bytes().len();
-            let mut fs_dirent = libc::dirent {
-                d_fileno: bfffs_dirent.ino as u32,
-                d_reclen: DIRENT_SIZE as u16,
-                d_type: bfffs_dirent.dtype,
-                d_namlen: namlen as u8,
-                d_name: unsafe{mem::zeroed()}
-            };
+            let mut fs_dirent: libc::dirent = unsafe { mem::zeroed() };
+            fs_dirent.d_fileno = bfffs_dirent.ino as _;
+            fs_dirent.d_reclen = DIRENT_SIZE as u16;
+            fs_dirent.d_type = bfffs_dirent.dtype;
+            fs_dirent.d_namlen = namlen as _;
+            fs_dirent.d_name = unsafe{mem::zeroed()};
             // libc::dirent uses "char" when it should be using
             // "unsigned char", so we need an unsafe conversion
             let p = bfffs_dirent.name.as_bytes() as *const [u8]
