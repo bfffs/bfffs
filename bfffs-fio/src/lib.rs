@@ -1,8 +1,5 @@
 // vim: tw=80
 
-// https://github.com/rust-lang/rust-clippy/issues/9986
-#![allow(clippy::unnecessary_safety_doc)]
-
 use std::{
     borrow::Borrow,
     collections::hash_map::HashMap,
