@@ -1931,7 +1931,7 @@ mod mknod {
         let ino = 43;
         let uid = 12345u32;
         let gid = 54321u32;
-        let rdev = 69;
+        let rdev = 69u32;
 
         let request = Request {
             uid,
@@ -1973,7 +1973,7 @@ mod mknod {
                     nlink: 1,
                     uid,
                     gid,
-                    rdev,
+                    rdev: rdev as libc::dev_t,
                     blksize: 4096,
                     flags: 0,
                 }));
@@ -2009,7 +2009,7 @@ mod mknod {
         let ino = 43;
         let uid = 12345u32;
         let gid = 54321u32;
-        let rdev = 69;
+        let rdev = 69u32;
 
         let request = Request {
             uid,
@@ -2051,7 +2051,7 @@ mod mknod {
                     nlink: 1,
                     uid,
                     gid,
-                    rdev,
+                    rdev: rdev as libc::dev_t,
                     blksize: 4096,
                     flags: 0,
                 }));
@@ -2480,77 +2480,56 @@ mod readdir {
         sockname[0] = 's' as libc::c_char;
         let sock_ino = 43u32;
         let sock_ofs = 6;
+        let mut d_dirent: libc::dirent = unsafe { mem::zeroed() };
+        d_dirent.d_fileno = dot_ino.into();
+        d_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        d_dirent.d_type = libc::DT_DIR;
+        d_dirent.d_name = dotname;
+        d_dirent.d_namlen = 1;
+        let mut reg_dirent: libc::dirent = unsafe { mem::zeroed() };
+        reg_dirent.d_fileno = reg_ino.into();
+        reg_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        reg_dirent.d_type = libc::DT_REG;
+        reg_dirent.d_name = regname;
+        reg_dirent.d_namlen = 1;
+        let mut char_dirent: libc::dirent = unsafe { mem::zeroed() };
+        char_dirent.d_fileno = char_ino.into();
+        char_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        char_dirent.d_type = libc::DT_CHR;
+        char_dirent.d_name = charname;
+        char_dirent.d_namlen = 1;
+        let mut block_dirent: libc::dirent = unsafe { mem::zeroed() };
+        block_dirent.d_fileno = block_ino.into();
+        block_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        block_dirent.d_type = libc::DT_BLK;
+        block_dirent.d_name = blockname;
+        block_dirent.d_namlen = 1;
+        let mut fifo_dirent: libc::dirent = unsafe { mem::zeroed() };
+        fifo_dirent.d_fileno = pipe_ino.into();
+        fifo_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        fifo_dirent.d_type = libc::DT_FIFO;
+        fifo_dirent.d_name = pipename;
+        fifo_dirent.d_namlen = 1;
+        let mut lnk_dirent: libc::dirent = unsafe { mem::zeroed() };
+        lnk_dirent.d_fileno = symlink_ino.into();
+        lnk_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        lnk_dirent.d_type = libc::DT_LNK;
+        lnk_dirent.d_name = symlinkname;
+        lnk_dirent.d_namlen = 1;
+        let mut sock_dirent: libc::dirent = unsafe { mem::zeroed() };
+        sock_dirent.d_fileno = sock_ino.into();
+        sock_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        sock_dirent.d_type = libc::DT_SOCK;
+        sock_dirent.d_name = sockname;
+        sock_dirent.d_namlen = 1;
         let contents = vec![
-            Ok((
-                libc::dirent {
-                    d_fileno: dot_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_DIR,
-                    d_name:   dotname,
-                    d_namlen: 1,
-                },
-                dot_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: reg_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_REG,
-                    d_name:   regname,
-                    d_namlen: 1,
-                },
-                reg_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: char_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_CHR,
-                    d_name:   charname,
-                    d_namlen: 1,
-                },
-                char_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: block_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_BLK,
-                    d_name:   blockname,
-                    d_namlen: 1,
-                },
-                block_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: pipe_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_FIFO,
-                    d_name:   pipename,
-                    d_namlen: 1,
-                },
-                pipe_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: symlink_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_LNK,
-                    d_name:   symlinkname,
-                    d_namlen: 1,
-                },
-                symlink_ofs,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: sock_ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_SOCK,
-                    d_name:   sockname,
-                    d_namlen: 1,
-                },
-                sock_ofs,
-            )),
+            Ok((d_dirent, dot_ofs)),
+            Ok((reg_dirent, reg_ofs)),
+            Ok((char_dirent, char_ofs)),
+            Ok((block_dirent, block_ofs)),
+            Ok((fifo_dirent, pipe_ofs)),
+            Ok((lnk_dirent, symlink_ofs)),
+            Ok((sock_dirent, sock_ofs)),
         ];
 
         let request = Request::default();
@@ -2665,28 +2644,19 @@ mod readdir {
         let mut dotdotname = [0; 256];
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
-        let contents = vec![
-            Ok((
-                libc::dirent {
-                    d_fileno: ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_DIR,
-                    d_name:   dotname,
-                    d_namlen: 1,
-                },
-                0,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: parent.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_DIR,
-                    d_name:   dotdotname,
-                    d_namlen: 2,
-                },
-                1,
-            )),
-        ];
+        let mut dirent0: libc::dirent = unsafe { mem::zeroed() };
+        dirent0.d_fileno = ino.into();
+        dirent0.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        dirent0.d_type = libc::DT_DIR;
+        dirent0.d_name = dotname;
+        dirent0.d_namlen = 1;
+        let mut dirent1: libc::dirent = unsafe { mem::zeroed() };
+        dirent1.d_fileno = parent.into();
+        dirent1.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        dirent1.d_type = libc::DT_DIR;
+        dirent1.d_name = dotdotname;
+        dirent1.d_namlen = 2;
+        let contents = vec![Ok((dirent0, 0)), Ok((dirent1, 1))];
 
         let request = Request::default();
 
@@ -2746,28 +2716,19 @@ mod readdir {
         let mut dotdotname = [0; 256];
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
-        let contents = vec![
-            Ok((
-                libc::dirent {
-                    d_fileno: ino.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_DIR,
-                    d_name:   dotname,
-                    d_namlen: 1,
-                },
-                0,
-            )),
-            Ok((
-                libc::dirent {
-                    d_fileno: parent.into(),
-                    d_reclen: mem::size_of::<libc::dirent>() as u16,
-                    d_type:   libc::DT_DIR,
-                    d_name:   dotdotname,
-                    d_namlen: 2,
-                },
-                1,
-            )),
-        ];
+        let mut dirent0: libc::dirent = unsafe { mem::zeroed() };
+        dirent0.d_fileno = ino.into();
+        dirent0.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        dirent0.d_type = libc::DT_DIR;
+        dirent0.d_name = dotname;
+        dirent0.d_namlen = 1;
+        let mut dirent1: libc::dirent = unsafe { mem::zeroed() };
+        dirent1.d_fileno = parent.into();
+        dirent1.d_reclen = mem::size_of::<libc::dirent>() as u16;
+        dirent1.d_type = libc::DT_DIR;
+        dirent1.d_name = dotdotname;
+        dirent1.d_namlen = 2;
+        let contents = vec![Ok((dirent0, 0)), Ok((dirent1, 1))];
 
         let request = Request::default();
 
