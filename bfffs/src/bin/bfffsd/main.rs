@@ -347,7 +347,7 @@ impl Bfffsd {
                              */
                             std::mem::forget(mount_handle);
                             rpc::Response::FsMount(Ok(()))
-                        },
+                        }
                         Err(e) => {
                             error!("mount: {:?}", e);
                             rpc::Response::FsMount(Err(e))

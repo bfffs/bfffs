@@ -263,7 +263,7 @@ dependencies = [
  "lalrpop-util",
  "libc",
  "mockall",
- "nix 0.28.0",
+ "nix",
  "predicates",
  "pretty_assertions",
  "prettytable",
@@ -313,7 +313,7 @@ dependencies = [
  "metrohash",
  "mockall",
  "mockall_double",
- "nix 0.27.1",
+ "nix",
  "nonzero_ext",
  "num-traits",
  "num_cpus",
@@ -496,9 +496,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.1.1"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd16c4719339c4530435d38e511904438d07cce7950afa3718a84ac36c10e89e"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "ciborium"
@@ -1021,8 +1021,7 @@ checksum = "673464e1e314dd67a0fd9544abc99e8eb28d0c7e3b69b033bcff9b2d00b87333"
 [[package]]
 name = "fuse3"
 version = "0.7.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02ca1b211677ee014a10b94ab6aea31e622ad1ea35f48b1670ac492a4f88b1af"
+source = "git+https://github.com/Sherlock-Holo/fuse3.git?rev=bf4a341#bf4a34123392a19a0d8cce504d799944a6063f32"
 dependencies = [
  "async-notify",
  "bincode",
@@ -1031,7 +1030,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "libc",
- "nix 0.28.0",
+ "nix",
  "serde",
  "slab",
  "tokio",
@@ -1574,12 +1573,12 @@ dependencies = [
 
 [[package]]
 name = "mio-aio"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72473aec34176e56e6dc8722e4d7ad1efdb4cc423b6a2cd788278fb6d350cffa"
+checksum = "94970d564990c83f7431efebf40f81b4b0d36b4e362fae869081d952530937ff"
 dependencies = [
  "mio",
- "nix 0.27.1",
+ "nix",
  "pin-utils",
 ]
 
@@ -1630,26 +1629,15 @@ checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
 
 [[package]]
 name = "nix"
-version = "0.27.1"
+version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
-dependencies = [
- "bitflags 2.4.0",
- "cfg-if",
- "libc",
- "pin-utils",
-]
-
-[[package]]
-name = "nix"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab2156c4fce2f8df6c499cc1c763e4394b7482525bf2a9701c9d79d215f519e4"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
 dependencies = [
  "bitflags 2.4.0",
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "pin-utils",
 ]
 
 [[package]]
@@ -2670,14 +2658,14 @@ dependencies = [
 
 [[package]]
 name = "tokio-file"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "348db3dc9fb1fbb32338e013b69d346370d2f9cafb69f9746efb9056a6f3ecc1"
+checksum = "991bf4c368ae648279b4355fbdd066966ca255cd45c5041144be9f0d27f30833"
 dependencies = [
  "futures",
  "mio",
  "mio-aio",
- "nix 0.27.1",
+ "nix",
  "tokio",
 ]
 

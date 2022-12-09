@@ -531,6 +531,16 @@ impl Mirror {
         }
     }
 
+    pub fn sync_all(&self) -> BoxVdevFut {
+        // TODO: handle errors on some devices
+        let fut = self.children.iter()
+        .filter_map(Child::sync_all)
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
+    }
+
     pub fn uuid(&self) -> Uuid {
         self.uuid
     }
@@ -595,16 +605,6 @@ impl Vdev for Mirror {
 
     fn size(&self) -> LbaT {
         self.size
-    }
-
-    fn sync_all(&self) -> BoxVdevFut {
-        // TODO: handle errors on some devices
-        let fut = self.children.iter()
-        .filter_map(Child::sync_all)
-        .collect::<FuturesUnordered<_>>()
-        .try_collect::<Vec<_>>()
-        .map_ok(drop);
-        Box::pin(fut)
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
@@ -754,6 +754,7 @@ mock! {
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn status(&self) -> Status;
+        pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
@@ -765,7 +766,6 @@ mock! {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> BoxVdevFut;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }

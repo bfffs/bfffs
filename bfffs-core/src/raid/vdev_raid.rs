@@ -1817,24 +1817,6 @@ impl Vdev for VdevRaid {
         self.size
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
-        // Don't flush zones ourselves; the Cluster layer must be in charge of
-        // that, so it can update the spacemap.
-        debug_assert!(
-            self.stripe_buffers.read().unwrap()
-            .values()
-            .all(StripeBuffer::is_empty),
-            "Must call flush_zone before sync_all"
-        );
-        // TODO: handle errors on some devices
-        let fut = self.children.iter()
-        .filter_map(|bd| bd.sync_all())
-        .collect::<FuturesUnordered<_>>()
-        .try_collect::<Vec<_>>()
-        .map_ok(drop);
-        Box::pin(fut)
-    }
-
     // Zones don't necessarily line up with repetition boundaries.  So we don't
     // know the disk where a given zone begins.  Worse, declustered RAID is
     // usually not monotonic across all disks.  That is, RAID LBA X may
@@ -2180,6 +2162,24 @@ impl VdevRaidApi for VdevRaid {
             mirrors,
             uuid: self.uuid
         }
+    }
+
+    fn sync_all(&self) -> BoxVdevFut {
+        // Don't flush zones ourselves; the Cluster layer must be in charge of
+        // that, so it can update the spacemap.
+        debug_assert!(
+            self.stripe_buffers.read().unwrap()
+            .values()
+            .all(StripeBuffer::is_empty),
+            "Must call flush_zone before sync_all"
+        );
+        // TODO: handle errors on some devices
+        let fut = self.children.iter()
+        .filter_map(|bd| bd.sync_all())
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop);
+        Box::pin(fut)
     }
 
     fn uuid(&self) -> Uuid {

@@ -88,6 +88,10 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Return information about the health and composition of this RAID vdev.
     fn status(&self) -> Status;
 
+    /// Asynchronously sync the underlying device, ensuring that all data
+    /// reaches stable storage
+    fn sync_all(&self) -> BoxVdevFut;
+
     /// Return the UUID for this vdev.  It is the persistent, unique identifier
     /// for each vdev.
     fn uuid(&self) -> Uuid;

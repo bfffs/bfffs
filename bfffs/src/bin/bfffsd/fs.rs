@@ -250,14 +250,15 @@ impl Default for FuseFs {
 
 impl Filesystem for FuseFs {
     // TODO: implement readdirplus
-    type DirEntryPlusStream<'a> =
-        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntryPlus>> + Send + 'a>>;
+    type DirEntryPlusStream<'a> = Pin<
+        Box<dyn Stream<Item = fuse3::Result<DirectoryEntryPlus>> + Send + 'a>,
+    >;
     type DirEntryStream<'a> =
         Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntry>> + Send + 'a>>;
 
     async fn init(&self, _req: Request) -> fuse3::Result<ReplyInit> {
-        Ok(ReplyInit{
-            max_write: NonZeroU32::new(1<<24).unwrap()
+        Ok(ReplyInit {
+            max_write: NonZeroU32::new(1 << 24).unwrap(),
         })
     }
 
