@@ -18,7 +18,7 @@ bincode = "1.0.1"
 bfffs-core = { path = "../bfffs-core" }
 bytes = "1.0"
 cfg-if = "1.0"
-fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "90f4c22", optional = true, features = ["tokio-runtime"] }
+fuse3 = { git = "https://github.com/asomers/fuse3.git", rev = "4ec84c2", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
 lalrpop-util = "0.19.7"
 libc = "0.2.44"
@@ -47,7 +47,7 @@ lalrpop = "0.19.7"
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
 freebsd-libgeom = "0.2.1"
-function_name = "0.2.0"
+function_name = "0.3.0"
 mockall = "0.11.0"
 nix = { version = "0.26.1", default-features = false, features = ["mount", "process", "signal", "user"] }
 predicates = "2.1.0"
