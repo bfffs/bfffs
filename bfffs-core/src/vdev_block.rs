@@ -522,7 +522,7 @@ impl Inner {
     }
 
     /// Create a future from a BlockOp, but don't spawn it yet
-    fn make_fut(&mut self, block_op: BlockOp)
+    fn make_fut(&'static mut self, block_op: BlockOp)
         -> (Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>) {
 
         self.queue_depth += 1;

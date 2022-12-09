@@ -11,3 +11,4 @@ members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 resolver = "2"
 
 [patch.crates-io]
+nix = { path = "../nix" }

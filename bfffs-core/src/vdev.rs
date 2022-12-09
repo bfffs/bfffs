@@ -88,7 +88,7 @@ pub trait Vdev {
 
     /// Sync the `Vdev`, ensuring that all data written so far reaches stable
     /// storage.
-    fn sync_all(&self) -> BoxVdevFut;
+    fn sync_all(&'static self) -> BoxVdevFut;
 
     /// Return the UUID for this vdev.  It is the persistent, unique identifier
     /// for each vdev.
