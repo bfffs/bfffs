@@ -585,6 +585,24 @@ impl VdevFile {
         Box::pin(WriteAt { _buf: buf, fut })
     }
 
+    fn write_at_unchecked2(&self, buf: IoVec, lba: LbaT) -> impl Future<Output = Result<()>> + Send + Sync
+    {
+        let off = lba * (BYTES_PER_LBA as u64);
+        {
+            let b: &[u8] = (*buf).borrow();
+            debug_assert!(b.len() % BYTES_PER_LBA == 0);
+        }
+
+        // Safe because fut's lifetime is equal to buf's (or rather, it will
+        // be once we move it into the WriteAt struct
+        let sbuf: &'static [u8] = unsafe {
+            mem::transmute::<&[u8], &'static [u8]>( buf.as_ref())
+        };
+        let fut = self.file.write_at(sbuf, off).unwrap();
+
+        WriteAt { _buf: buf, fut }
+    }
+
     /// Asynchronously write this Vdev's label.
     ///
     /// `label_writer` should already contain the serialized labels of every
