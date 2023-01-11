@@ -228,7 +228,10 @@ impl Bfffsd {
                     .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);
                         Session::new(mo2).mount(fusefs, mp)
-                            .map_err(Error::from)
+                            .map_err(|e| {
+                                tracing::debug!("mount failed: {}", e);
+                                Error::from(e)
+                            })
                     })
                 .await
             }
