@@ -3235,6 +3235,29 @@ root:
         assert_ts_changed(&fs, &fdh, false, true, true, false).await;
     }
 
+    /// Truncate a record that is already sparse.  The truncation begins past
+    /// the end of the record's data.
+    // Found by "fsx -WR -S12"
+    #[tokio::test]
+    async fn setattr_truncate_sparse_record() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        // Create a file
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        let wbuf = vec![42u8; 2048];
+        fs.write(&fdh, 0, &wbuf[..], 0).await.unwrap();
+        // Extend the file past the end of the first record
+        let attr = SetAttr { size: Some(8192), .. Default::default() };
+        fs.setattr(&fdh, attr).await.unwrap();
+        // Now truncate the file beginning in the first record, but past the end
+        // of the data
+        let attr = SetAttr { size: Some(3072), .. Default::default() };
+        fs.setattr(&fdh, attr).await.unwrap();
+    }
+
     /// Set an blob extended attribute
     #[tokio::test]
     async fn setextattr_blob() {
