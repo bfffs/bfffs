@@ -885,7 +885,11 @@ impl Fs {
                 }.boxed(),
                 Some(FSValue::InlineExtent(ile)) => async move {
                     let mut b = ile.buf.try_mut().unwrap();
-                    let r = if len >= b.len() - recofs as usize {
+                    let r = if recofs > b.len() as u64 {
+                        // Nothing to do.  The truncation happens in a part of
+                        // the record that is already sparse.
+                        0
+                    } else if len >= b.len() - recofs as usize {
                         // truncate the record, making it sparse
                         let old_len = b.len();
                         b.try_truncate(recofs as usize).unwrap();
