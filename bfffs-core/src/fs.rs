@@ -570,7 +570,7 @@ impl Fs {
     {
         let ino = fd.ino;
         let inode_key = FSKey::new(ino, ObjKey::Inode);
-        self.db.fswrite(self.tree, 3, 0, 2, 1,
+        self.db.fswrite(self.tree, 3, 1, 2, 0,
         move |dataset| async move {
             let ds = Arc::new(dataset);
             let mut inode_value = ds.get(inode_key).await?.unwrap();
