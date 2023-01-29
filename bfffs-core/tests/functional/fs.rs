@@ -536,6 +536,27 @@ mod fs {
         assert_ts_changed(&fs, &fdh, false, false, false, false).await;
     }
 
+    /// Deallocate a whole extent and portions of two others
+    /// This is a regression test for an insufficient credit bug that could
+    /// only be triggered with 128kB record sizes or above.
+    /// Found by FSX.
+    #[tokio::test]
+    async fn deallocate_whole_and_partial() {
+        let exp = 17u8;
+        let rs = 1usize << exp;
+        let props = vec![Property::RecordSize(exp), Property::Atime(false)];
+        let (fs, _cache, _db) = harness(props).await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let h = fd.handle();
+
+        let buf = vec![0u8; rs * 3];
+        assert_eq!(Ok(rs as u32 * 3), fs.write(&h, 0, &buf[..], 0).await);
+        assert!(fs.deallocate(&h, rs as u64 / 2, rs as u64 * 2).await.is_ok());
+    }
+
     #[tokio::test]
     async fn deleteextattr() {
         let (fs, _cache, _db) = harness4k().await;
