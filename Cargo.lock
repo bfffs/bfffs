@@ -683,8 +683,9 @@ checksum = "673464e1e314dd67a0fd9544abc99e8eb28d0c7e3b69b033bcff9b2d00b87333"
 
 [[package]]
 name = "fuse3"
-version = "0.5.1"
-source = "git+https://github.com/asomers/fuse3.git?rev=4ec84c2#4ec84c23426bc1cc5a37c407aa6042fc8c41b39e"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8aaac75c1369ee81ed34a8e26216258126a3c555bfc85e49eb33b5e239fd182e"
 dependencies = [
  "async-trait",
  "bincode",
@@ -697,7 +698,6 @@ dependencies = [
  "serde",
  "slab",
  "tokio",
- "tokio-stream",
  "tracing",
 ]
 
@@ -2007,17 +2007,6 @@ checksum = "31e9d9516b9eb997f1fbdfa77c98be9a3e52ba36c84d48db5d81745042770bbf"
 dependencies = [
  "filedesc",
  "libc",
- "tokio",
-]
-
-[[package]]
-name = "tokio-stream"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d660770404473ccd7bc9f8b28494a811bc18542b915c0855c51e8f419d5223ce"
-dependencies = [
- "futures-core",
- "pin-project-lite",
  "tokio",
 ]
 
