@@ -302,6 +302,38 @@ mod fs {
         assert_eq!(&db[..], &expected[..]);
     }
 
+    #[tokio::test]
+    async fn deallocate_entire_partial_extent_from_left() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        let mut buf = vec![0u8; 6144];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        assert_eq!(Ok(6144), fs.write(&fdh, 0, &buf[..], 0).await);
+        clear_timestamps(&fs, &fdh).await;
+
+        assert!(fs.deallocate(&fdh, 4096, 2048).await.is_ok());
+
+        let attr = fs.getattr(&fdh).await.unwrap();
+        // The partially deallocated extent still takes up space
+        // TODO: remove the extent entirely
+        assert_eq!(attr.bytes, 6144);
+        assert_eq!(attr.size, 6144);
+        assert_ts_changed(&fs, &fdh, false, true, true, false).await;
+        // Finally, verify that the deallocated space is zeroes.
+        let sglist = fs.read(&fdh, 0, 6144).await.unwrap();
+        let zbuf = [0u8; 2048];
+        assert_eq!(sglist[0].len(), 4096);
+        assert_eq!(&sglist[0][..], &buf[0..4096]);
+        assert_eq!(&sglist[1][..], &zbuf[..]);
+    }
+
     /// Deallocate the left part of an extent
     #[rstest]
     #[case(false)]
@@ -409,6 +441,45 @@ mod fs {
         assert_eq!(&db[0..1024], &buf[0..1024]);
         assert_eq!(&db[1024..3072], &zbuf[0..2048]);
         assert_eq!(&db[3072..4096], &buf[3072..4096]);
+    }
+
+    /// Deallocate space from a partial hole: an extent that only has data in
+    /// the bottom portion.
+    #[tokio::test]
+    async fn deallocate_partial_hole_from_start_of_extent() {
+        let (fs, _cache, _db) = harness4k().await;
+        let root = fs.root();
+        let rooth = root.handle();
+        let fd = fs.create(&rooth, &OsString::from("x"), 0o644, 0, 0).await
+        .unwrap();
+        let fdh = fd.handle();
+        let mut buf = vec![0u8; 1024];
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        assert_eq!(Ok(1024), fs.write(&fdh, 0, &buf[..], 0).await);
+        let attr = SetAttr {
+            size: Some(4096),
+            .. Default::default()
+        };
+        fs.setattr(&fdh, attr).await.unwrap();
+        clear_timestamps(&fs, &fdh).await;
+
+        assert!(fs.deallocate(&fdh, 0, 2048).await.is_ok());
+
+        let attr = fs.getattr(&fdh).await.unwrap();
+        // The partially deallocated extent still takes up space
+        // TODO: remove the extent entirely
+        assert_eq!(attr.bytes, 1024);
+        assert_eq!(attr.size, 4096);
+        assert_ts_changed(&fs, &fdh, false, true, true, false).await;
+        // Finally, read the deallocated record.  It should be zeros
+        let sglist = fs.read(&fdh, 0, 4096).await.unwrap();
+        let zbuf = [0u8; 4096];
+        assert_eq!(sglist[0].len(), 1024);
+        assert_eq!(&sglist[0][..], &zbuf[0..1024]);
+        assert_eq!(&sglist[1][..], &zbuf[1024..]);
     }
 
     /// Deallocate the right part of an extent
