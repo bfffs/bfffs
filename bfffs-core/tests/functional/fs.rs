@@ -321,9 +321,7 @@ mod fs {
         assert!(fs.deallocate(&fdh, 4096, 2048).await.is_ok());
 
         let attr = fs.getattr(&fdh).await.unwrap();
-        // The partially deallocated extent still takes up space
-        // TODO: remove the extent entirely
-        assert_eq!(attr.bytes, 6144);
+        assert_eq!(attr.bytes, 4096);
         assert_eq!(attr.size, 6144);
         assert_ts_changed(&fs, &fdh, false, true, true, false).await;
         // Finally, verify that the deallocated space is zeroes.
@@ -469,17 +467,14 @@ mod fs {
         assert!(fs.deallocate(&fdh, 0, 2048).await.is_ok());
 
         let attr = fs.getattr(&fdh).await.unwrap();
-        // The partially deallocated extent still takes up space
-        // TODO: remove the extent entirely
-        assert_eq!(attr.bytes, 1024);
+        assert_eq!(attr.bytes, 0);
         assert_eq!(attr.size, 4096);
         assert_ts_changed(&fs, &fdh, false, true, true, false).await;
         // Finally, read the deallocated record.  It should be zeros
         let sglist = fs.read(&fdh, 0, 4096).await.unwrap();
         let zbuf = [0u8; 4096];
-        assert_eq!(sglist[0].len(), 1024);
-        assert_eq!(&sglist[0][..], &zbuf[0..1024]);
-        assert_eq!(&sglist[1][..], &zbuf[1024..]);
+        assert_eq!(sglist[0].len(), 4096);
+        assert_eq!(&sglist[0][..], &zbuf[..]);
     }
 
     /// Deallocate the right part of an extent

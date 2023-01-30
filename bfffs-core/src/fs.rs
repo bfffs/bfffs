@@ -952,13 +952,18 @@ impl Fs {
                     },
                     Some(FSValue::InlineExtent(ile)) => async move {
                         let mut b = ile.buf.try_mut().unwrap();
-                        for i in 0..len.min(b.len() as u64) {
-                            b[i as usize] = 0;
+                        if len < b.len() as u64 {
+                            for i in 0..len {
+                                b[i as usize] = 0;
+                            }
+                            let extent = InlineExtent::new(ile.buf);
+                            let v = FSValue::InlineExtent(extent);
+                            dataset4.insert(k, v).await?;
+                            Ok(0)
+                        } else {
+                            // Nothing to do!  Eliminating the whole extent
+                            Ok(b.len() as u64)
                         }
-                        let extent = InlineExtent::new(ile.buf);
-                        let v = FSValue::InlineExtent(extent);
-                        dataset4.insert(k, v).await?;
-                        Ok(0)
                     }.boxed(),
                     // Some(FSValue::BlobExtent(be)) should never happen,
                     // because FSValue::dpop will change it to an inline extent.
