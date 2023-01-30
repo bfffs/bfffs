@@ -931,10 +931,15 @@ impl Fs {
             .map_ok(move |_| old_len)
         }).boxed();
 
-        // Deallocate any partial record on the right side of the range, if the
-        // range ends in a different record than it started.
+        // Deallocate any partial record on the right side of the range:
+        // if the right end of the range does not run to a record boundary, AND
+        // either the left edge is a record boundary or the left edge is in a
+        // different record.
         let right_fut = match len {
-            Some(l) if ((offset + l) / rs > offset / rs) &&
+            Some(l) if (
+                            offset % rs == 0 ||
+                            (offset + l) / rs > offset / rs
+                       ) &&
                        (offset + l) % rs != 0 =>
             {
                 let len = (offset + l) % rs;
@@ -947,13 +952,18 @@ impl Fs {
                     },
                     Some(FSValue::InlineExtent(ile)) => async move {
                         let mut b = ile.buf.try_mut().unwrap();
-                        for i in 0..len {
-                            b[i as usize] = 0;
+                        if len < b.len() as u64 {
+                            for i in 0..len {
+                                b[i as usize] = 0;
+                            }
+                            let extent = InlineExtent::new(ile.buf);
+                            let v = FSValue::InlineExtent(extent);
+                            dataset4.insert(k, v).await?;
+                            Ok(0)
+                        } else {
+                            // Nothing to do!  Eliminating the whole extent
+                            Ok(b.len() as u64)
                         }
-                        let extent = InlineExtent::new(ile.buf);
-                        let v = FSValue::InlineExtent(extent);
-                        dataset4.insert(k, v).await?;
-                        Ok(0)
                     }.boxed(),
                     // Some(FSValue::BlobExtent(be)) should never happen,
                     // because FSValue::dpop will change it to an inline extent.
