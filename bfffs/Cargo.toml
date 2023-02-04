@@ -26,7 +26,7 @@ nix = { version = "0.26.1", default-features = false, features = ["user"] }
 si-scale = "0.1.5"
 tabular = "0.2.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
-tokio = { version = "1.23.1", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1.24.2", features = ["macros", "rt", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-seqpacket = "0.5.4"
 tracing = "0.1.5"
 
