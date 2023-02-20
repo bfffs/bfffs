@@ -107,7 +107,8 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
 
-    /// What is the maximum value that V::allocated_space() should ever return ?
+    /// What is the maximum value that V::allocated_space() is likely to return?
+    /// In extreme cases it is allowed to return more.
     const MAX_ALLOCATED_SPACE: usize = 0;
 
     /// How much allocated space does this object own, excluding the object
