@@ -12,7 +12,7 @@ use std::{
     cmp::Ordering,
     collections::VecDeque,
     mem,
-    ops::Add,
+    ops::{Add, Sub},
     pin::Pin,
     sync::{
         Mutex,
@@ -105,6 +105,16 @@ impl Add<usize> for &mut Credit {
 
     fn add(self, other: usize) -> Self::Output {
         (*self.0.get_mut() >> 1) + other
+    }
+}
+
+// Doesn't actually mutate Self, but needs mutable access to avoid atomic
+// instructions.
+impl Sub<usize> for &mut Credit {
+    type Output = usize;
+
+    fn sub(self, other: usize) -> Self::Output {
+        (*self.0.get_mut() >> 1) - other
     }
 }
 

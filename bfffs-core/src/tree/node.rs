@@ -332,6 +332,12 @@ impl<K: Key, V: Value> LeafData<K, V> {
             "Attempting to acredit an already accredited leaf node");
         if K::USES_CREDIT {
             let need = self.wb_space();
+            if *credit < need {
+                tracing::error!("Insufficient credit.  Have {:?} need {}",
+                                *credit, need);
+            } else {
+                tracing::debug!("Consuming {need} credit");
+            }
             assert!(*credit >= need,
                     "Insufficient credit to xlock leaf node");
             self.credit = credit.split(need);
@@ -385,6 +391,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 .unwrap_or(0);
             let excess = (&mut credit + old_space).checked_sub(v_space + kvs)
                 .expect("insufficient credit was provided for this insertion");
+            tracing::debug!("Consuming {:?} credit", &mut credit - excess);
             self.credit.extend(credit);
             self.credit.split(excess)
         } else {
@@ -513,6 +520,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 return Ok((Some(v.dpop(dml, txg).await?), credit));
             }
         }
+        tracing::debug!("Returning {:?} credit", credit);
         Ok((old_v, credit))
     }
 
@@ -597,8 +605,8 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: SeqAccess<'de>
             {
-                // The only support serializer that uses a Seq is Bincode, where
-                // we don't serialize Credit
+                // The only supported serializer that uses a Seq is Bincode,
+                // where we don't serialize Credit
                 let items = seq.next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
                 let credit = Credit::null();
@@ -610,8 +618,8 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: de::MapAccess<'de>
             {
-                // The only support serializer that uses a Map is YAML, for unit
-                // tests and Tree::dump, where we do serialize Credit.
+                // The only supported serializer that uses a Map is YAML, for
+                // unit tests and Tree::dump, where we do serialize Credit.
                 let mut credit = Credit::null();
                 let mut items = None;
                 while let Some(key) = map.next_key()? {

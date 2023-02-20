@@ -29,6 +29,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
+    fmt::Debug,
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -40,6 +41,9 @@ use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
 };
+use tracing::instrument;
+#[cfg(not(test))]
+use tracing_futures::Instrument;
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
 pub type ReadWriteFilesystem = ReadWriteDataset<FSKey, FSValue>;
@@ -460,9 +464,10 @@ impl Database {
     /// Create a new, blank filesystem
     ///
     /// Must be called from the tokio domain.
+    #[tracing::instrument(skip(self))]
     pub async fn create_fs<S>(&self, parent: Option<TreeID>, name: S)
         -> Result<TreeID>
-        where S: Into<String> + 'static
+        where S: Into<String> + Debug + 'static
     {
         self.inner.dirty.store(true, Ordering::Relaxed);
         let idml2 = self.inner.idml.clone();
@@ -553,6 +558,7 @@ impl Database {
     // On startup, it should check the destroying area.  It should check it
     // again whenever it gets woken.  For each dataset to destroy, it should get
     // credit and tell the Tree layer to destroy it.
+    #[instrument(skip(self))]
     pub async fn destroy_fs(
         &self,
         parent: Option<TreeID>,
@@ -753,6 +759,7 @@ impl Database {
     /// `blob_bytes` -      Maximum number of bytes that will be written into
     ///                     the tree as blobs.
     #[cfg(not(test))]
+    #[tracing::instrument(skip(self, tree_id, f))]
     pub fn fswrite<F, B, R>(
         &self,
         tree_id: TreeID,
@@ -768,6 +775,7 @@ impl Database {
     {
         Inner::fswrite(self.inner.clone(), tree_id, ninsert, nrange_delete,
             nremove, blob_bytes, f)
+            .in_current_span()
     }
 
     /// Helper for MockDatabase::fswrite.
