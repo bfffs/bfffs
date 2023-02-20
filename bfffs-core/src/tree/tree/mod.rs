@@ -2255,8 +2255,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.
-    // Ignore credit.  The root will rarely be a Leaf, and if it is then we
-    // shouldn't be worried about memory consumption anyway.
     fn xlock_root(
         dml: &Arc<D>,
         mut guard: RwLockWriteGuard<TreeRoot<A, K, V>>,
