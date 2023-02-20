@@ -712,10 +712,8 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ///
     /// The returned structure may vary from Tree-to-Tree, but will never vary
     /// within the lifetime of a given Tree.
-    // XXX BUG does not account for the memory requirements of values
-    // themselves, such as in FSValue::allocated_space.
     pub fn credit_requirements(&self) -> CreditRequirements {
-        let kvs = mem::size_of::<(K, V)>();
+        let kvs = mem::size_of::<(K, V)>() + V::MAX_ALLOCATED_SPACE;
         let x = usize::from(self.limits.max_leaf_fanout()) * kvs;
         CreditRequirements {
             insert: 2 * x,

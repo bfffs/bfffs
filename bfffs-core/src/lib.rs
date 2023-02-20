@@ -1,6 +1,8 @@
 // vim: tw=80
 
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
+#![feature(const_cmp)]
+#![feature(const_trait_impl)]
 
 // Disable the range_plus_one lint until this bug is fixed.  It generates many
 // false positive in the Tree code.

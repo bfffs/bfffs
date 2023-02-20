@@ -354,6 +354,14 @@ impl Dirent {
     pub fn allocated_space(&self) -> usize {
         self.name.len()
     }
+
+    pub const fn max_allocated_space() -> usize {
+        // XXX BUG BFFFS doesn't internally impose any limit on the length of
+        // name, so it isn't really possible to guarantee a max allocated length
+        // limit.
+        256
+    }
+
 }
 
 impl HTItem for Dirent {
@@ -446,6 +454,13 @@ impl InlineExtAttr {
         self.extent.len()
     }
 
+    pub const fn max_allocated_space() -> usize {
+        // XXX BUG: there isn't anything within bfffs that limits the length of
+        // Name.  So it isn't really possible to guarantee a firm upper bound
+        // here.
+        256 + InlineExtent::max_allocated_space()
+    }
+
     pub fn needs_flush(&self) -> bool {
         self.len() > BLOB_THRESHOLD
     }
@@ -466,15 +481,15 @@ pub enum ExtAttr {
 }
 
 impl<'a> ExtAttr {
-    pub fn allocated_space(&self) -> usize {
-        const FUDGE: usize = 64;    // Experimentally determined
+    const FUDGE: usize = 64;    // Experimentally determined
 
+    pub fn allocated_space(&self) -> usize {
         match self {
             ExtAttr::Blob(blob_extattr) => blob_extattr.name.len(),
             ExtAttr::Inline(inline_extattr) =>
                 inline_extattr.name.len() +
                 inline_extattr.extent.len() +
-                FUDGE
+                Self::FUDGE
         }
     }
 
@@ -518,6 +533,10 @@ impl<'a> ExtAttr {
                 (k, FSValue::ExtAttr(ExtAttr::Blob(bea)))
             ).boxed()
         }
+    }
+
+    pub const fn max_allocated_space() -> usize {
+        InlineExtAttr::max_allocated_space() + Self::FUDGE
     }
 
     pub fn name(&'a self) -> &'a OsStr {
@@ -809,6 +828,10 @@ impl InlineExtent {
         self.buf.len()
     }
 
+    pub const fn max_allocated_space() -> usize {
+        BLOB_THRESHOLD + Self::FUDGE
+    }
+
     pub fn needs_flush(&self) -> bool {
         self.len() > BLOB_THRESHOLD
     }
@@ -1062,6 +1085,18 @@ impl TypicalSize for FSValue {
 
 impl Value for FSValue {
     const NEEDS_FLUSH: bool = true;
+
+    const MAX_ALLOCATED_SPACE: usize =
+        Dirent::max_allocated_space().max(
+            InlineExtent::max_allocated_space()).max(
+            mem::size_of::<Inode>()).max(
+            ExtAttr::max_allocated_space())
+            // XXX BUG: there is no limit to the size of a hash bucket, so we
+            // can't guarantee any particular limit to allocated space for
+            // ExtAttrs and DirEntries values.
+            /*.max(
+            FSValue::ExtAttrs::max_allocated_space()).max(
+            FSValue::DirEntries::max_allocated_space())*/;
 
     fn allocated_space(&self) -> usize {
         match self {
