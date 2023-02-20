@@ -407,8 +407,8 @@ root:
 "#);
 }
 
-/// The caller does not supply enough credit.
-#[should_panic(expected = "insufficient credit was provided")]
+/// The caller does not supply enough credit.  This should work, but log a
+/// warning.
 #[test]
 fn insert_insufficient_credit() {
     let mock = mock_dml();

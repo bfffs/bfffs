@@ -794,7 +794,7 @@ impl Database {
     }
     // LCOV_EXCL_STOP
 
-    /// Get the maximum size of the writeback cache
+    /// Get the soft limit for the size of the writeback cache
     pub fn writeback_size(&self) -> usize {
         self.inner.idml.writeback_size()
     }

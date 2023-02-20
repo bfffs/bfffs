@@ -331,19 +331,17 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Absorb as much credit as this LeafData needs.  Call this after
     /// deserializing a `LeafData` into a dirty state.
     pub fn acredit(&mut self, credit: &mut Credit) {
-        debug_assert_eq!(self.credit, 0,
+        debug_assert_eq!(self.credit, 0usize,
             "Attempting to acredit an already accredited leaf node");
         if K::USES_CREDIT {
             let need = self.wb_space();
             if *credit < need {
-                tracing::error!("Insufficient credit.  Have {:?} need {}",
+                tracing::warn!("Insufficient credit.  Have {:?} need {}",
                                 *credit, need);
             } else {
                 tracing::debug!("Consuming {need} credit");
             }
-            assert!(*credit >= need,
-                    "Insufficient credit to xlock leaf node");
-            self.credit = credit.split(need);
+            self.credit = credit.isplit(isize::try_from(need).unwrap());
         }
     }
 
@@ -392,11 +390,12 @@ impl<K: Key, V: Value> LeafData<K, V> {
             let old_space = old_v.as_ref()
                 .map(|v| v.allocated_space() + kvs)
                 .unwrap_or(0);
-            let excess = (&mut credit + old_space).checked_sub(v_space + kvs)
-                .expect("insufficient credit was provided for this insertion");
-            tracing::debug!("Consuming {:?} credit", &mut credit - excess);
+            let excess = (&mut credit + old_space) - isize::try_from(v_space + kvs).unwrap();
             self.credit.extend(credit);
-            self.credit.split(excess)
+            if excess < 0 {
+                tracing::warn!("Insufficient credit was provided for this insertion");
+            }
+            self.credit.isplit(excess)
         } else {
             debug_assert!(credit.is_null());
             Credit::null()
