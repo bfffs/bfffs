@@ -756,6 +756,7 @@ impl Inode {
 mod dbs_serializer {
     use divbuf::DivBufShared;
     use serde::{de::Deserializer, Deserialize, Serialize, Serializer};
+    use serde::ser::SerializeSeq;
     use std::sync::Arc;
 
     pub(super) fn deserialize<'de, DE>(deserializer: DE)
@@ -770,7 +771,18 @@ mod dbs_serializer {
         -> std::result::Result<S::Ok, S::Error>
         where S: Serializer
     {
-        dbs.try_const().unwrap()[..].serialize(serializer)
+        if serializer.is_human_readable() {
+            let db = dbs.try_const().unwrap();
+            let lines = hexdump::hexdump_iter(&db[..]);
+            let mut seq = serializer.serialize_seq(Some(lines.len()))?;
+            for line in lines {
+                seq.serialize_element(&*line)?;
+            }
+            seq.end()
+        }
+        else {
+            dbs.try_const().unwrap()[..].serialize(serializer)
+        }
     }
 }
 
