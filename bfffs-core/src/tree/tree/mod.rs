@@ -713,7 +713,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// The returned structure may vary from Tree-to-Tree, but will never vary
     /// within the lifetime of a given Tree.
     pub fn credit_requirements(&self) -> CreditRequirements {
-        let kvs = mem::size_of::<(K, V)>();
+        let kvs = mem::size_of::<(K, V)>() + V::MAX_ALLOCATED_SPACE;
         let x = usize::from(self.limits.max_leaf_fanout()) * kvs;
         CreditRequirements {
             insert: 2 * x,
@@ -2255,8 +2255,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.
-    // Ignore credit.  The root will rarely be a Leaf, and if it is then we
-    // shouldn't be worried about memory consumption anyway.
     fn xlock_root(
         dml: &Arc<D>,
         mut guard: RwLockWriteGuard<TreeRoot<A, K, V>>,

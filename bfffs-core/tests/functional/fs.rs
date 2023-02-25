@@ -32,7 +32,7 @@ mod fs {
     async fn harness(props: Vec<Property>) -> Harness {
         let (_, _, pool) = crate::PoolBuilder::new()
             .build();
-        let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(16_000_000)));
         let cache2 = cache.clone();
         let ddml = Arc::new(DDML::new(pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
@@ -4220,6 +4220,44 @@ root:
         let sglist = fs.read(&fdh, 4096, 2048).await.unwrap();
         let db = &sglist[0];
         assert_eq!(&db[..], &buf[4096..6144]);
+    }
+
+    /// regression test for an insufficient credit bug.  Triggered by
+    /// "cp -a /usr/include /testpool/include"
+    #[tokio::test]
+    async fn write_one_and_two_halves_records() {
+        //let rs = 4096;
+        let (fs, _cache, _db) = harness4k().await;
+        let rse = fs.get_prop(PropertyName::RecordSize)
+            .await
+            .unwrap()
+            .0
+            .as_u8();
+        let rs = (1 << rse) as u64;
+        let nextents = 2048;    // Must be close to max_leaf_fanout
+
+        let root = fs.root();
+        let fd = fs.create(&root.handle(), &OsString::from("x"), 0o644, 0, 0)
+            .await
+            .unwrap();
+        let fdh = fd.handle();
+        let mut buf = vec![0u8; 1024]; // Largest extent that will remain inline
+        let mut rng = thread_rng();
+        for x in &mut buf {
+            *x = rng.gen();
+        }
+        // Fill up the file with InlineExtents
+        for i in 0..nextents {
+            let r = fs.write(&fdh, i * rs, &buf[..], 0)
+                .await;
+            assert_eq!(Ok(1024), r);
+        }
+        fs.sync().await;
+
+        // Now rewrite somewhere in the middle record, which will require
+        // acrediting a very large leaf node
+        let r = fs.write(&fdh, nextents / 2 * rs, &buf[..], 0).await;
+        assert_eq!(Ok(1024), r);
     }
 }
 

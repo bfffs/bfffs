@@ -12,11 +12,11 @@ use std::{
     cmp::Ordering,
     collections::VecDeque,
     mem,
-    ops::Add,
+    ops::{Add, Sub},
     pin::Pin,
     sync::{
         Mutex,
-        atomic::{AtomicIsize, AtomicUsize, Ordering::*}
+        atomic::{AtomicIsize, Ordering::*}
     }
 };
 #[cfg(test)]
@@ -29,7 +29,7 @@ use std::fmt::Debug;
 #[derive(Debug)]
 #[derive(Serialize)]
 #[cfg_attr(test, derive(Deserialize))]
-pub struct Credit(AtomicUsize);
+pub struct Credit(AtomicIsize);
 
 impl Credit {
     /// Like [`split`], but slower since it uses atomic instructions.  Does not
@@ -38,11 +38,12 @@ impl Credit {
     pub fn atomic_split(&self, credit: usize) -> Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
         // negative.
+        let icredit = isize::try_from(credit).unwrap();
         let old = self.0.fetch_update(Relaxed, Relaxed, |old| {
-            let new = old.saturating_sub(credit << 1usize);
+            let new = (old - (icredit << 1usize)).max(0);
             Some(new)
         }).unwrap();
-        Credit(AtomicUsize::new((credit << 1).min(old)))
+        Credit(AtomicIsize::new((icredit << 1).min(old)))
     }
 
     pub fn extend(&mut self, mut other: Credit) {
@@ -54,15 +55,15 @@ impl Credit {
     ///
     /// For use in unit tests only!
     #[cfg(test)]
-    pub fn forge(size: usize) -> Credit {
-        Credit(AtomicUsize::new(size << 1usize))
+    pub fn forge(size: isize) -> Credit {
+        Credit(AtomicIsize::new(size << 1usize))
     }
 
     /// Split this Credit into two nearly equal pieces
     #[must_use]
     pub fn halve(&mut self) -> Credit {
         let old = *self.0.get_mut();
-        self.split(old >> 2)
+        self.isplit(old >> 2)
     }
 
     pub fn is_null(&self) -> bool {
@@ -75,7 +76,7 @@ impl Credit {
     // real `Credit`.  Using this instead of `Option<Credit>` lets the `Tree`
     // be more generic.
     pub fn null() -> Self {
-        Credit(AtomicUsize::new(0))
+        Credit(AtomicIsize::new(0))
     }
 
     #[must_use]
@@ -83,9 +84,19 @@ impl Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
         // negative.
         let old = *self.0.get_mut();
-        let new = old.saturating_sub(credit << 1usize);
-        self.0 = AtomicUsize::new(new);
-        Credit(AtomicUsize::new(old - new))
+        let icredit = isize::try_from(credit).unwrap();
+        self.isplit(icredit.min(old >> 1))
+    }
+
+    /// Signed split.  Split self into `credit` and the remainder, returning
+    /// `credit` with `remainder` in self.  If insufficient credit is available,
+    /// self will go negative.
+    #[must_use]
+    pub fn isplit(&mut self, credit: isize) -> Credit {
+        let old = *self.0.get_mut();
+        let new = old - (credit << 1usize);
+        self.0 = AtomicIsize::new(new);
+        Credit(AtomicIsize::new(old - new))
     }
 
     /// Takes all of this `Credit`'s credit out into a new `Credit`.
@@ -94,17 +105,29 @@ impl Credit {
     #[must_use]
     pub fn take(&mut self) -> Credit {
         let old = *self.0.get_mut();
-        self.split(old >> 1)
+        self.isplit(old >> 1)
     }
 }
 
 // Doesn't actually mutate Self, but needs mutable access to avoid atomic
 // instructions.
 impl Add<usize> for &mut Credit {
-    type Output = usize;
+    type Output = isize;
 
     fn add(self, other: usize) -> Self::Output {
-        (*self.0.get_mut() >> 1) + other
+        let iother = isize::try_from(other).unwrap();
+        (*self.0.get_mut() >> 1) + iother
+    }
+}
+
+// Doesn't actually mutate Self, but needs mutable access to avoid atomic
+// instructions.
+impl Sub<usize> for &mut Credit {
+    type Output = isize;
+
+    fn sub(self, other: usize) -> Self::Output {
+        let iother = isize::try_from(other).unwrap();
+        (*self.0.get_mut() >> 1) - iother
     }
 }
 
@@ -124,13 +147,23 @@ impl Drop for Credit {
 impl PartialEq<usize> for Credit {
     /// Is this credit correct for `other` bytes' worth of data?
     fn eq(&self, other: &usize) -> bool {
+        let iother = isize::try_from(*other).unwrap();
+        (self.0.load(Relaxed) >> 1) == iother
+    }
+}
+
+#[cfg(test)]
+impl PartialEq<isize> for Credit {
+    /// Is this credit correct for `other` bytes' worth of data?
+    fn eq(&self, other: &isize) -> bool {
         (self.0.load(Relaxed) >> 1) == *other
     }
 }
 
 impl PartialOrd<usize> for Credit {
     fn partial_cmp(&self, other: &usize) -> Option<Ordering> {
-        Some((self.0.load(Relaxed) >> 1).cmp(other))
+        let iother = isize::try_from(*other).unwrap();
+        Some((self.0.load(Relaxed) >> 1).cmp(&iother))
     }
 }
 
@@ -187,7 +220,7 @@ impl WriteBack {
     {
         let wants = size << 1;
         debug_assert!(self.capacity >= wants.try_into().unwrap());
-        let iwants = wants as isize;
+        let iwants = isize::try_from(wants).unwrap();
 
         loop {
             // NB: To be strictly correct, we ought to use Acquire here in order
@@ -219,11 +252,11 @@ impl WriteBack {
                     let sleeper = Sleeper { tx, wants: iwants };
                     guard.push_back(sleeper);
                     self.supply.fetch_or(1, Release);
-                    break rx.map(move |_| Credit(AtomicUsize::new(wants)))
+                    break rx.map(move |_| Credit(AtomicIsize::new(iwants)))
                         .boxed();
                 }
             } else {
-                break future::ready(Credit(AtomicUsize::new(wants))).boxed();
+                break future::ready(Credit(AtomicIsize::new(iwants))).boxed();
             }
         }
     }
@@ -243,7 +276,7 @@ impl WriteBack {
             // Short-circuit this common case
             return;
         }
-        let iwants = *credit.0.get_mut() as isize;
+        let iwants = *credit.0.get_mut();
         let old_supply = self.supply.fetch_add(iwants, Acquire);
         debug_assert!(self.capacity >= (old_supply & !0x1) + iwants);
 
@@ -278,7 +311,7 @@ fn debug() {
     format!("{wb:?}");
 }
 
-/// A borrow must sleep, but abandon his loan application (drops his future)
+/// A borrower must sleep, but abandons his loan application (drops his future)
 /// before being awakened.  This might happen in production if we ever support
 /// I/O cancellation.
 #[test]
@@ -462,6 +495,49 @@ fn split_saturate() {
     assert_eq!(credit1.0.load(Relaxed), 20);
     writeback.repay(credit0);
     writeback.repay(credit1);
+    assert_eq!(writeback.supply.load(Relaxed), writeback.capacity)
+}
+
+/// It should be possible to split off negative credit.
+#[test]
+fn isplit_negative() {
+    let writeback = WriteBack::with_capacity(10);
+    let mut credit0 = writeback.borrow(10).now_or_never().unwrap();
+    let credit1 = credit0.isplit(-1);
+    assert_eq!(credit1.0.load(Relaxed), -2);
+    assert_eq!(credit0.0.load(Relaxed), 22);
+    // Note: negative credits must be repayed first
+    writeback.repay(credit1);
+    writeback.repay(credit0);
+    assert_eq!(writeback.supply.load(Relaxed), writeback.capacity)
+}
+
+/// Withdraw too much credit, leaving the original negative
+#[test]
+fn isplit_overdraft() {
+    let writeback = WriteBack::with_capacity(10);
+    let mut credit0 = writeback.borrow(10).now_or_never().unwrap();
+    let credit1 = credit0.isplit(11);
+    assert_eq!(credit1.0.load(Relaxed), 22);
+    assert_eq!(credit0.0.load(Relaxed), -2);
+    writeback.repay(credit0);
+    writeback.repay(credit1);
+    assert_eq!(writeback.supply.load(Relaxed), writeback.capacity)
+}
+
+/// It should be possible to repeatedly overdraft
+#[test]
+fn isplit_overdraft_again() {
+    let writeback = WriteBack::with_capacity(10);
+    let mut credit0 = writeback.borrow(10).now_or_never().unwrap();
+    let credit1 = credit0.isplit(11);
+    let credit2 = credit0.isplit(11);
+    assert_eq!(credit1.0.load(Relaxed), 22);
+    assert_eq!(credit2.0.load(Relaxed), 22);
+    assert_eq!(credit0.0.load(Relaxed), -24);
+    writeback.repay(credit0);
+    writeback.repay(credit1);
+    writeback.repay(credit2);
     assert_eq!(writeback.supply.load(Relaxed), writeback.capacity)
 }
 

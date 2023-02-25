@@ -565,6 +565,7 @@ pub enum SeekWhence {
 impl Fs {
     /// Deallocate space.  The deallocated region may no longer take up space
     /// on disk, and will return zeros if read.
+    #[tracing::instrument(skip(self, fd))]
     pub async fn deallocate(&self, fd: &FileData, mut offset: u64, mut len: u64)
             -> std::result::Result<(), i32>
     {
@@ -596,6 +597,7 @@ impl Fs {
     }
 
     /// Delete an extended attribute
+    #[tracing::instrument(skip(self, fd))]
     pub async fn deleteextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                          name: &OsStr)
         -> std::result::Result<(), i32>
@@ -1095,6 +1097,7 @@ impl Fs {
         self.next_object.fetch_add(1, Ordering::Relaxed)
     }
 
+    #[tracing::instrument(skip(self, parent))]
     pub async fn create(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> std::result::Result<FileDataMut, i32>
     {
@@ -1129,6 +1132,7 @@ impl Fs {
     /// Tell the file system that the given file is no longer needed by the
     /// client.  Its resources may be freed.
     // Fs::inactive consumes fd because the client should not longer need it.
+    #[tracing::instrument(skip(self))]
     pub async fn inactive(&self, fd: FileDataMut) {
         let ino = fd.ino();
 
@@ -1141,6 +1145,7 @@ impl Fs {
 
     /// Sync a file's data and metadata to disk so it can be recovered after a
     /// crash.
+    #[tracing::instrument(skip(self, _fd))]
     pub async fn fsync(&self, _fd: &FileData) -> std::result::Result<(), i32> {
         // Until we come up with a better mechanism, we must sync the entire
         // file system.
@@ -1402,6 +1407,7 @@ impl Fs {
     }
 
     /// Create a hardlink from `fd` to `parent/name`.
+    #[tracing::instrument(skip(self, parent, fd))]
     pub async fn link(&self, parent: &FileData, fd: &FileData, name: &OsStr)
         -> std::result::Result<(), i32>
     {
@@ -1459,6 +1465,7 @@ impl Fs {
     /// `FileDataMut` object.  In particular, the client must ensure that there
     /// are never two `FileDataMut`s for the same directory entry at the same
     /// time.
+    #[tracing::instrument(skip(self, grandparent, parent))]
     pub async fn lookup(&self, grandparent: Option<&FileData>, parent: &FileData,
         name: &OsStr) -> std::result::Result<FileDataMut, i32>
     {
@@ -1636,6 +1643,7 @@ impl Fs {
         .await
     }
 
+    #[tracing::instrument(skip(self, parent, perm, uid, gid))]
     pub async fn mkdir(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                  gid: u32) -> std::result::Result<FileDataMut, i32>
     {
@@ -1700,6 +1708,7 @@ impl Fs {
     }
 
     /// Make a block device
+    #[tracing::instrument(skip(self, parent))]
     pub async fn mkblock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                    gid: u32, rdev: dev_t) -> std::result::Result<FileDataMut, i32>
     {
@@ -1709,6 +1718,7 @@ impl Fs {
     }
 
     /// Make a character device
+    #[tracing::instrument(skip(self, parent))]
     pub async fn mkchar(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32, rdev: dev_t) -> std::result::Result<FileDataMut, i32>
     {
@@ -1717,6 +1727,7 @@ impl Fs {
         self.do_create(create_args).await
     }
 
+    #[tracing::instrument(skip(self, parent))]
     pub async fn mkfifo(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> std::result::Result<FileDataMut, i32>
     {
@@ -1725,6 +1736,7 @@ impl Fs {
         self.do_create(create_args).await
     }
 
+    #[tracing::instrument(skip(self, parent))]
     pub async fn mksock(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                   gid: u32) -> std::result::Result<FileDataMut, i32>
     {
@@ -1794,6 +1806,7 @@ impl Fs {
         })
     }
 
+    #[tracing::instrument(skip(self, fd))]
     pub async fn read(&self, fd: &FileData, offset: u64, size: usize)
         -> std::result::Result<SGList, i32>
     {
@@ -2022,6 +2035,7 @@ impl Fs {
     /// responsibility of the client.
     // XXX newino should really have type Option<&FileData> for consistency,
     // but I can't figure out how to make such a type work with Mockall.
+    #[tracing::instrument(skip(self, parent, fd, newparent))]
     pub async fn rename(&self, parent: &FileData, fd: &FileData, name: &OsStr,
         newparent: &FileData, newino: Option<u64>, newname: &OsStr)
         -> std::result::Result<u64, i32>
@@ -2190,6 +2204,7 @@ impl Fs {
     /// - `name`:       Name of the directory entry to remove.
     // Note, unlike unlink, rmdir takes no Option<&FileData> argument, because
     // there is no need to support open-but-deleted directories.
+    #[tracing::instrument(skip(self, parent))]
     pub async fn rmdir(&self, parent: &FileData, name: &OsStr) -> std::result::Result<(), i32> {
         // Outline:
         // 1) Lookup the directory
@@ -2232,6 +2247,7 @@ impl Fs {
         FileDataMut{ ino: 1 , lookup_count: 1, parent: None}
     }
 
+    #[tracing::instrument(skip(self, fd))]
     pub async fn setattr(&self, fd: &FileData, mut attr: SetAttr) -> std::result::Result<(), i32> {
         let ino = fd.ino;
         let mut ninsert = 1;
@@ -2255,6 +2271,7 @@ impl Fs {
         .await
     }
 
+    #[tracing::instrument(skip(self, fd, data))]
     pub async fn setextattr(&self, fd: &FileData, ns: ExtAttrNamespace,
                       name: &OsStr, data: &[u8]) -> std::result::Result<(), i32>
     {
@@ -2284,6 +2301,7 @@ impl Fs {
     // Should be private to the crate.  Is only public so it can be used by the
     // functional tests.
     #[doc(hidden)]
+    #[tracing::instrument(skip(self))]
     pub async fn set_prop(&self, prop: Property) -> Result<()> {
         match prop {
             Property::Atime(atime) =>
@@ -2291,7 +2309,7 @@ impl Fs {
             Property::RecordSize(exp) =>
                 self.record_size.store(exp, Ordering::Relaxed),
             Property::Name(_) => panic!("Immutable property"),
-            _ => todo!(),
+            _ => panic!("Setting property {:?} is TODO", prop),
         }
 
         // Update on-disk properties
@@ -2350,6 +2368,7 @@ impl Fs {
 
     /// Create a symlink from `name` to `link`.  Returns the link's inode on
     /// success, or an errno on failure.
+    #[tracing::instrument(skip(self, parent))]
     pub async fn symlink(&self, parent: &FileData, name: &OsStr, perm: u16, uid: u32,
                    gid: u32, link: &OsStr) -> std::result::Result<FileDataMut, i32>
     {
@@ -2359,6 +2378,7 @@ impl Fs {
         self.do_create(create_args).await
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn sync(&self) {
         self.db.sync_transaction()
         .await
@@ -2372,6 +2392,7 @@ impl Fs {
     /// - `fd`:         `FileData` of the directory entry to be removed, if
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to remove.
+    #[tracing::instrument(skip(self, parent_fd, fd))]
     pub async fn unlink(&self, parent_fd: &FileData, fd: Option<&FileData>,
         name: &OsStr) -> std::result::Result<(), i32>
     {
@@ -2410,6 +2431,7 @@ impl Fs {
         .await
     }
 
+    #[tracing::instrument(skip(self, fd, data, _flags))]
     pub async fn write<IU>(&self, fd: &FileData, offset: u64, data: IU, _flags: u32)
         -> std::result::Result<u32, i32>
         where IU: Into<Uio>

@@ -107,6 +107,10 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
 
+    /// What is the maximum value that V::allocated_space() is likely to return?
+    /// In extreme cases it is allowed to return more.
+    const MAX_ALLOCATED_SPACE: usize = 0;
+
     /// How much allocated space does this object own, excluding the object
     /// itself?
     fn allocated_space(&self) -> usize {
@@ -328,13 +332,17 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Absorb as much credit as this LeafData needs.  Call this after
     /// deserializing a `LeafData` into a dirty state.
     pub fn acredit(&mut self, credit: &mut Credit) {
-        debug_assert_eq!(self.credit, 0,
+        debug_assert_eq!(self.credit, 0usize,
             "Attempting to acredit an already accredited leaf node");
         if K::USES_CREDIT {
             let need = self.wb_space();
-            assert!(*credit >= need,
-                    "Insufficient credit to xlock leaf node");
-            self.credit = credit.split(need);
+            if *credit < need {
+                tracing::warn!("Insufficient credit.  Have {:?} need {}",
+                                *credit, need);
+            } else {
+                tracing::debug!("Consuming {need} credit");
+            }
+            self.credit = credit.isplit(isize::try_from(need).unwrap());
         }
     }
 
@@ -383,10 +391,12 @@ impl<K: Key, V: Value> LeafData<K, V> {
             let old_space = old_v.as_ref()
                 .map(|v| v.allocated_space() + kvs)
                 .unwrap_or(0);
-            let excess = (&mut credit + old_space).checked_sub(v_space + kvs)
-                .expect("insufficient credit was provided for this insertion");
+            let excess = (&mut credit + old_space) - isize::try_from(v_space + kvs).unwrap();
             self.credit.extend(credit);
-            self.credit.split(excess)
+            if excess < 0 {
+                tracing::warn!("Insufficient credit was provided for this insertion");
+            }
+            self.credit.isplit(excess)
         } else {
             debug_assert!(credit.is_null());
             Credit::null()
@@ -513,6 +523,7 @@ impl<K: Key, V: Value> LeafData<K, V> {
                 return Ok((Some(v.dpop(dml, txg).await?), credit));
             }
         }
+        tracing::debug!("Returning {:?} credit", credit);
         Ok((old_v, credit))
     }
 
@@ -597,8 +608,8 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: SeqAccess<'de>
             {
-                // The only support serializer that uses a Seq is Bincode, where
-                // we don't serialize Credit
+                // The only supported serializer that uses a Seq is Bincode,
+                // where we don't serialize Credit
                 let items = seq.next_element()?
                     .ok_or_else(|| de::Error::invalid_length(0, &self))?;
                 let credit = Credit::null();
@@ -610,8 +621,8 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: de::MapAccess<'de>
             {
-                // The only support serializer that uses a Map is YAML, for unit
-                // tests and Tree::dump, where we do serialize Credit.
+                // The only supported serializer that uses a Map is YAML, for
+                // unit tests and Tree::dump, where we do serialize Credit.
                 let mut credit = Credit::null();
                 let mut items = None;
                 while let Some(key) = map.next_key()? {

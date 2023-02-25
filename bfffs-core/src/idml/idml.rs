@@ -313,7 +313,8 @@ impl<'a> IDML {
     ///
     /// * `ddml`:           An already-opened `DDML`
     /// * `cache`:          An already-constrcuted `Cache`
-    /// * `writeback_size`: Maximum amount of cached dirty data in bytes.
+    /// * `writeback_size`: Soft limit for the amount of cached dirty data in
+    ///                     bytes.
     /// * `label_reader`:   A `LabelReader` that has already consumed all labels
     ///                     prior to this layer.
     pub fn open(
@@ -478,7 +479,7 @@ impl<'a> IDML {
         self.ddml.write_label(labeller)
     }
 
-    /// Get the maximum size of bytes in the writeback cache
+    /// Get the soft limit for the bytes in the writeback cache
     pub fn writeback_size(&self) -> usize {
         self.writeback.capacity()
     }

@@ -31,9 +31,11 @@ Where `OPTIONS` can be:
   an in-kernel file system bfffsd will never shrink the cache in response to
   memory pressure.  The kernel will simply kill bfffsd or some other process
   instead.
-* `writeback_size` - Set the maximum amount of cached dirty data in bytes.
-  This is completely independent of `cache_size`.  Generally it should be at
-  least several seconds' worth of your disks' maximum throughput.
+* `writeback_size` - Set the soft limit for the amount of cached dirty data in
+  bytes.  This is completely independent of `cache_size`.  Generally it should
+  be at least several seconds' worth of your disks' maximum throughput.  The
+  actual amount of dirty data may exceed this limit, but not by more than a few
+  MB.
 
 # License
 BFFFS is primarily distributed under the terms of both the MIT license

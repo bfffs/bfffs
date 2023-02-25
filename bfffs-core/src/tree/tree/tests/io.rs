@@ -562,11 +562,11 @@ fn insert_dclone() {
         .return_once(move |_, _| future::ok(Box::new(node)).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 0)
+        .withf(|credit| *credit == 0usize)
         .return_const(());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
 
     let dml = Arc::new(mock);
@@ -712,9 +712,9 @@ root:
 "#);
 }
 
-/// The insert operation has insufficient credit to xlock the leaf node
+/// The insert operation has insufficient credit to xlock the leaf node.  This
+/// should work, but log a warning.
 #[test]
-#[should_panic(expected = "Insufficient credit to xlock leaf node")]
 fn insert_insufficient_credit() {
     let mut mock = mock_dml();
     let mut ld = LeafData::default();
@@ -1627,11 +1627,11 @@ fn remove() {
         .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 32)
+        .withf(|credit| *credit == 32usize)
         .returning(mem::forget);
 
     let dml = Arc::new(mock);
@@ -1733,11 +1733,11 @@ fn remove_dclone() {
         .return_once(move |_, _| future::ok(Box::new(node)).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 32)
+        .withf(|credit| *credit == 32usize)
         .returning(mem::forget);
 
     let dml = Arc::new(mock);
@@ -1808,12 +1808,12 @@ fn remove_and_merge_down() {
     // First repay is excess credit from the xlock
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 56)
+        .withf(|credit| *credit == 56usize)
         .returning(mem::forget);
     // Second repay is when dropping the tree
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 24)
+        .withf(|credit| *credit == 24usize)
         .returning(mem::forget);
 
     let dml = Arc::new(mock);
@@ -1905,13 +1905,13 @@ fn remove_and_steal_leaf_left() {
     // The second is when dropping the tree
     mock.expect_repay()
         .times(2)
-        .withf(|credit| *credit == 32)
+        .withf(|credit| *credit == 32usize)
         .returning(mem::forget);
 
     // The third is also when dropping the tree
     mock.expect_repay()
         .times(1)
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
 
     let dml = Arc::new(mock);
@@ -2008,8 +2008,9 @@ root:
 "#);
 }
 
+/// The remove operation has insufficient credit to xlock the leaf node.  This
+/// should work, but log a warning.
 #[test]
-#[should_panic(expected="Insufficient credit to xlock leaf node")]
 fn remove_insufficient_credit() {
     let mut mock = MockDML::new();
 
@@ -2023,6 +2024,16 @@ fn remove_insufficient_credit() {
         .once()
         .with(eq(addrl), always())
         .return_once(move |_, _| future::ok(Box::new(leafnode)).boxed());
+    // The first repayment is for excess credit during remove
+    mock.expect_repay()
+        .times(1)
+        .withf(|credit| *credit == -1isize)
+        .returning(mem::forget);
+    // The second is when dropping the tree
+    mock.expect_repay()
+        .times(1)
+        .withf(|credit| *credit == 16usize)
+        .returning(mem::forget);
 
     let dml = Arc::new(mock);
     let tree = Arc::new(Tree::<u32, MockDML, u32, f32>::from_str(dml, false, r#"
@@ -2057,7 +2068,7 @@ root:
               ptr:
                 Addr: 1
   "#));
-    tree.remove(4, TxgT::from(42), Credit::forge(23))
+    tree.remove(4, TxgT::from(42), Credit::forge(15))
         .now_or_never()
         .unwrap()
         .unwrap();
@@ -2229,7 +2240,7 @@ fn write_height2() {
     mock.expect_repay()
         .once()
         .in_sequence(&mut seq)
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, u32>>>()
         .once()
@@ -2326,7 +2337,7 @@ fn write_height3() {
         }).return_once(move |_, _, _| future::ok(7).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
@@ -2359,7 +2370,7 @@ fn write_height3() {
         }).return_once(move |_, _, _| future::ok(9).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     mock.expect_put::<Arc<Node<u32, u32, f32>>>()
         .once()
@@ -2580,7 +2591,7 @@ fn write_leaf() {
         }).returning(move |_, _, _| future::ok(addr).boxed());
     mock.expect_repay()
         .once()
-        .withf(|credit| *credit == 16)
+        .withf(|credit| *credit == 16usize)
         .returning(mem::forget);
     let dml = Arc::new(mock);
     let mut tree = Arc::new(

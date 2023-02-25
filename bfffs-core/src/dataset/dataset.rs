@@ -17,6 +17,8 @@ use std::{
     sync::Arc
 };
 use super::{ITree, RangeQuery, ReadDataset};
+use tracing::instrument;
+use tracing_futures::Instrument;
 
 /// Inner Dataset structure, not directly exposed to user
 struct Dataset<K: Key, V: Value>  {
@@ -37,10 +39,11 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.get::<DivBufShared, DivBuf>(&rid)
     }
 
+    #[instrument(skip(self, txg, k, v))]
     fn insert(&self, txg: TxgT, k: K, v: V, credit: Credit)
         -> impl Future<Output=Result<Option<V>>>
     {
-        self.tree.clone().insert(k, v, txg, credit)
+        self.tree.clone().insert(k, v, txg, credit).in_current_span()
     }
 
     fn last_key(&self) -> impl Future<Output=Result<Option<K>>>
@@ -71,19 +74,21 @@ impl<K: Key, V: Value> Dataset<K, V> {
         unimplemented!()
     }
 
+    #[instrument(skip(self, range, txg))]
     fn range_delete<R, T>(&self, range: R, txg: TxgT, credit: Credit)
         -> impl Future<Output=Result<()>> + Send
         where K: Borrow<T>,
               R: Debug + Clone + RangeBounds<T> + Send + 'static,
               T: Debug + Ord + Clone + Send + 'static
     {
-        self.tree.clone().range_delete(range, txg, credit)
+        self.tree.clone().range_delete(range, txg, credit).in_current_span()
     }
 
+    #[instrument(skip(self, k, txg))]
     fn remove(&self, k: K, txg: TxgT, credit: Credit)
         -> impl Future<Output=Result<Option<V>>> + Send
     {
-        self.tree.clone().remove(k, txg, credit)
+        self.tree.clone().remove(k, txg, credit).in_current_span()
     }
 
     fn size(&self) -> LbaT {

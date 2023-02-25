@@ -466,6 +466,7 @@ pub enum ExtAttr {
 }
 
 impl<'a> ExtAttr {
+
     pub fn allocated_space(&self) -> usize {
         const FUDGE: usize = 64;    // Experimentally determined
 
@@ -1074,6 +1075,11 @@ impl TypicalSize for FSValue {
 
 impl Value for FSValue {
     const NEEDS_FLUSH: bool = true;
+
+    // The most allocated space possible under normal circumstances is that used
+    // by a full InlineExtent.  Theoretically, though, more could be used for
+    // example by an ExtAttr hash bucket.
+    const MAX_ALLOCATED_SPACE: usize = BLOB_THRESHOLD + InlineExtent::FUDGE;
 
     fn allocated_space(&self) -> usize {
         match self {
