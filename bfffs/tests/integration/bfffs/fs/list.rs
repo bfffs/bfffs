@@ -109,6 +109,19 @@ async fn depth() {
         );
 }
 
+#[rstest]
+#[tokio::test]
+async fn enoent() {
+    let h = harness::<&'static str>(&[]);
+    bfffs()
+        .arg("--sock")
+        .arg(h.sockpath.as_os_str())
+        .args(["fs", "list", "-o", "name", "mypoolx"])
+        .assert()
+        .failure()
+        .stderr("Error: ENOENT\n");
+}
+
 #[test]
 fn help() {
     bfffs().args(["fs", "list", "-h"]).assert().success();

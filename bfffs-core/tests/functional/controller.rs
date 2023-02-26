@@ -134,6 +134,17 @@ mod get_prop {
         );
     }
 
+    /// Try to lookup the Name property for a dataset that does not exist.
+    #[rstest]
+    #[tokio::test]
+    async fn enoent_name(harness: Harness) {
+        let dsname = String::from("TestPool/foo");
+        assert_eq!(
+            Err(Error::ENOENT),
+            harness.0.get_prop(dsname, PropertyName::Name).await
+        );
+    }
+
     #[template]
     #[rstest(propname,
         case(PropertyName::Atime),
