@@ -13,7 +13,7 @@ pub use bfffs_core::{
     Error,
     Result,
 };
-use futures::{stream, Stream, StreamExt, TryFutureExt};
+use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
 use tokio_seqpacket::UnixSeqpacket;
 
 /// A connection to the bfffsd server
@@ -94,7 +94,9 @@ impl Bfffs {
         let parent_fut = self
             .call(req)
             .map_ok(rpc::Response::into_fs_stat)
-            .map_ok(Result::unwrap);
+            // TODO: use Result::flatten once that stabilizes
+            // https://github.com/rust-lang/rust/issues/70142
+            .map(|x| x.and_then(std::convert::identity));
         let parent_stream = stream::once(parent_fut);
         let datasets = if depth > 0 {
             VecDeque::from(vec![(depth, name)])

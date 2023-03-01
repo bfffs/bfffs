@@ -139,10 +139,6 @@ impl Controller {
     pub async fn get_prop(&self, dataset: String, propname: PropertyName)
         -> Result<(Property, PropertySource)>
     {
-        if propname == PropertyName::Name {
-            // Hard-code this pseudoproperty
-            return Ok((Property::Name(dataset), PropertySource::None));
-        }
         let dsname = self.strip_pool_name(&dataset)?;
         let guard = self.filesystems.read().await;
         match self.db.lookup_fs(dsname).await? {
@@ -165,6 +161,12 @@ impl Controller {
         -> Result<(Property, PropertySource)>
         where T: Deref<Target = BTreeMap<TreeID, Weak<Fs>>>
     {
+        if propname == PropertyName::Name {
+            // Hard-code this pseudoproperty
+            return Ok((Property::Name(dataset.to_owned()),
+                       PropertySource::None));
+        }
+
         let inheritable_propname = propname.inheritable();
         if let Some(fs) = guard.get(&tree_id).and_then(Weak::upgrade) {
             fs.get_prop(inheritable_propname).await
