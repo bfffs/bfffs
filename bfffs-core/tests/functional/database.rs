@@ -474,6 +474,66 @@ root:
         db.shutdown().await;
     }
 
+    mod sync_transaction {
+        use super::*;
+    use divbuf::DivBufShared;
+        use bfffs_core::fs_tree::{FSKey, FSValue, InlineExtent, ObjKey};
+
+        /// If the file system crashes in the middle of a transaction, the pool
+        /// can still be imported at the old transaction.
+        // TODO: write a torture test based on this, that fills the pool with
+        // differently sized files on each iteration.
+        #[tokio::test]
+        async fn crash_and_restore() {
+            let (_tempdir, paths, pool) = crate::PoolBuilder::new()
+                .fsize(1 << 26)     // 64 MB
+                .zone_size(17)
+                .build();
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            let db = Database::create(idml);
+            let tree_id = db.create_fs(None, "").await.unwrap();
+
+            let ino = 42;
+            let n = 2;
+            let z = 65536;
+
+            for i in 0..n {
+                db.fswrite(tree_id, n, 0, 0, 1000000000, move |dataset| async move {
+                    // Write some big extents.  Without an inode, this will be
+                    // orphaned data, but it will still consume space, which is
+                    // all we need for this particular test.
+                    let k = FSKey::new(ino, ObjKey::Extent(i as u64 * z));
+                    let dbs = Arc::new(DivBufShared::from(vec![0; z as usize]));
+                    let extent = InlineExtent::new(dbs);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await.map(drop)?;
+                    Ok(())
+                }).await.unwrap();
+                db.sync_transaction().await.unwrap();
+            }
+            db.fswrite(tree_id, n, 0, 0, 1000000000, move |dataset| async move {
+                // Now rewrite enough data to completely free the first zone
+                for i in 0..n {
+                    let k = FSKey::new(ino, ObjKey::Extent(i as u64 * z));
+                    let dbs = Arc::new(DivBufShared::from(vec![0; z as usize]));
+                    let extent = InlineExtent::new(dbs);
+                    let v = FSValue::InlineExtent(extent);
+                    dataset.insert(k, v).await.map(drop)?;
+                }
+                Ok(())
+            }).await.unwrap();
+
+            // Now drop the database without syncing it
+            drop(db);
+
+            // And reopen
+            let db = open_db(&paths[0]).await;
+            assert!(db.check().await.unwrap());
+        }
+    }
+
     // TODO: add a test that Database::flush gets called periodically.  Verify
     // by writing some data, then checking the size of the writeback cache until
     // it goes to zero.

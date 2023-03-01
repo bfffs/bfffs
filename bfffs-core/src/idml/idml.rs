@@ -449,11 +449,14 @@ impl<'a> IDML {
         where F: FnOnce(TxgT) -> B + Send + 'a,
               B: Future<Output=Result<()>> + Send + 'a,
     {
+        let ddml = self.ddml.clone();
         self.transaction.write()
-        .then(move |mut txg_guard| {
+        .then(move |mut txg_guard| async move {
             let txg = *txg_guard;
-            f(txg)
-            .map_ok(move |_| *txg_guard += 1)
+            f(txg).await?;
+            ddml.advance_transaction(txg).await?;
+            *txg_guard += 1;
+            Ok(())
         })
     }
 
@@ -1440,13 +1443,18 @@ mod t {
     #[test]
     fn advance_transaction() {
         let cache = Cache::with_capacity(1_048_576);
-        let ddml = mock_ddml();
+        let txg = TxgT::from(0);
+        let mut ddml = mock_ddml();
+        ddml.expect_advance_transaction()
+            .with(eq(txg))
+            .once()
+            .return_once(move |_| Box::pin(future::ok(())));
         let arc_ddml = Arc::new(ddml);
         let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
 
         idml.advance_transaction(|_txg| future::ok(()))
             .now_or_never().unwrap()
             .unwrap();
-        assert_eq!(*idml.transaction.try_read().unwrap(), TxgT::from(1));
+        assert_eq!(*idml.transaction.try_read().unwrap(), txg + 1);
     }
 }
