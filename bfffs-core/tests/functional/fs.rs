@@ -4312,42 +4312,33 @@ mod torture {
         files: Vec<(u64, FileDataMut)>,
         rng: XorShiftRng,
         root: FileDataMut,
-        rt: Option<Runtime>,
         w: Vec<(Op, f64)>,
         wi: WeightedIndex<f64>
     }
 
     impl TortureTest {
-        fn check(&mut self) {
+        async fn check(&mut self) {
             let db = self.db.as_ref().unwrap();
-            let rt = self.rt.as_ref().unwrap();
-            assert!(rt.block_on(db.check()).unwrap());
+            assert!(db.check().await.unwrap());
         }
 
-        fn clean(&mut self) {
+        async fn clean(&mut self) {
             info!("clean");
             let db = self.db.as_ref().unwrap();
-            let rt = self.rt.as_ref().unwrap();
-            rt.block_on( async {
-                db.clean()
-                .await
-            }).unwrap();
-            self.check();
+            db.clean().await.unwrap();
+            self.check().await;
         }
 
-        fn mkdir(&mut self) {
+        async fn mkdir(&mut self) {
             let num: u64 = self.rng.gen();
             let fname = format!("{num:x}");
             info!("mkdir {}", fname);
-            let fd = self.rt.as_ref().unwrap().block_on(async {
-                self.fs.mkdir(&self.root.handle(), &OsString::from(&fname),
-                    0o755, 0, 0)
-                    .await
-            }).unwrap();
+            let fd = self.fs.mkdir(&self.root.handle(), &OsString::from(&fname),
+                    0o755, 0, 0).await.unwrap();
             self.dirs.push((num, fd));
         }
 
-        fn ls(&mut self) {
+        async fn ls(&mut self) {
             let idx = self.rng.gen_range(0..self.dirs.len() + 1);
             let (fname, fd) = if idx == self.dirs.len() {
                 ("/".to_owned(), &self.root)
@@ -4356,17 +4347,15 @@ mod torture {
                 (format!("{:x}", spec.0), &spec.1)
             };
             let mut c = 0;
-            self.rt.as_ref().unwrap().block_on(async {
-                self.fs.readdir(&fd.handle(), 0)
-                    .for_each(|_| {
-                        c += 1;
-                        future::ready(())
-                    }).await
-            });
+            self.fs.readdir(&fd.handle(), 0)
+                .for_each(|_| {
+                    c += 1;
+                    future::ready(())
+                }).await;
             info!("ls {}: {} entries", fname, c);
         }
 
-        fn new(db: Arc<Database>, fs: Fs, rng: XorShiftRng, rt: Runtime,
+        fn new(db: Arc<Database>, fs: Fs, rng: XorShiftRng,
                w: Option<Vec<(Op, f64)>>) -> Self
         {
             let w = w.unwrap_or_else(|| vec![
@@ -4384,10 +4373,10 @@ mod torture {
             let wi = WeightedIndex::new(w.iter().map(|item| item.1)).unwrap();
             let root = fs.root();
             TortureTest{db: Some(db), dirs: Vec::new(), files: Vec::new(), fs,
-                        rng, root, rt: Some(rt), w, wi}
+                        rng, root, w, wi}
         }
 
-        fn read(&mut self) {
+        async fn read(&mut self) {
             if !self.files.is_empty() {
                 // Pick a random file to read from
                 let idx = self.rng.gen_range(0..self.files.len());
@@ -4395,15 +4384,13 @@ mod torture {
                 // Pick a random offset within the first 8KB
                 let ofs = 2048 * self.rng.gen_range(0..4);
                 info!("read {:x} at offset {}", self.files[idx].0, ofs);
-                self.rt.as_ref().unwrap().block_on(async {
-                    let r = self.fs.read(&fd.handle(), ofs, 2048).await;
-                    // TODO: check buffer contents
-                    assert!(r.is_ok());
-                })
+                let r = self.fs.read(&fd.handle(), ofs, 2048).await;
+                // TODO: check buffer contents
+                assert!(r.is_ok());
             }
         }
 
-        fn rm_enoent(&mut self) {
+        async fn rm_enoent(&mut self) {
             // Generate a random name that corresponds to no real file, but
             // could be sorted anywhere amongst them.
             let num: u64 = self.rng.gen();
@@ -4411,84 +4398,70 @@ mod torture {
             let fd = FileDataMut::new_for_tests(Some(1), num);
             let fdh = fd.handle();
             info!("rm {}", fname);
-            let r = self.rt.as_ref().unwrap().block_on(async {
-                self.fs.unlink(&self.root.handle(), Some(&fdh),
-                    &OsString::from(&fname))
-                    .await
-            });
+            let r = self.fs.unlink(&self.root.handle(), Some(&fdh),
+                &OsString::from(&fname))
+                .await;
             assert_eq!(r, Err(Error::ENOENT.into()));
         }
 
-        fn rm(&mut self) {
+        async fn rm(&mut self) {
             if !self.files.is_empty() {
                 let idx = self.rng.gen_range(0..self.files.len());
                 let (basename, fd) = self.files.remove(idx);
                 let fname = format!("{basename:x}");
                 info!("rm {}", fname);
-                self.rt.as_ref().unwrap().block_on(async {
-                    self.fs.unlink(&self.root.handle(), Some(&fd.handle()),
-                        &OsString::from(&fname)).await
-                }).unwrap();
+                self.fs.unlink(&self.root.handle(), Some(&fd.handle()),
+                    &OsString::from(&fname)).await.unwrap();
             }
         }
 
-        fn rmdir(&mut self) {
+        async fn rmdir(&mut self) {
             if !self.dirs.is_empty() {
                 let idx = self.rng.gen_range(0..self.dirs.len());
                 let fname = format!("{:x}", self.dirs.remove(idx).0);
                 info!("rmdir {}", fname);
-                self.rt.as_ref().unwrap().block_on(async {
-                    self.fs.rmdir(&self.root.handle(),
-                        &OsString::from(&fname)).await
-                }).unwrap();
+                self.fs.rmdir(&self.root.handle(),
+                    &OsString::from(&fname)).await.unwrap();
             }
         }
 
-        fn shutdown(mut self) {
-            let rt = self.rt.take().unwrap();
-            rt.block_on(async {
-                self.fs.inactive(self.root).await
-            });
+        async fn shutdown(mut self) {
+            self.fs.inactive(self.root).await;
             drop(self.fs);
             let db = Arc::try_unwrap(self.db.take().unwrap())
                 .ok().expect("Arc::try_unwrap");
-            rt.block_on(db.shutdown());
+            db.shutdown().await;
         }
 
-        fn step(&mut self) {
+        async fn step(&mut self) {
             match self.w[self.wi.sample(&mut self.rng)].0 {
-                Op::Clean => self.clean(),
-                Op::Ls => self.ls(),
-                Op::Mkdir => self.mkdir(),
-                Op::Read => self.read(),
-                Op::Rm => self.rm(),
-                Op::Rmdir => self.rmdir(),
-                Op::RmEnoent => self.rm_enoent(),
-                Op::SyncAll => self.sync(),
-                Op::Touch => self.touch(),
-                Op::Write => self.write(),
+                Op::Clean => self.clean().await,
+                Op::Ls => self.ls().await,
+                Op::Mkdir => self.mkdir().await,
+                Op::Read => self.read().await,
+                Op::Rm => self.rm().await,
+                Op::Rmdir => self.rmdir().await,
+                Op::RmEnoent => self.rm_enoent().await,
+                Op::SyncAll => self.sync().await,
+                Op::Touch => self.touch().await,
+                Op::Write => self.write().await,
             }
         }
 
-        fn sync(&mut self) {
+        async fn sync(&mut self) {
             info!("sync");
-            self.rt.as_ref().unwrap().block_on(async {
-                self.fs.sync().await;
-            });
+            self.fs.sync().await;
         }
 
-        fn touch(&mut self) {
+        async fn touch(&mut self) {
             // The BTree is basically a flat namespace, so there's little test
             // coverage to be gained by testing a hierarchical directory
             // structure.  Instead, we'll stick all files in the root directory,
             let num: u64 = self.rng.gen();
             let fname = format!("{num:x}");
             info!("Touch {}", fname);
-            let fd = self.rt.as_ref().unwrap().block_on(async {
-                self.fs.create(&self.root.handle(), &OsString::from(&fname),
-                    0o644, 0, 0)
-                    .await
-            }).unwrap();
+            let fd = self.fs.create(&self.root.handle(),
+                &OsString::from(&fname), 0o644, 0, 0).await.unwrap();
             self.files.push((num, fd));
         }
 
@@ -4497,7 +4470,7 @@ mod torture {
         /// Writes just 2KB.  This may create inline or on-disk extents.  It may
         /// RMW on-disk extents.  The purpose is to exercise the tree, not large
         /// I/O.
-        fn write(&mut self) {
+        async fn write(&mut self) {
             if !self.files.is_empty() {
                 // Pick a random file to write to
                 let idx = self.rng.gen_range(0..self.files.len());
@@ -4511,15 +4484,13 @@ mod torture {
                     as u8;
                 let buf = [fill; 2048];
                 info!("write {:x} at offset {}", self.files[idx].0, ofs);
-                self.rt.as_ref().unwrap().block_on(async {
-                    let r = self.fs.write(&fd.handle(), ofs, &buf[..], 0).await;
-                    assert!(r.is_ok());
-                })
+                let r = self.fs.write(&fd.handle(), ofs, &buf[..], 0).await;
+                assert!(r.is_ok());
             }
         }
     }
 
-    fn torture_test(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
+    async fn torture_test(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
                     zone_size: u64) -> TortureTest
     {
         static TRACINGSUBSCRIBER: Once = Once::new();
@@ -4530,7 +4501,6 @@ mod torture {
                 .init();
         });
 
-        let rt = Runtime::new().unwrap();
         let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
             .zone_size(zone_size)
             .build();
@@ -4542,13 +4512,8 @@ mod torture {
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         let db = Arc::new(Database::create(Arc::new(idml)));
-        let (tree_id, db) = rt.block_on(async move {
-            let tree_id = db.create_fs(None, "").await.unwrap();
-            (tree_id, db)
-        });
-        let fs = rt.block_on(async {
-            Fs::new(db.clone(), tree_id).await
-        });
+        let tree_id = db.create_fs(None, "").await.unwrap();
+        let fs = Fs::new(db.clone(), tree_id).await;
         let seed = seed.unwrap_or_else(|| {
             let mut seed = [0u8; 16];
             let mut seeder = thread_rng();
@@ -4559,10 +4524,11 @@ mod torture {
         // Use XorShiftRng because it's deterministic and seedable
         let rng = XorShiftRng::from_seed(seed);
 
-        TortureTest::new(db, fs, rng, rt, freqs)
+        TortureTest::new(db, fs, rng, freqs)
     }
 
-    fn do_test(mut torture_test: TortureTest, duration: Option<Duration>) {
+    async fn do_test(mut torture_test: TortureTest, duration: Option<Duration>)
+    {
         // Random torture test.  At each step check the trees and also do one of:
         // *) Clean zones
         // *) Sync
@@ -4577,24 +4543,29 @@ mod torture {
         let duration = duration.unwrap_or_else(|| Duration::from_secs(60));
         let start = Instant::now();
         while start.elapsed() < duration {
-            torture_test.step()
+            torture_test.step().await
         }
         torture_test.shutdown();
     }
 
     /// Randomly execute a long series of filesystem operations.
     #[rstest]
-    #[case(torture_test(None, None, 512))]
+    #[case(None, None, 512)]
+    #[tokio::test]
     #[ignore = "Slow"]
-    fn random(#[case] torture_test: TortureTest) {
-        do_test(torture_test, None);
+    async fn random(
+        #[case] seed: Option<[u8; 16]>,
+        #[case] freqs: Option<Vec<(Op, f64)>>,
+        #[case] zone_size: u64)
+    {
+        let torture = torture_test(seed, freqs, zone_size).await;
+        do_test(torture, None).await;
     }
 
     /// Randomly execute a series of filesystem operations, designed expecially
     /// to stress the cleaner.
     #[rstest]
-    #[case(torture_test(
-        None,
+    #[case(None,
         Some(vec![
             (Op::Clean, 0.01),
             (Op::SyncAll, 0.03),
@@ -4602,9 +4573,15 @@ mod torture {
             (Op::Touch, 10.0),
         ]),
         512
-    ))]
+    )]
+    #[tokio::test]
     #[ignore = "Slow"]
-    fn random_clean_zone(#[case] torture_test: TortureTest) {
-        do_test(torture_test, Some(Duration::from_secs(10)));
+    async fn random_clean_zone(
+        #[case] seed: Option<[u8; 16]>,
+        #[case] freqs: Option<Vec<(Op, f64)>>,
+        #[case] zone_size: u64)
+    {
+        let torture = torture_test(seed, freqs, zone_size).await;
+        do_test(torture, Some(Duration::from_secs(10)));
     }
 }
