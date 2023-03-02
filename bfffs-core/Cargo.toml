@@ -87,6 +87,10 @@ path = "tests/cacheable_space.rs"
 name = "functional"
 path = "tests/functional/mod.rs"
 
+[[test]]
+name = "torture"
+path = "tests/torture/mod.rs"
+
 [[bench]]
 name = "serde"
 harness = false
