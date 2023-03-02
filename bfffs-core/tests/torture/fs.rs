@@ -262,7 +262,7 @@ async fn torture_test(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
     TortureTest::new(db, fs, rng, freqs)
 }
 
-async fn do_test(mut torture_test: TortureTest, duration: Option<Duration>)
+async fn do_test(mut torture_test: TortureTest, duration: Duration)
 {
     // Random torture test.  At each step check the trees and also do one of:
     // *) Clean zones
@@ -275,7 +275,6 @@ async fn do_test(mut torture_test: TortureTest, duration: Option<Duration>)
     // *) List a directory
     // *) Write to a regular file
     // *) Read from a regular file
-    let duration = duration.unwrap_or_else(|| Duration::from_secs(60));
     let start = Instant::now();
     while start.elapsed() < duration {
         torture_test.step().await
@@ -287,14 +286,15 @@ async fn do_test(mut torture_test: TortureTest, duration: Option<Duration>)
 #[rstest]
 #[case(None, None, 512)]
 #[tokio::test]
-#[ignore = "Slow"]
 async fn random(
     #[case] seed: Option<[u8; 16]>,
     #[case] freqs: Option<Vec<(Op, f64)>>,
     #[case] zone_size: u64)
 {
+    let t = 5.0 * crate::test_scale();
+    let duration = Duration::from_secs_f64(t);
     let torture = torture_test(seed, freqs, zone_size).await;
-    do_test(torture, None).await;
+    do_test(torture, duration).await;
 }
 
 /// Randomly execute a series of filesystem operations, designed expecially
@@ -310,12 +310,12 @@ async fn random(
     512
 )]
 #[tokio::test]
-#[ignore = "Slow"]
 async fn random_clean_zone(
     #[case] seed: Option<[u8; 16]>,
     #[case] freqs: Option<Vec<(Op, f64)>>,
     #[case] zone_size: u64)
 {
+    let t = 1.0 * crate::test_scale();
     let torture = torture_test(seed, freqs, zone_size).await;
-    do_test(torture, Some(Duration::from_secs(10))).await;
+    do_test(torture, Duration::from_secs_f64(t)).await;
 }
