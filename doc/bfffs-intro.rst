@@ -77,7 +77,7 @@ Current Status
 BFFFS is currently implemented in userspace with FUSE.  Most of the usual POSIX
 operations are supported.  Advanced features like RAID, dynamic striping,
 garbage collection, checksums, and compression work, because they were designed
-in from the beginning.  But much work remains to be done.  Mirroring, RAID
-rebuild, deduplication, defragmentation, snapshots, and hybrid pools are not
-yet done.  There's also a lot of boring details that need to be finished, like
-better cache management, high-performance fsync, etc.
+in from the beginning.  But much work remains to be done.  RAID rebuild,
+deduplication, defragmentation, snapshots, and hybrid pools are not yet done.
+There's also a lot of boring details that need to be finished, like advanced
+cache replacement algorithms, high-performance fsync, etc.
