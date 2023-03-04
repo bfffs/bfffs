@@ -32,8 +32,8 @@ use std::fmt::Debug;
 pub struct Credit(AtomicIsize);
 
 impl Credit {
-    /// Like [`split`], but slower since it uses atomic instructions.  Does not
-    /// require mutable access.
+    /// Like [`split`](Self::split), but slower since it uses atomic
+    /// instructions.  Does not require mutable access.
     #[must_use]
     pub fn atomic_split(&self, credit: usize) -> Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
