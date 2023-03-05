@@ -2018,7 +2018,7 @@ impl Fs {
     /// # Arguments
     ///
     /// - `parent`:     `FileData` of the parent directory, as returned by
-    ///                 [`lookup`].
+    ///                 [`Fs::lookup`].
     /// - `fd`:         `FileData` of the directory entry to be moved, if
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to move.
@@ -2200,7 +2200,7 @@ impl Fs {
     /// Remove a directory entry for a directory
     ///
     /// - `parent_fd`:  `FileData` of the parent directory, as returned by
-    ///                 [`lookup`].
+    ///                 [`Fs::lookup`].
     /// - `name`:       Name of the directory entry to remove.
     // Note, unlike unlink, rmdir takes no Option<&FileData> argument, because
     // there is no need to support open-but-deleted directories.
@@ -2388,7 +2388,7 @@ impl Fs {
     /// Remove a directory entry for a non-directory
     ///
     /// - `parent_fd`:  `FileData` of the parent directory, as returned by
-    ///                 [`lookup`].
+    ///                 [`Fs::lookup`].
     /// - `fd`:         `FileData` of the directory entry to be removed, if
     ///                 known.  Must be provided if the file has been looked up!
     /// - `name`:       Name of the directory entry to remove.

@@ -47,6 +47,13 @@ pub struct DDML {
 // instead by integration tests.
 #[cfg_attr(test, allow(unused))]
 impl DDML {
+    /// Cleanup stuff from the previous transaction.
+    pub fn advance_transaction(&self, txg: TxgT)
+        -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        self.pool.advance_transaction(txg)
+    }
+
     /// Assert that the given zone was clean as of the given transaction
     #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
@@ -362,6 +369,7 @@ impl DML for DDML {
 #[cfg(test)]
 mock! {
     pub DDML {
+        pub fn advance_transaction(&self, txg: TxgT) -> BoxVdevFut;
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
         pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;

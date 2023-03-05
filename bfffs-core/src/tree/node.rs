@@ -153,7 +153,7 @@ pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
     }
 
     /// Drop a reference to the on-disk data, and read it into `self`, like the
-    /// opposite of [`flush`].
+    /// opposite of a `flush` method.
     fn dpop<D>(self, _dml: &D, _txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<Self>> + Send>>
         where D: DML + 'static, D::Addr: 'static
@@ -448,9 +448,8 @@ impl<K: Key, V: Value> LeafData<K, V> {
         }
     }
 
-    /// Like [`range_delete`], but for nodes that may be dirty yet unaccredited.
-    // XXX This causes a huge quantity of duplicate cache insertions.
-    // https://github.com/bfffs/bfffs/issues/198
+    /// Like [`range_delete`](Self::range_delete), but for nodes that may be
+    /// dirty yet unaccredited.
     #[tracing::instrument(skip(self, dml, range))]
     pub fn range_delete_unaccredited<D, R, T>(
         &mut self,

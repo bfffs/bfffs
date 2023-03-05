@@ -115,7 +115,7 @@ pub trait DML: Send + Sync {
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr>> + Send>>;
 
-    /// Repay [`WriteBack`] [`Credit`]
+    /// Repay [`Credit`] to [`WriteBack`](crate::writeback::WriteBack)
     fn repay(&self, credit: Credit);
 
     /// Sync all records written so far to stable storage.

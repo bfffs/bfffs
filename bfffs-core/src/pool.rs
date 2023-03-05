@@ -104,6 +104,17 @@ pub struct Pool {
 
 #[cfg_attr(test, automock)]
 impl Pool {
+    /// Cleanup stuff from the previous transaction.
+    pub fn advance_transaction(&self, txg: TxgT)
+        -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        self.clusters.iter()
+        .map(|cl| cl.advance_transaction(txg))
+        .collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .map_ok(drop)
+    }
+
     /// Assert that the given zone was clean as of the given transaction
     #[cfg(debug_assertions)]
     pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) {
@@ -416,6 +427,24 @@ mod pool {
         c.expect_used().return_const(used);
         c.expect_uuid().return_const(Uuid::new_v4());
         c
+    }
+
+    #[tokio::test]
+    async fn advance_transaction() {
+        let txg = TxgT::from(42);
+        let mut cl0 = mock_cluster(0, 1000, 0);
+        cl0.expect_advance_transaction()
+            .once()
+            .with(eq(txg))
+            .return_once(move |_| Box::pin(future::ok(())));
+        let mut cl1 = mock_cluster(0, 1000, 0);
+        cl1.expect_advance_transaction()
+            .once()
+            .with(eq(txg))
+            .return_once(move |_| Box::pin(future::ok(())));
+        let clusters = vec![cl0, cl1];
+        let pool =  Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+        pool.advance_transaction(txg).await.unwrap();
     }
 
     /// Two clusters, one full and one empty.  Choose the empty one
