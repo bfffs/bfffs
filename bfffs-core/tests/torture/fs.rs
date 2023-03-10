@@ -61,7 +61,6 @@ impl TortureTest {
         info!("clean");
         let db = self.db.as_ref().unwrap();
         db.clean().await.unwrap();
-        self.check().await;
     }
 
     async fn mkdir(&mut self) {
@@ -180,7 +179,8 @@ impl TortureTest {
             Op::SyncAll => self.sync().await,
             Op::Touch => self.touch().await,
             Op::Write => self.write().await,
-        }
+        };
+        self.check().await
     }
 
     async fn sync(&mut self) {
