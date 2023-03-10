@@ -42,7 +42,6 @@ use tokio::{
     time::{Duration, Instant, sleep_until},
 };
 use tracing::instrument;
-#[cfg(not(test))]
 use tracing_futures::Instrument;
 
 pub type ReadOnlyFilesystem = ReadOnlyDataset<FSKey, FSValue>;
@@ -325,6 +324,7 @@ impl Database {
     /// # Returns
     ///
     /// `true` on success, `false` on failure
+    #[tracing::instrument(skip(self))]
     pub fn check(&self) -> impl Future<Output=Result<bool>> {
         // Should check that:
         // * RAID parity is consistent and checksums match
@@ -349,6 +349,7 @@ impl Database {
         let idml_fut = self.inner.idml.check();
         let forest_fut = self.check_forest();
         idml_fut.and_then(|passed| forest_fut.map_ok(move |r| passed & r))
+            .in_current_span()
     }
 
     fn check_forest(&self) -> impl Future<Output=Result<bool>> {

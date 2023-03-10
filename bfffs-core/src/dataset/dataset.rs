@@ -39,7 +39,7 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.idml.get::<DivBufShared, DivBuf>(&rid)
     }
 
-    #[instrument(skip(self, txg, k, v))]
+    #[instrument(skip(self, txg, v))]
     fn insert(&self, txg: TxgT, k: K, v: V, credit: Credit)
         -> impl Future<Output=Result<Option<V>>>
     {
