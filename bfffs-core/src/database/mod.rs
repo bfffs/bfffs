@@ -116,6 +116,9 @@ impl MinValue for ForestKey {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct Tree {
     parent: Option<TreeID>,
+    /// Serialized version of this Tree.
+    ///
+    /// NB: if the tree is dirty, then it won't exist on disk.
     tod: TreeOnDisk<RID>
 }
 
@@ -332,14 +335,14 @@ impl Forest {
         self.0.serialize().unwrap()
     }
 
-    pub fn trees(&self)
-        -> impl TryStream<Ok=(TreeID, TreeOnDisk<RID>), Error=Error>
+    /// List the IDs of all trees.
+    pub fn trees(&self) -> impl TryStream<Ok=TreeID, Error=Error>
     {
         self.0.range(..)
         .try_filter_map(|(key, value)| {
             future::ok(
                 match value {
-                    ForestValue::Tree(tree) => Some((key.tree_id, tree.tod)),
+                    ForestValue::Tree(_tree) => Some(key.tree_id),
                     ForestValue::TreeEnt(_te) => None,
                 }
             )

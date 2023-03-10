@@ -210,6 +210,18 @@ root:
         db.fsread(tree_id, |_| future::ok(())).await.unwrap();
     }
 
+    mod check {
+        use super::*;
+
+        /// A newly created Database with a single file system should check
+        /// successfully.
+        #[tokio::test]
+        async fn empty() {
+            let (db, _tempdir, _first_tree_id, _paths) = harness().await;
+            assert!(db.check().await.unwrap());
+        }
+    }
+
     mod create_fs {
         use super::*;
 
