@@ -354,8 +354,8 @@ impl Database {
     fn check_forest(&self) -> impl Future<Output=Result<bool>> {
         let inner2 = self.inner.clone();
         self.inner.forest.trees()
-        .try_fold(true, move |passed, (tree_id, tod)| {
-            Inner::new_filesystem(&inner2, tree_id, tod)
+        .try_fold(true, move |passed, tree_id| {
+            Inner::open_filesystem(&inner2, tree_id)
             .and_then(move |tree| tree.check())
             .map_ok(move |r| r && passed)
             // TODO: check for dangling TreeEnts
@@ -878,7 +878,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tree))));
+            .return_const(Some(Ok((forest_key, tree.clone()))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -887,6 +887,10 @@ mod database {
         forest.expect_range()
             .once()
             .return_once(|_: RangeFull| rq);
+        forest.expect_get()
+            .once()
+            .with(eq(forest_key))
+            .return_once(|_| Box::pin(future::ok(Some(tree))));
 
         let db = Database::new(Arc::new(idml), forest.into());
         let r = db.check().await.unwrap();
@@ -922,7 +926,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tree))));
+            .return_const(Some(Ok((forest_key, tree.clone()))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -931,6 +935,10 @@ mod database {
         forest.expect_range()
             .once()
             .return_once(|_: RangeFull| rq);
+        forest.expect_get()
+            .once()
+            .with(eq(forest_key))
+            .return_once(|_| Box::pin(future::ok(Some(tree))));
 
         let db = Database::new(Arc::new(idml), forest.into());
         let r = db.check().await.unwrap();
@@ -966,7 +974,7 @@ mod database {
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
-            .return_const(Some(Ok((forest_key, tree))));
+            .return_const(Some(Ok((forest_key, tree.clone()))));
         rq.expect_poll_next()
             .once()
             .in_sequence(&mut seq)
@@ -975,6 +983,10 @@ mod database {
         forest.expect_range()
             .once()
             .return_once(|_: RangeFull| rq);
+        forest.expect_get()
+            .once()
+            .with(eq(forest_key))
+            .return_once(|_| Box::pin(future::ok(Some(tree))));
 
         let db = Database::new(Arc::new(idml), forest.into());
         let r = db.check().await.unwrap();
