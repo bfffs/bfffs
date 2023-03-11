@@ -181,6 +181,7 @@ impl<'a> IDML {
                           self.ridt.clone().check(),
                           self.check_ridt())
         .map_ok(|(x, y, z)| x && y && z)
+            .in_current_span()
     }
 
     /// Clean `zone` by moving all of its records to other zones.

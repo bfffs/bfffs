@@ -189,6 +189,7 @@ impl Forest {
     }
 
     /// Insert a new Tree.  There must not already be a Tree by this name
+    #[tracing::instrument(skip(self, txg))]
     pub async fn insert_tree(&self,
                        parent: Option<TreeID>,
                        name: String,

@@ -1257,6 +1257,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// - `txg`:    The current transaction number
     /// - `credit`: Writeback credit.  Should be sufficient for at least 2 total
     ///             leaf nodes, plus anything required by the value.
+    #[tracing::instrument(skip(self, v, txg, credit))]
     pub async fn insert(self: Arc<Self>, k: K, v: V, txg: TxgT, credit: Credit)
         -> Result<Option<V>>
     {
