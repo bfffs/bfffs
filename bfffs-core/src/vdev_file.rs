@@ -560,7 +560,7 @@ impl VdevFile {
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
-    pub fn write_at<'a>(&self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>>
+    pub fn write_at(&'static self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'static>>
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);

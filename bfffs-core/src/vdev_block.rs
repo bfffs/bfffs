@@ -500,6 +500,8 @@ impl Inner {
             },
             Poll::Pending => {
                 let schfut = self.reschedule();
+                // TODO: consider rewriting wih JoinHandles instead of oneshots.
+                // Tokio 0.1.0 did not return JoinHandles from spawn.
                 tokio::spawn( async move {
                     let r = fut.await;
                     for sender in senders{
