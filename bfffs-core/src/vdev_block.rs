@@ -246,43 +246,14 @@ impl BlockOp {
         }
     }
 
-    //pub fn accumulate2(&mut self, mut other: BlockOp) {
-        //debug_assert_eq!(other.senders.len(), 1);
-        //self.senders.push(other.senders.pop().unwrap());
-        //self.cmd = match (self.cmd, other.cmd) {
-            //(Cmd::SyncAll, Cmd::SyncAll) => {
-                //// Nothing to do
-                //Cmd::SyncAll
-            //},
-            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
-                //Cmd::WritevAt(vec![iovec0, iovec1])
-            //}
-            //_ => todo!()
-        //};
-        //todo!()
-    //}
-
-    //pub fn accumulate3(&mut self, mut other: BlockOp) -> Option<BlockOp> {
-        //match (self.cmd, other.cmd) {
-            //(Cmd::SyncAll, Cmd::SyncAll) => {
-                //// Nothing to do
-            //},
-            //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
-                //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
-                //if other.lba == self.lba + len0 {
-                    //// Adjacent writes may be combined
-                    //self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
-                //} else {
-                    //return Some(other);
-                //}
-            //}
-            //_ => todo!()
-        //}
-        //debug_assert_eq!(other.senders.len(), 1);
-        //self.senders.push(other.senders.pop().unwrap());
-        //todo!()
-    //}
-
+    /// Attempt to merge the two BlockOps together.  If successful, the result
+    /// will be a single block op that spans the contiguous LBA range of the
+    /// originals and includes the buffers of both.  When complete, it will
+    /// signal notification to both originals' waiters.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the BlckOps cannot be accumulated.
     pub fn accumulate(self, mut other: BlockOp) -> BlockOp {
         debug_assert!(self.can_accumulate(&other));
 
@@ -338,37 +309,6 @@ impl BlockOp {
             cmd
         }
     }
-
-    /// Attempt to merge the two BlockOps together.  If successful, the result
-    /// will be a single block op that spans the contiguous LBA range of the
-    /// originals and includes the buffers of both.  When complete, it will
-    /// signal notification to both originals' waiters.
-    //pub fn accumulate(&mut self, other: Option<&mut BlockOp>) -> bool {
-        //if let Some(other) = other {
-            //match (self.cmd, &other.cmd) {
-                //(Cmd::SyncAll, Cmd::SyncAll) => {
-                    //// There's no point to adjacent syncs.  Combine them
-                    ////true
-                //},
-                //(Cmd::WriteAt(iovec0), Cmd::WriteAt(iovec1)) => {
-                    //let len0 = (iovec0.len() / BYTES_PER_LBA) as LbaT;
-                    //if other.lba == self.lba + len0 {
-                        //// Adjacent writes may be combined
-                        ////self.cmd = Cmd::WritevAt(vec![iovec0, iovec1]);
-                        ////true
-                    //} else {
-                        //return false;
-                    //}
-                //}
-                //_ => todo!()
-            //}
-            //debug_assert_eq!(other.senders.len(), 1);
-            //self.senders.push(other.senders.pop().unwrap());
-            //todo!()
-        //} else {
-            //return false;
-        //}
-    //}
 
     pub fn erase_zone(start: LbaT, end: LbaT,
                       sender: oneshot::Sender<()>) -> BlockOp {
