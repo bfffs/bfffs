@@ -149,8 +149,6 @@ struct BlockOp {
     pub lba: LbaT,
     pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
-    // Consider replacing with std::sync::Waker, which is smaller than oneshot
-    // Sender and Receiver.
     pub senders: Vec<oneshot::Sender<()>>
 }
 
