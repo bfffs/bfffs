@@ -206,7 +206,7 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&'static self) -> BoxVdevFut {
+    fn sync_all(&self) -> BoxVdevFut {
         let fut = self.file.sync_all().unwrap()
             .map_ok(drop)
             .map_err(Error::from);
