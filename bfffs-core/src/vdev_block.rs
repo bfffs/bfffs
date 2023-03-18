@@ -1537,6 +1537,7 @@ mod t {
         mod issue_all {
             use super::*;
             use pretty_assertions::assert_eq;
+            use std::pin::pin;
 
             /// The upper layer creates two operations that can be accumulated.
             /// VdevBlock::issue_all should do that, and only issue one
@@ -1571,14 +1572,14 @@ mod t {
                 let mut ctx = noop_context();
                 // VdevBlock will issue the first operation immediately.
                 // But it won't return immediately.
-                let mut f0 = Box::pin(vdev.read_at(rbuf0, 1));
+                let mut f0 = pin!(vdev.read_at(rbuf0, 1));
                 assert!(f0.as_mut().poll(&mut ctx).is_pending());
                 // Since the optimium queue depth is 1, the second two
                 // operations will pile up in the queue.  When eventually
                 // issued, they'll be accumulated.
-                let mut f1 = Box::pin(vdev.read_at(rbuf1, 2));
+                let mut f1 = pin!(vdev.read_at(rbuf1, 2));
                 assert!(f1.as_mut().poll(&mut ctx).is_pending());
-                let mut f2 = Box::pin(vdev.read_at(rbuf2, 3));
+                let mut f2 = pin!(vdev.read_at(rbuf2, 3));
                 assert!(f2.as_mut().poll(&mut ctx).is_pending());
                 // Now that all Futures have been polled to get into the
                 // scheduler loop, complete the first one.
