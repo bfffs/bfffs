@@ -153,7 +153,6 @@ impl Cleaner {
 #[cfg(test)]
 mod t {
 
-use crate::util::basic_runtime;
 use futures::future;
 use mockall::Sequence;
 use super::*;
@@ -188,8 +187,8 @@ fn background() {
 }
 
 /// No zone is less dirty than the threshold
-#[test]
-fn no_sufficiently_dirty_zones() {
+#[tokio::test]
+async fn no_sufficiently_dirty_zones() {
     let mut idml = IDML::default();
     idml.expect_list_closed_zones()
         .once()
@@ -203,13 +202,11 @@ fn no_sufficiently_dirty_zones() {
     idml.expect_txg().never();
     idml.expect_clean_zone().never();
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    basic_runtime().block_on(async {
-        cleaner.clean_now().await
-    }).unwrap();
+    cleaner.clean_now().await.unwrap()
 }
 
-#[test]
-fn one_sufficiently_dirty_zone() {
+#[tokio::test]
+async fn one_sufficiently_dirty_zone() {
     const TXG: TxgT = TxgT(42);
 
     let mut idml = IDML::default();
@@ -232,13 +229,11 @@ fn one_sufficiently_dirty_zone() {
             *txg == TXG
         }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    basic_runtime().block_on(async {
-        cleaner.clean_now().await
-    }).unwrap();
+    cleaner.clean_now().await.unwrap();
 }
 
-#[test]
-fn two_sufficiently_dirty_zones() {
+#[tokio::test]
+async fn two_sufficiently_dirty_zones() {
     const TXG: TxgT = TxgT(42);
 
     let mut seq = Sequence::new();
@@ -277,9 +272,7 @@ fn two_sufficiently_dirty_zones() {
             *txg == TXG
         }).returning(|_, _| Box::pin(future::ok::<(), Error>(())));
     let cleaner = SyncCleaner::new(Arc::new(idml), 0.5);
-    basic_runtime().block_on(async {
-        cleaner.clean_now().await
-    }).unwrap();
+    cleaner.clean_now().await.unwrap();
 }
 
 }

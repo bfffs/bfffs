@@ -61,6 +61,8 @@ struct Syncer {
 }
 
 impl Syncer {
+    // Clippy false positive: the async block is needed for lifetime reasons
+    #[allow(clippy::redundant_async_block)]
     fn kick(&self) -> impl Future<Output=Result<()>> {
         let mut tx2 = self.tx.clone();
         async move {
@@ -660,11 +662,8 @@ impl Database {
     {
         let inner2 = self.inner.clone();
         let idml2 = self.inner.idml.clone();
-        async move {
-            Inner::open_filesystem(&inner2, tree_id)
-            .map_ok(|fs| ReadOnlyFilesystem::new(idml2, fs))
-            .await
-        }
+        Inner::open_filesystem(&inner2, tree_id)
+        .map_ok(|fs| ReadOnlyFilesystem::new(idml2, fs))
     }
 
     /// Shutdown all background tasks and close the Database

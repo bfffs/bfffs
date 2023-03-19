@@ -21,7 +21,7 @@ use futures::{
     task::{Context, Poll}
 };
 use metrohash::MetroHash64;
-use num_enum::{IntoPrimitive, FromPrimitive};
+use num_enum::FromPrimitive;
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use serde::ser::{Serialize, Serializer, SerializeStruct};
@@ -50,9 +50,9 @@ pub enum ExtAttrNamespace {
     System = libc::EXTATTR_NAMESPACE_SYSTEM as isize
 }
 
-/// Constants that discriminate different `ObjKey`s.  I don't know of a way to
-/// do this within the definition of ObjKey itself.
-#[derive(Debug, IntoPrimitive, FromPrimitive)]
+/// Constants that discriminate different `ObjKey`s.  Only needed for the
+/// `<FSKey as Debug>::fmt` function.
+#[derive(Debug, FromPrimitive)]
 #[repr(u8)]
 enum ObjKeyDiscriminant {
     DirEntry = 0,
@@ -68,33 +68,34 @@ enum ObjKeyDiscriminant {
 /// The per-object portion of a `FSKey`
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
          Serialize)]
+#[repr(u8)]
 pub enum ObjKey {
     /// A directory entry.
     ///
     /// The value is a 56-bit hash of the entry's name.  This key is only valid
     /// if the object is a directory.
-    DirEntry(u64),
-    Inode,
+    DirEntry(u64) = ObjKeyDiscriminant::DirEntry as u8,
+    Inode = ObjKeyDiscriminant::Inode as u8,
 
     /// File extent
     ///
     /// The value is the extent's offset into its object, in bytes.  This key is
     /// only valid if the object is a file.
-    Extent(u64),
+    Extent(u64) = ObjKeyDiscriminant::Extent as u8,
 
     /// Extended attribute
     ///
     /// The first value is the 56-bit hash of the entry's name and namespace.
-    ExtAttr(u64),
+    ExtAttr(u64) = ObjKeyDiscriminant::ExtAttr as u8,
 
     /// A Dataset property.  Only relevant for object 0.
-    Property(PropertyName),
+    Property(PropertyName) = ObjKeyDiscriminant::Property as u8,
 
     /// Inode number of an open-but-deleted inode.
     ///
     /// The value is a 56-bit hash of the inode number.  This key is only valid
     /// for object 0.
-    DyingInode(u64),
+    DyingInode(u64) = ObjKeyDiscriminant::DyingInode as u8,
 }
 
 impl ObjKey {
@@ -130,15 +131,10 @@ impl ObjKey {
     }
 
     fn discriminant(&self) -> u8 {
-        let d = match self {
-            ObjKey::DirEntry(_) => ObjKeyDiscriminant::DirEntry,
-            ObjKey::Inode => ObjKeyDiscriminant::Inode,
-            ObjKey::Extent(_) => ObjKeyDiscriminant::Extent,
-            ObjKey::ExtAttr(_) => ObjKeyDiscriminant::ExtAttr,
-            ObjKey::Property(_) => ObjKeyDiscriminant::Property,
-            ObjKey::DyingInode(_) => ObjKeyDiscriminant::DyingInode,
-        };
-        d.into()
+        // SAFETY: Because `Self` is marked `repr(u8)`, its layout is a `repr(C)` `union`
+        // between `repr(C)` structs, each of which has the `u8` discriminant as its first
+        // field, so we can read the discriminant without offsetting the pointer.
+        unsafe { *<*const _>::from(self).cast::<u8>() }
     }
 
     pub fn offset(&self) -> u64 {
@@ -201,7 +197,9 @@ impl FSKey {
     pub fn extent_range<R>(ino: u64, offsets: R) -> Range<Self>
         where R: RangeBounds<u64>
     {
-        let discriminant = ObjKeyDiscriminant::Extent.into();
+        // Annoyingly, it is not possible to get an enum's discriminant without
+        // constructing an instance.  So we must construct a default key here.
+        let discriminant = ObjKey::Extent(Default::default()).discriminant();
         let start = match offsets.start_bound() {
             Bound::Included(s) => {
                 FSKey::compose(ino, discriminant, *s)
@@ -224,19 +222,19 @@ impl FSKey {
     }
 
     pub fn is_direntry(&self) -> bool {
-        self.objtype() == u8::from(ObjKeyDiscriminant::DirEntry)
+        self.objtype() == ObjKey::DirEntry(Default::default()).discriminant()
     }
 
     pub fn is_dying_inode(&self) -> bool {
-        self.objtype() == u8::from(ObjKeyDiscriminant::DyingInode)
+        self.objtype() == ObjKey::DyingInode(Default::default()).discriminant()
     }
 
     pub fn is_extattr(&self) -> bool {
-        self.objtype() == u8::from(ObjKeyDiscriminant::ExtAttr)
+        self.objtype() == ObjKey::ExtAttr(Default::default()).discriminant()
     }
 
     pub fn is_inode(&self) -> bool {
-        self.objtype() == u8::from(ObjKeyDiscriminant::Inode)
+        self.objtype() == ObjKey::Inode.discriminant()
     }
 
     pub fn new(object: u64, objkey: ObjKey) -> Self {
@@ -256,6 +254,10 @@ impl FSKey {
 
 impl Debug for FSKey {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        // let objtype = match self.discriminant() {
+        //     ObjKey::Inode(Default::default()).discriminant() => "Inode",
+        //     _ => todo!()
+        // };
         let objtype = ObjKeyDiscriminant::from(self.objtype());
         write!(f, "FSKey {{ object: {:#x}, objtype: {:?}, offset: {:#x} }}",
                self.object(), objtype, self.offset())
