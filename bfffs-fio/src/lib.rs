@@ -200,7 +200,7 @@ pub unsafe extern "C" fn fio_bfffs_close(
     let fs_opt = FS.read().unwrap();
     let fs = fs_opt.as_ref().unwrap();
     let fd = FILES.write().unwrap().remove(&(*f).fd).unwrap();
-    rt.block_on(async { fs.inactive(fd).await });
+    rt.block_on(fs.inactive(fd));
     (*f).fd = -1;
     0
 }

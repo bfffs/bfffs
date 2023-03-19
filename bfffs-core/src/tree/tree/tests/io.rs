@@ -53,8 +53,8 @@ fn expect_pop(mock: &mut MockDML, addr: u32, node: NodeT)
         .return_once(move |_, _| future::ok(Box::new(node)).boxed());
 }
 
-#[test]
-fn addresses() {
+#[tokio::test]
+async fn addresses() {
     let mut mock = mock_dml();
     let addrl0 = 0;
     let addrl1 = 1;
@@ -128,18 +128,15 @@ root:
               ptr:
                 Addr: 4
 "#);
-    let rt = basic_runtime();
-    let addrs = rt.block_on(async {
-        tree.addresses(TxgT::from(5)..)
+    let addrs = tree.addresses(TxgT::from(5)..)
         .collect::<Vec<_>>()
-        .await
-    });
+        .await;
     assert_eq!(vec![addri0, addrl0, addrl1, addrl2], addrs);
 }
 
 /// Tree::addresses on a Tree with a single leaf node
-#[test]
-fn addresses_leaf() {
+#[tokio::test]
+async fn addresses_leaf() {
     let mock = MockDML::new();
     let addrl = 0;
     let dml = Arc::new(mock);
@@ -160,12 +157,9 @@ root:
       end: 42
     ptr:
       Addr: 0"#);
-    let rt = basic_runtime();
-    let addrs = rt.block_on(async {
-        tree.addresses(..)
+    let addrs = tree.addresses(..)
         .collect::<Vec<_>>()
-        .await
-    });
+        .await;
     assert_eq!(vec![addrl], addrs);
 }
 
@@ -1466,8 +1460,8 @@ root:
 "#);
 }
 
-#[test]
-fn range_leaf() {
+#[tokio::test]
+async fn range_leaf() {
     let mut mock = mock_dml();
     let mut ld1 = LeafData::default();
     ld1.items.insert(0, 0.0);
@@ -1515,12 +1509,9 @@ root:
     ptr:
       Addr: 0
   "#));
-    let rt = basic_runtime();
-    let r = rt.block_on(async {
-        tree.range(1..3)
+    let r = tree.range(1..3)
         .try_collect()
-        .await
-    });
+        .await;
     assert_eq!(r, Ok(vec![(1, 1.0), (2, 2.0)]));
 }
 

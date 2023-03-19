@@ -18,6 +18,9 @@
 // of e.g. "Idml" as opposed to "IDML".
 #![allow(clippy::upper_case_acronyms)]
 
+// False positive https://github.com/rust-lang/rust-clippy/issues/10498
+#![allow(clippy::let_with_type_underscore)]
+
 // error: reached the type-length limit while instantiating std::pin::Pin...
 #![type_length_limit="3790758"]
 // error: trait bounds overflowed in Database::sync_transaction_priv

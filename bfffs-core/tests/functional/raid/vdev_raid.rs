@@ -82,7 +82,7 @@ mod vdev_raid {
         chunksize: LbaT
     }
 
-    fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
+    async fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
         let len = 1 << 30;  // 1 GB
         let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
         let mirrors = (0..n).map(|i| {
@@ -94,9 +94,8 @@ mod vdev_raid {
         }).collect::<Vec<_>>();
         let cs = NonZeroU64::new(chunksize);
         let vdev = VdevRaid::create(cs, k, f, mirrors);
-        basic_runtime().block_on(
-            vdev.open_zone(0)
-        ).expect("open_zone");
+        vdev.open_zone(0).await
+            .expect("open_zone");
         Harness { vdev, _tempdir: tempdir, n, k, f, chunksize }
     }
 
@@ -137,67 +136,85 @@ mod vdev_raid {
         (dbsw, dbsr)
     }
 
-    fn write_read(vr: &VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>,
-                  zone: ZoneT, start_lba: LbaT) {
+    async fn write_read(
+        vr: &VdevRaid,
+        wbufs: Vec<IoVec>,
+        rbufs: Vec<IoVecMut>,
+        zone: ZoneT,
+        start_lba: LbaT)
+    {
         let mut write_lba = start_lba;
         let mut read_lba = start_lba;
-        basic_runtime().block_on(async {
-            wbufs.into_iter()
-            .map(|wb| {
-                let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
-                let fut = vr.write_at(wb, zone, write_lba);
-                write_lba += lbas;
+        wbufs.into_iter()
+        .map(|wb| {
+            let lbas = (wb.len() / BYTES_PER_LBA) as LbaT;
+            let fut = vr.write_at(wb, zone, write_lba);
+            write_lba += lbas;
+            fut
+        }).collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .and_then(|_| {
+            rbufs.into_iter()
+            .map(|rb| {
+                let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
+                let fut = vr.read_at(rb, read_lba);
+                read_lba += lbas;
                 fut
             }).collect::<FuturesUnordered<_>>()
             .try_collect::<Vec<_>>()
-            .and_then(|_| {
-                rbufs.into_iter()
-                .map(|rb| {
-                    let lbas = (rb.len() / BYTES_PER_LBA) as LbaT;
-                    let fut = vr.read_at(rb, read_lba);
-                    read_lba += lbas;
-                    fut
-                }).collect::<FuturesUnordered<_>>()
-                .try_collect::<Vec<_>>()
-            }).await
-        }).unwrap();
+        }).await
+        .unwrap();
     }
 
-    fn write_read0(vr: &VdevRaid, wbufs: Vec<IoVec>, rbufs: Vec<IoVecMut>) {
+    async fn write_read0(
+        vr: &VdevRaid,
+        wbufs: Vec<IoVec>,
+        rbufs: Vec<IoVecMut>)
+    {
         let zl = vr.zone_limits(0);
-        write_read(vr, wbufs, rbufs, 0, zl.0)
+        write_read(vr, wbufs, rbufs, 0, zl.0).await
     }
 
-    fn write_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
-                            s: usize) {
+    async fn write_read_n_stripes(
+        vr: &VdevRaid,
+        chunksize: LbaT,
+        k: i16,
+        f: i16,
+        s: usize)
+    {
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
-        write_read0(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]);
+        write_read0(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf0, dbsr.try_const().unwrap());
     }
 
-    fn writev_read_n_stripes(vr: &VdevRaid, chunksize: LbaT, k: i16, f: i16,
-                             s: usize) {
+    async fn writev_read_n_stripes(
+        vr: &VdevRaid, chunksize: LbaT,
+        k: i16,
+        f: i16,
+        s: usize)
+    {
         let zl = vr.zone_limits(0);
         let (dbsw, dbsr) = make_bufs(chunksize, k, f, s);
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(wbuf.len() / 2);
         let sglist = vec![wbuf_l, wbuf_r];
-        basic_runtime().block_on(async {
-            vr.writev_at_one(&sglist, zl.0)
-            .then(|write_result| {
-                write_result.expect("writev_at_one");
-                vr.read_at(dbsr.try_mut().unwrap(), zl.0)
-            }).await
-        }).expect("read_at");
+        vr.writev_at_one(&sglist, zl.0)
+        .then(|write_result| {
+            write_result.expect("writev_at_one");
+            vr.read_at(dbsr.try_mut().unwrap(), zl.0)
+        }).await
+        .expect("read_at");
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     // read_at should work when directed at the middle of the stripe buffer
     #[rstest(h, case(harness(3, 3, 1, 16)))]
-    fn read_partial_at_middle_of_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn read_partial_at_middle_of_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let mut wbuf = dbsw.try_const().unwrap().slice_to(2 * BYTES_PER_LBA);
         let _ = wbuf.split_off(2 * BYTES_PER_LBA);
@@ -206,7 +223,7 @@ mod vdev_raid {
             let rbuf_begin = rbuf.split_to(BYTES_PER_LBA);
             let rbuf_middle = rbuf.split_to(BYTES_PER_LBA);
             write_read0(&h.vdev, vec![wbuf.clone()],
-                        vec![rbuf_begin, rbuf_middle]);
+                        vec![rbuf_begin, rbuf_middle]).await;
         }
         assert_eq!(&wbuf[..],
                    &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
@@ -216,7 +233,9 @@ mod vdev_raid {
 
     // Read a stripe in several pieces, from disk
     #[rstest(h, case(harness(7, 7, 1, 16)))]
-    fn read_parts_of_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn read_parts_of_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let cs = h.chunksize as usize;
         let wbuf = dbsw.try_const().unwrap();
@@ -236,14 +255,17 @@ mod vdev_raid {
             // rbuf6 will get the last half chunk
             let rbuf6 = rbuf5.split_off(3 * cs / 2 * BYTES_PER_LBA);
             write_read0(&h.vdev, vec![wbuf.clone()],
-                        vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6]);
+                        vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6])
+            .await;
         }
         assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     // Read the end of one stripe and the beginning of another
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn read_partial_stripes(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn read_partial_stripes(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 2);
         let wbuf = dbsw.try_const().unwrap();
         {
@@ -252,53 +274,65 @@ mod vdev_raid {
             let l = rbuf_m.len();
             let rbuf_e = rbuf_m.split_off(l - BYTES_PER_LBA);
             write_read0(&h.vdev, vec![wbuf.clone()],
-                        vec![rbuf_b, rbuf_m, rbuf_e]);
+                        vec![rbuf_b, rbuf_m, rbuf_e]).await;
         }
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    #[should_panic]
-    fn read_past_end_of_stripe_buffer(h: Harness) {
+    #[should_panic(expected = "Read beyond the stripe buffer into unallocated space")]
+    #[tokio::test]
+    #[awt]
+    async fn read_past_end_of_stripe_buffer(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let rbuf = dbsr.try_mut().unwrap();
-        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf]);
+        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf]).await;
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    #[should_panic]
-    fn read_starts_past_end_of_stripe_buffer(h: Harness)
+    #[should_panic(expected = "Read beyond the stripe buffer into unallocated space")]
+    #[tokio::test]
+    #[awt]
+    async fn read_starts_past_end_of_stripe_buffer(#[future] h: Harness)
     {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let mut rbuf = dbsr.try_mut().unwrap();
         let rbuf_r = rbuf.split_off(BYTES_PER_LBA);
-        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_r]);
+        write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_r]).await;
     }
 
     #[apply(raid_configs)]
-    fn write_read_one_stripe(h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1);
+    #[tokio::test]
+    #[awt]
+    async fn write_read_one_stripe(#[future] h: Harness) {
+        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1).await;
     }
 
     // read_at_one/write_at_one with a large configuration
     #[rstest(h, case(harness(41, 19, 3, 2)))]
-    fn write_read_one_stripe_jumbo(h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1);
+    #[tokio::test]
+    #[awt]
+    async fn write_read_one_stripe_jumbo(#[future] h: Harness) {
+        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 1).await;
     }
 
     #[apply(raid_configs)]
-    fn write_read_two_stripes(h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2);
+    #[tokio::test]
+    #[awt]
+    async fn write_read_two_stripes(#[future] h: Harness) {
+        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2).await;
     }
 
     // read_at_multi/write_at_multi with a large configuration
     #[rstest(h, case(harness(41, 19, 3, 2)))]
-    fn write_read_two_stripes_jumbo(h: Harness) {
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2);
+    #[tokio::test]
+    #[awt]
+    async fn write_read_two_stripes_jumbo(#[future] h: Harness) {
+        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, 2).await;
     }
 
     // Write at least three rows to the layout.  Writing three rows guarantees
@@ -306,25 +340,31 @@ mod vdev_raid {
     // which tests the ability of VdevRaid::read_at to split a single disk's
     // data up into multiple VdevBlock::readv_at calls.
     #[apply(raid_configs)]
-    fn write_read_three_rows(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_read_three_rows(#[future] h: Harness) {
         let rows = 3;
         let stripes = div_roundup((rows * h.n) as usize, h.k as usize);
-        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, stripes);
+        write_read_n_stripes(&h.vdev, h.chunksize, h.k, h.f, stripes).await;
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_completes_a_partial_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_completes_a_partial_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
-                    vec![dbsr.try_mut().unwrap()]);
+                    vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_completes_a_partial_stripe_and_writes_a_bit_more(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_completes_a_partial_stripe_and_writes_a_bit_more(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 2);
         {
             // Truncate buffers to be < 2 stripes' length
@@ -338,36 +378,42 @@ mod vdev_raid {
             let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]);
+            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_completes_a_partial_stripe_and_writes_another(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_completes_a_partial_stripe_and_writes_another(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 2);
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
-                    vec![dbsr.try_mut().unwrap()]);
+                    vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_completes_a_partial_stripe_and_writes_two_more(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_completes_a_partial_stripe_and_writes_two_more(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 3);
         let wbuf = dbsw.try_const().unwrap();
         let mut wbuf_l = wbuf.clone();
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(&h.vdev, vec![wbuf_l, wbuf_r],
-                    vec![dbsr.try_mut().unwrap()]);
+                    vec![dbsr.try_mut().unwrap()]).await;
         assert_eq!(wbuf, dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_completes_a_partial_stripe_and_writes_two_more_with_leftovers(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 4);
         {
             // Truncate buffers to be < 4 stripes' length
@@ -381,21 +427,23 @@ mod vdev_raid {
             let mut wbuf_l = dbsw.try_const().unwrap();
             let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]);
+            write_read0(&h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_partial_at_start_of_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_partial_at_start_of_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]);
+            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -405,14 +453,16 @@ mod vdev_raid {
 
     // Write less than an LBA at the start of a stripe
     #[rstest(h, case(harness(2, 2, 1, 1)))]
-    fn write_tiny_at_start_of_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_tiny_at_start_of_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap();
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA * 3 / 4);
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]);
+            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -426,7 +476,9 @@ mod vdev_raid {
 
     // Write a whole stripe plus a fraction of an LBA more
     #[rstest(h, case(harness(2, 2, 1, 1)))]
-    fn write_stripe_and_a_bit_more(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_stripe_and_a_bit_more(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 2);
         let wbuf = dbsw.try_const().unwrap();
         let wcut = wbuf.len() / 2 + 1024;
@@ -435,7 +487,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(rcut);
-            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]);
+            write_read0(&h.vdev, vec![wbuf_short], vec![rbuf_short]).await;
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
@@ -450,7 +502,9 @@ mod vdev_raid {
     // Test that write_at works when directed at the middle of the StripeBuffer.
     // This test requires a chunksize > 2
     #[rstest(h, case(harness(3, 3, 1, 16)))]
-    fn write_partial_at_middle_of_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_partial_at_middle_of_stripe(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf = dbsw.try_const().unwrap().slice_to(2 * BYTES_PER_LBA);
         let wbuf_begin = wbuf.slice_to(BYTES_PER_LBA);
@@ -458,7 +512,7 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let _ = rbuf.split_off(2 * BYTES_PER_LBA);
-            write_read0(&h.vdev, vec![wbuf_begin, wbuf_middle], vec![rbuf]);
+            write_read0(&h.vdev, vec![wbuf_begin, wbuf_middle], vec![rbuf]).await;
         }
         assert_eq!(&wbuf[..],
                    &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
@@ -467,7 +521,9 @@ mod vdev_raid {
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn write_two_stripes_with_leftovers(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn write_two_stripes_with_leftovers(#[future] h: Harness) {
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 3);
         {
             // Truncate buffers to be < 3 stripes' length
@@ -480,51 +536,57 @@ mod vdev_raid {
         {
             let wbuf = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            write_read0(&h.vdev, vec![wbuf], vec![rbuf]);
+            write_read0(&h.vdev, vec![wbuf], vec![rbuf]).await;
         }
         assert_eq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
     #[apply(raid_configs)]
-    fn writev_read_one_stripe(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn writev_read_one_stripe(#[future] h: Harness) {
         writev_read_n_stripes(&h.vdev, h.chunksize,
-                              h.k, h.f, 1);
+                              h.k, h.f, 1).await;
     }
 
     // Erasing an open zone should fail
-    #[should_panic]
+    #[should_panic(expected = "Tried to erase an open zone")]
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn zone_erase_open(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn zone_erase_open(#[future] h: Harness) {
         let zone = 1;
-        basic_runtime().block_on( async {
-            h.vdev.open_zone(zone)
-            .and_then(|_| h.vdev.erase_zone(0)).await
-        }).expect("zone_erase_open");
+        h.vdev.open_zone(zone)
+        .and_then(|_| h.vdev.erase_zone(0)).await
+        .expect("zone_erase_open");
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn zone_read_closed(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn zone_read_closed(#[future] h: Harness) {
         let zone = 0;
         let zl = h.vdev.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        basic_runtime().block_on(async {
-            h.vdev.write_at(wbuf0, zone, zl.0)
-                .and_then(|_| {
-                    h.vdev.finish_zone(zone)
-                }).and_then(|_| {
-                    h.vdev.read_at(rbuf, zl.0)
-                }).await
-        }).expect("Runtime::block_on");
+        h.vdev.write_at(wbuf0, zone, zl.0)
+            .and_then(|_| {
+                h.vdev.finish_zone(zone)
+            }).and_then(|_| {
+                h.vdev.read_at(rbuf, zl.0)
+            }).await
+        .expect("Runtime::block_on");
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
     // Close a zone with an incomplete StripeBuffer, then read back from it
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn zone_read_closed_partial(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn zone_read_closed_partial(#[future] h: Harness) {
         let zone = 0;
         let zl = h.vdev.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
@@ -533,67 +595,71 @@ mod vdev_raid {
         {
             let mut rbuf = dbsr.try_mut().unwrap();
             let rbuf_short = rbuf.split_to(BYTES_PER_LBA);
-            basic_runtime().block_on(async {
-                h.vdev.write_at(wbuf_short, zone, zl.0)
-                    .and_then(|_| {
-                        h.vdev.finish_zone(zone)
-                    }).and_then(|_| {
-                        h.vdev.read_at(rbuf_short, zl.0)
-                    }).await
-            }).expect("Runtime::block_on");
+            h.vdev.write_at(wbuf_short, zone, zl.0)
+                .and_then(|_| {
+                    h.vdev.finish_zone(zone)
+                }).and_then(|_| {
+                    h.vdev.read_at(rbuf_short, zl.0)
+                }).await
+            .expect("Runtime::block_on");
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    #[should_panic]
+    #[should_panic(expected = "Can't write to a closed zone")]
+    #[tokio::test]
+    #[awt]
     // Writing to an explicitly closed a zone fails
-    fn zone_write_explicitly_closed(h: Harness) {
+    async fn zone_write_explicitly_closed(#[future] h: Harness) {
         let zone = 1;
         let (start, _) = h.vdev.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        basic_runtime().block_on(async {
-            h.vdev.open_zone(zone)
+        h.vdev.open_zone(zone)
             .and_then(|_| h.vdev.finish_zone(zone)).await
-        }).expect("open and finish");
-        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start);
+            .expect("open and finish");
+        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
-    #[should_panic]
+    #[should_panic(expected = "Can't write to a closed zone")]
     #[rstest(h, case(harness(3, 3, 1, 2)))]
+    #[tokio::test]
+    #[awt]
     // Writing to a closed zone should fail
-    fn zone_write_implicitly_closed(h: Harness) {
+    async fn zone_write_implicitly_closed(#[future] h: Harness) {
         let zone = 1;
         let (start, _) = h.vdev.zone_limits(zone);
         let dbsw = DivBufShared::from(vec![0;4096]);
         let wbuf = dbsw.try_const().unwrap();
-        drop(h.vdev.write_at(wbuf, zone, start));
+        h.vdev.write_at(wbuf, zone, start).await.unwrap();
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
+    #[tokio::test]
+    #[awt]
     // Opening a closed zone should allow writing
-    fn zone_write_open(h: Harness) {
+    async fn zone_write_open(#[future] h: Harness) {
         let zone = 1;
         let (start, _) = h.vdev.zone_limits(zone);
         let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 1);
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         let rbuf = dbsr.try_mut().unwrap();
-        basic_runtime().block_on(
-            h.vdev.open_zone(zone)
-        ).expect("open_zone");
-        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start);
+        h.vdev.open_zone(zone).await.expect("open_zone");
+        write_read(&h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
     // Two zones can be open simultaneously
     #[rstest(h, case(harness(3, 3, 1, 2)))]
-    fn zone_write_two_zones(h: Harness) {
+    #[tokio::test]
+    #[awt]
+    async fn zone_write_two_zones(#[future] h: Harness) {
         let vdev_raid = h.vdev;
         for zone in 1..3 {
             let (start, _) = vdev_raid.zone_limits(zone);
@@ -601,10 +667,8 @@ mod vdev_raid {
             let wbuf0 = dbsw.try_const().unwrap();
             let wbuf1 = dbsw.try_const().unwrap();
             let rbuf = dbsr.try_mut().unwrap();
-            basic_runtime().block_on(
-                vdev_raid.open_zone(zone)
-            ).expect("open_zone");
-            write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start);
+            vdev_raid.open_zone(zone).await.expect("open_zone");
+            write_read(&vdev_raid, vec![wbuf0], vec![rbuf], zone, start).await;
             assert_eq!(wbuf1, dbsr.try_const().unwrap());
         }
     }
@@ -628,7 +692,6 @@ mod persistence {
         path::PathBuf
     };
     use tempfile::{Builder, TempDir};
-    use super::super::super::*;
 
     const GOLDEN_VDEV_RAID_LABEL: [u8; 124] = [
         // Past the VdevFile::Label, we have a raid::Label
@@ -708,11 +771,10 @@ mod persistence {
     }
 
     #[rstest]
-    fn write_label(harness: Harness) {
-        basic_runtime().block_on(async {
-            let label_writer = LabelWriter::new(0);
-            harness.0.write_label(label_writer).await
-        }).unwrap();
+    #[tokio::test]
+    async fn write_label(harness: Harness) {
+        let label_writer = LabelWriter::new(0);
+        harness.0.write_label(label_writer).await.unwrap();
         for path in harness.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
