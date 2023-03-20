@@ -47,7 +47,7 @@ dependencies = [
  "anstyle",
  "bstr",
  "doc-comment",
- "predicates 3.0.1",
+ "predicates",
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
@@ -102,7 +102,7 @@ dependencies = [
  "libc",
  "mockall",
  "nix",
- "predicates 2.1.5",
+ "predicates",
  "regex",
  "rstest",
  "si-scale",
@@ -1135,38 +1135,37 @@ dependencies = [
 [[package]]
 name = "mockall"
 version = "0.11.2"
-source = "git+https://github.com/asomers/mockall.git?rev=231bd5f#231bd5ff58ed4f9e99bba74f0239995942f8d29d"
+source = "git+https://github.com/asomers/mockall.git?rev=8af28ef#8af28ef220701f348373440e1d4eb5965d9e6106"
 dependencies = [
  "cfg-if",
  "downcast",
  "fragile",
  "lazy_static",
  "mockall_derive",
- "predicates 2.1.5",
+ "predicates",
  "predicates-tree",
 ]
 
 [[package]]
 name = "mockall_derive"
 version = "0.11.2"
-source = "git+https://github.com/asomers/mockall.git?rev=231bd5f#231bd5ff58ed4f9e99bba74f0239995942f8d29d"
+source = "git+https://github.com/asomers/mockall.git?rev=8af28ef#8af28ef220701f348373440e1d4eb5965d9e6106"
 dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.3",
 ]
 
 [[package]]
 name = "mockall_double"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dffc15b97456ecc84d2bde8c1df79145e154f45225828c4361f676e1b82acd6"
+version = "0.3.0"
+source = "git+https://github.com/asomers/mockall.git?rev=8af28ef#8af28ef220701f348373440e1d4eb5965d9e6106"
 dependencies = [
  "cfg-if",
  "proc-macro2",
  "quote",
- "syn 1.0.109",
+ "syn 2.0.3",
 ]
 
 [[package]]
@@ -1421,28 +1420,17 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "predicates"
-version = "2.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59230a63c37f3e18569bdb90e4a89cbf5bf8b06fea0b84e65ea10cc4df47addd"
-dependencies = [
- "difflib",
- "float-cmp",
- "itertools 0.10.5",
- "normalize-line-endings",
- "predicates-core",
- "regex",
-]
-
-[[package]]
-name = "predicates"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ba7d6ead3e3966038f68caa9fc1f860185d95a793180bbcfe0d0da47b3961ed"
 dependencies = [
  "anstyle",
  "difflib",
+ "float-cmp",
  "itertools 0.10.5",
+ "normalize-line-endings",
  "predicates-core",
+ "regex",
 ]
 
 [[package]]
