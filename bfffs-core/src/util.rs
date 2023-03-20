@@ -181,15 +181,6 @@ impl<R, T> RangeBoundsExt<T> for R
 
 // LCOV_EXCL_START
 #[cfg(test)]
-/// Helper to generate the runtime used by most unit tests
-pub fn basic_runtime() -> tokio::runtime::Runtime {
-    tokio::runtime::Builder::new_current_thread()
-        .enable_time()
-        .build()
-        .unwrap()
-}
-
-#[cfg(test)]
 mod t {
 use pretty_assertions::assert_eq;
 use super::*;
