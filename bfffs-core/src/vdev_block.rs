@@ -149,7 +149,7 @@ struct BlockOp {
     pub lba: LbaT,
     pub cmd: Cmd,
     /// Used by the `VdevLeaf` to complete this future
-    pub senders: Vec<oneshot::Sender<()>>
+    pub senders: Vec<oneshot::Sender<Result<()>>>
 }
 
 impl Eq for BlockOp {
@@ -309,51 +309,51 @@ impl BlockOp {
     }
 
     pub fn erase_zone(start: LbaT, end: LbaT,
-                      sender: oneshot::Sender<()>) -> BlockOp {
+                      sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba: end, cmd: Cmd::EraseZone(start), senders: vec![sender] }
     }
 
     pub fn finish_zone(start: LbaT, end: LbaT,
-                       sender: oneshot::Sender<()>) -> BlockOp {
+                       sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba: end, cmd: Cmd::FinishZone(start), senders: vec![sender] }
     }
 
-    pub fn open_zone(lba: LbaT, sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn open_zone(lba: LbaT, sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::OpenZone, senders: vec![sender] }
     }
 
     pub fn read_at(buf: IoVecMut, lba: LbaT,
-                   sender: oneshot::Sender<()>) -> BlockOp {
+                   sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::ReadAt(buf), senders: vec![sender]}
     }
 
     pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
-                         sender: oneshot::Sender<()>) -> BlockOp
+                         sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
         BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), senders: vec![sender]}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
-                    sender: oneshot::Sender<()>) -> BlockOp {
+                    sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::ReadvAt(bufs), senders: vec![sender]}
     }
 
-    pub fn sync_all(sender: oneshot::Sender<()>) -> BlockOp {
+    pub fn sync_all(sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba: 0, cmd: Cmd::SyncAll, senders: vec![sender]}
     }
 
     pub fn write_at(buf: IoVec, lba: LbaT,
-                    sender: oneshot::Sender<()>) -> BlockOp {
+                    sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::WriteAt(buf), senders: vec![sender]}
     }
 
     pub fn write_label(labeller: LabelWriter,
-                       sender: oneshot::Sender<()>) -> BlockOp {
+                       sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), senders: vec![sender]}
     }
 
     pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
-                          sender: oneshot::Sender<()>) -> BlockOp
+                          sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
         BlockOp{
             lba,
@@ -363,7 +363,7 @@ impl BlockOp {
     }
 
     pub fn writev_at(bufs: SGList, lba: LbaT,
-                     sender: oneshot::Sender<()>) -> BlockOp {
+                     sender: oneshot::Sender<Result<()>>) -> BlockOp {
         BlockOp { lba, cmd: Cmd::WritevAt(bufs), senders: vec![sender]}
     }
 }
@@ -371,7 +371,7 @@ impl BlockOp {
 struct Inner {
     /// A VdevLeaf future that got delayed by an EAGAIN error.  We hold the
     /// future around instead of spawning it into the reactor.
-    delayed: Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>,
+    delayed: Option<(Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>)>,
 
     /// Max commands that will be simultaneously queued to the VdevLeaf
     optimum_queue_depth: u32,
@@ -457,10 +457,10 @@ impl Inner {
     /// Returns a delayed operation if there were insufficient resources to
     /// immediately issue the future.
     fn issue_fut(&mut self,
-                 senders: Vec<oneshot::Sender<()>>,
+                 senders: Vec<oneshot::Sender<Result<()>>>,
                  mut fut: Pin<Box<VdevFut>>,
                  cx: &mut Context)
-        -> Option<(Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>)>
+        -> Option<(Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>)>
     {
 
         let inner = self.weakself.upgrade().expect(
@@ -475,24 +475,22 @@ impl Inner {
                 // Out of resources to issue this future.  Delay it.
                 return Some((senders, fut));
             },
-            Poll::Ready(Err(e)) => panic!("Unhandled error {e:?}"),
             Poll::Pending => {
                 let schfut = self.reschedule();
                 tokio::spawn( async move {
                     let r = fut.await;
-                    r.expect("Unhandled error");
                     for sender in senders{
-                        sender.send(()).unwrap();
+                        sender.send(r).unwrap();
                     }
                     inner.write().unwrap().queue_depth -= 1;
                     schfut.await
                 });
             },
-            Poll::Ready(Ok(_)) => {
+            Poll::Ready(r) => {
                 // This normally doesn't happen, but it can happen on a
                 // heavily laden system or one with very fast storage.
                 for sender in senders {
-                    sender.send(()).unwrap();
+                    sender.send(r).unwrap();
                 }
                 self.queue_depth -= 1;
             }
@@ -502,7 +500,7 @@ impl Inner {
 
     /// Create a future from a BlockOp, but don't spawn it yet
     fn make_fut(&mut self, block_op: BlockOp)
-        -> (Vec<oneshot::Sender<()>>, Pin<Box<VdevFut>>) {
+        -> (Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>) {
 
         self.queue_depth += 1;
         let lba = block_op.lba;
@@ -623,7 +621,7 @@ pub struct VdevBlockFut {
     block_op: Option<BlockOp>,
     inner: Arc<RwLock<Inner>>,
     #[pin]
-    receiver: oneshot::Receiver<()>,
+    receiver: oneshot::Receiver<Result<()>>,
 }
 
 impl Future for VdevBlockFut {
@@ -634,8 +632,12 @@ impl Future for VdevBlockFut {
             let block_op = self.block_op.take().unwrap();
             self.inner.write().unwrap().sched_and_issue(block_op, cx);
         }
-        self.project().receiver.poll(cx)
-            .map_err(|_| Error::EPIPE)
+        match self.project().receiver.poll(cx) {
+            Poll::Ready(Ok(Ok(()))) => Poll::Ready(Ok(())),
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(_)) => Poll::Ready(Err(Error::EPIPE)),
+            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(e))
+        }
     }
 }
 
@@ -694,7 +696,7 @@ impl VdevBlock {
     {
         // The zone must already be closed, but VdevBlock doesn't keep enough
         // information to assert that
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::erase_zone(start, end, sender);
 
         // Sanity check LBAs
@@ -718,7 +720,7 @@ impl VdevBlock {
     /// - `end`:    The last LBA within the target zone
     pub fn finish_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut
     {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::finish_zone(start, end, sender);
 
         // Sanity check LBAs
@@ -737,7 +739,7 @@ impl VdevBlock {
     }
 
     fn new_fut(&self, block_op: BlockOp,
-               receiver: oneshot::Receiver<()>) -> VdevBlockFut {
+               receiver: oneshot::Receiver<Result<()>>) -> VdevBlockFut {
         VdevBlockFut {
             block_op: Some(block_op),
             inner: self.inner.clone(),
@@ -751,7 +753,7 @@ impl VdevBlock {
     /// - `start`:    The first LBA within the target zone
     pub fn open_zone(&self, start: LbaT) -> VdevBlockFut
     {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::open_zone(start, sender);
 
         // Sanity check LBA
@@ -800,7 +802,7 @@ impl VdevBlock {
     pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_iovec_bounds(lba, &buf);
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::read_at(buf, lba, sender);
         self.new_fut(block_op, receiver)
     }
@@ -810,7 +812,7 @@ impl VdevBlock {
     #[tracing::instrument(skip(self, buf))]
     pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> VdevBlockFut
     {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         // lba is for sorting purposes only.  It should sort before any other
         // write operation, and different read_spacemap operations should sort
         // in the same order as their true LBA order.
@@ -831,7 +833,7 @@ impl VdevBlock {
     pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut
     {
         self.check_sglist_bounds(lba, &bufs);
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
         self.new_fut(block_op, receiver)
     }
@@ -842,14 +844,14 @@ impl VdevBlock {
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevBlockFut
     {
         self.check_iovec_bounds(lba, &buf);
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_at(buf, lba, sender);
         self.new_fut(block_op, receiver)
     }
 
     pub fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut
     {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_label(labeller, sender);
         self.new_fut(block_op, receiver)
     }
@@ -857,7 +859,7 @@ impl VdevBlock {
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  VdevBlockFut
     {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let sglist = copy_and_pad_sglist(sglist);
         // lba is for sorting purposes only.  It should sort after write_label,
         // but before any other write operation, and different write_spacemap
@@ -878,7 +880,7 @@ impl VdevBlock {
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut
     {
         self.check_sglist_bounds(lba, &bufs);
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let sglist = copy_and_pad_sglist(bufs);
         let block_op = BlockOp::writev_at(sglist, lba, sender);
         self.new_fut(block_op, receiver)
@@ -905,7 +907,7 @@ impl Vdev for VdevBlock {
     /// Asynchronously sync the underlying device, ensuring that all data
     /// reaches stable storage
     fn sync_all(&self) -> BoxVdevFut {
-        let (sender, receiver) = oneshot::channel::<()>();
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::sync_all(sender);
         Box::pin(self.new_fut(block_op, receiver))
     }
@@ -1889,7 +1891,7 @@ mod t {
                     inner.last_lba = 1000;
                     for lba in permutation {
                         let op = BlockOp::write_at(dummy_buffer.clone(), *lba,
-                            oneshot::channel::<()>().0);
+                            oneshot::channel::<Result<()>>().0);
                         inner.sched(op);
                     }
 
@@ -1903,10 +1905,10 @@ mod t {
                     // get issued in the right order
                     let just_before2 = BlockOp::write_at(dummy_buffer.clone(),
                         1000,
-                        oneshot::channel::<()>().0);
+                        oneshot::channel::<Result<()>>().0);
                     let well_before = BlockOp::write_at(dummy_buffer.clone(),
                         990,
-                        oneshot::channel::<()>().0);
+                        oneshot::channel::<Result<()>>().0);
                     inner.sched(just_before2);
                     inner.sched(well_before);
 
@@ -1933,21 +1935,21 @@ mod t {
                 // scheduler, then erase them.  This simulates garbage
                 // collection.
                 let ez0 = BlockOp::erase_zone(0, (1 << 16) - 1,
-                    oneshot::channel::<()>().0);
+                    oneshot::channel::<Result<()>>().0);
                 let ez_discriminant = mem::discriminant(&ez0.cmd);
                 inner.sched(ez0);
                 let r = BlockOp::read_at(dummy.split_to(4096), (1 << 16) - 1,
-                    oneshot::channel::<()>().0);
+                    oneshot::channel::<Result<()>>().0);
                 let read_at_discriminant = mem::discriminant(&r.cmd);
                 inner.sched(r);
                 inner.sched(BlockOp::erase_zone(1 << 16, (2 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::read_at(dummy.split_to(4096),
-                    (2 << 16) - 1, oneshot::channel::<()>().0));
+                    (2 << 16) - 1, oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::erase_zone(2 << 16, (3 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::read_at(dummy, (3 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
 
                 let first = inner.pop_op().unwrap();
                 assert_eq!(first.lba, (2 << 16) - 1);
@@ -1982,21 +1984,21 @@ mod t {
                 // Write to zones that lie behind, around, and ahead of the
                 // scheduler, then finish them.
                 let fz0 = BlockOp::finish_zone(0, (1 << 16) - 1,
-                    oneshot::channel::<()>().0);
+                    oneshot::channel::<Result<()>>().0);
                 let fz_discriminant = mem::discriminant(&fz0.cmd);
                 inner.sched(fz0);
                 let r = BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
-                    oneshot::channel::<()>().0);
+                    oneshot::channel::<Result<()>>().0);
                 let write_at_discriminant = mem::discriminant(&r.cmd);
                 inner.sched(r);
                 inner.sched(BlockOp::finish_zone(1 << 16, (2 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::finish_zone(2 << 16, (3 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
 
                 let first = inner.pop_op().unwrap();
                 assert_eq!(first.lba, (2 << 16) - 1);
@@ -2036,24 +2038,24 @@ mod t {
                 // these zones, because that would imply that it had just
                 // performed an operation on an empty zone.
                 let w = BlockOp::write_at(dummy.clone(), 1,
-                    oneshot::channel::<()>().0);
+                    oneshot::channel::<Result<()>>().0);
                 let write_at_discriminant = mem::discriminant(&w.cmd);
                 inner.sched(w);
                 inner.sched(BlockOp::write_at(dummy.clone(), (1 << 16) - 1,
-                            oneshot::channel::<()>().0));
+                            oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy.clone(), 2,
-                            oneshot::channel::<()>().0));
-                let oz0 = BlockOp::open_zone(1, oneshot::channel::<()>().0);
+                            oneshot::channel::<Result<()>>().0));
+                let oz0 = BlockOp::open_zone(1, oneshot::channel::<Result<()>>().0);
                 let oz_discriminant = mem::discriminant(&oz0.cmd);
                 inner.sched(oz0);
                 inner.sched(BlockOp::open_zone(2 << 16,
-                                               oneshot::channel::<()>().0));
+                                               oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy.clone(), (2 << 16) + 1,
-                            oneshot::channel::<()>().0));
+                            oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy.clone(), 2 << 16,
-                            oneshot::channel::<()>().0));
+                            oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy, (3 << 16) - 1,
-                            oneshot::channel::<()>().0));
+                            oneshot::channel::<Result<()>>().0));
 
                 let first = inner.pop_op().unwrap();
                 assert_eq!(first.lba, 2 << 16);
@@ -2089,24 +2091,24 @@ mod t {
                 // and after
                 inner.last_lba = 1000;
                 inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1001,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy_buffer.clone(), 999,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 // Now schedule a sync_all, too
-                inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+                inner.sched(BlockOp::sync_all(oneshot::channel::<Result<()>>().0));
                 // Now schedule some more data ops both before and after the
                 // scheudler
                 inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1002,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy_buffer.clone(), 998,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 // For good measure, schedule a second sync and some more data
                 // after that
-                inner.sched(BlockOp::sync_all(oneshot::channel::<()>().0));
+                inner.sched(BlockOp::sync_all(oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy_buffer.clone(), 1003,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
                 inner.sched(BlockOp::write_at(dummy_buffer, 997,
-                    oneshot::channel::<()>().0));
+                    oneshot::channel::<Result<()>>().0));
 
                 // All pre-sync operations should be issued, then the sync, then
                 // the post-sync operations
@@ -2147,6 +2149,50 @@ mod t {
             let vdev = VdevBlock::new(leaf);
 
             vdev.write_at(wbuf, 1).await.unwrap();
+        }
+
+        // Attempting to write after device removal should fail appropriately
+        #[rstest]
+        #[tokio::test]
+        async fn write_at_fails_early(mut leaf: MockVdevFile) {
+            leaf.expect_write_at()
+                .with(always(), eq(1))
+                .once()
+                .returning(|_, _| Box::pin(future::err::<(), Error>(Error::ENXIO)));
+
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let wbuf = dbs.try_const().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            assert_eq!(Err(Error::ENXIO), vdev.write_at(wbuf, 1).await);
+        }
+
+        // Attempting to write after device removal should fail appropriately
+        #[rstest]
+        #[tokio::test]
+        async fn write_at_fails_late(mut leaf: MockVdevFile) {
+            leaf.expect_write_at()
+                .with(always(), eq(1))
+                .once()
+                .returning(|_, _| {
+                    let mut seq1 = Sequence::new();
+                    let mut fut = MockVdevFut::new();
+                    fut.expect_poll()
+                        .once()
+                        .in_sequence(&mut seq1)
+                        .return_const(Poll::Pending);
+                    fut.expect_poll()
+                        .once()
+                        .in_sequence(&mut seq1)
+                        .return_const(Poll::Ready(Err(Error::ENXIO)));
+                    Box::pin(fut)
+                });
+
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let wbuf = dbs.try_const().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            assert_eq!(Err(Error::ENXIO), vdev.write_at(wbuf, 1).await);
         }
 
         // vectored writing works
