@@ -385,6 +385,10 @@ struct Inner {
     /// The last LBA issued an operation
     last_lba: LbaT,
 
+    /// If Some, then we are in the process of removing this VdevBlock from the
+    /// pool.  On completion, notify the Sender.
+    remover: Option<oneshot::Sender<()>>,
+
     /// If true, then we are preparing to issue sync_all to the underlying
     /// storage
     syncing: bool,
@@ -447,6 +451,12 @@ impl Inner {
                 break;
             }
         }
+        if self.queue_depth == 0 {
+            // All I/O operations are done.  Notify the remover.
+            if let Some(remover) = self.remover.take() {
+                remover.send(()).unwrap()
+            }
+        }
         // Ran out of operations to issue or exceeded queue depth.  If queue
         // depth was exceeded, an operation's completion will call issue_all
         // again.
@@ -462,6 +472,15 @@ impl Inner {
                  cx: &mut Context)
         -> Option<(Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>)>
     {
+
+        if self.remover.is_some() {
+            // Abort the future immediately
+            for sender in senders {
+                sender.send(Err(Error::ENXIO)).unwrap();
+                self.queue_depth -= 1;
+            }
+            return None;
+        }
 
         let inner = self.weakself.upgrade().expect(
             "VdevBlock dropped with outstanding I/O");
@@ -641,6 +660,31 @@ impl Future for VdevBlockFut {
     }
 }
 
+#[pin_project]
+pub struct RemoveFut {
+    vdev: VdevBlock,
+    #[pin]
+    receiver: oneshot::Receiver<()>,
+    sender: Option<oneshot::Sender<()>>
+}
+
+impl Future for RemoveFut {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        if let Some(sender) = self.sender.take() {
+            let mut guard = self.vdev.inner.write().unwrap();
+            assert!(guard.remover.replace(sender).is_none());
+            guard.issue_all(cx);
+        }
+        match self.project().receiver.poll(cx) {
+            Poll::Ready(Ok(())) => Poll::Ready(()),
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Err(_)) => unreachable!("How did the sender get dropped?"),
+        }
+    }
+}
+
 /// `VdevBlock`: Virtual Device for basic block device
 ///
 /// Wraps a single `VdevLeaf`.  But unlike `VdevLeaf`, `VdevBlock` operations
@@ -781,6 +825,7 @@ impl VdevBlock {
             queue_depth: 0,
             leaf,
             last_lba: 0,
+            remover: None,
             syncing: false,
             after_sync: VecDeque::new(),
             ahead: BinaryHeap::new(),
@@ -836,6 +881,23 @@ impl VdevBlock {
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
         self.new_fut(block_op, receiver)
+    }
+
+    /// Remove this device from the pool.
+    ///
+    /// This method will cancel all unissued I/O operations and block until all
+    /// issued I/O operations have completed.
+    // We could theoretically use aio_cancel to cancel issued operations as
+    // well.  However, there would be little point as FreeBSD currently doesn't
+    // support cancelling operations to raw disk devices, and file-backed vdevs
+    // are not intended for production file systems.
+    pub fn remove(self) -> impl Future<Output=()> + Send + Sync {
+        let (sender, receiver) = oneshot::channel::<()>();
+        RemoveFut {
+            vdev: self,
+            receiver,
+            sender: Some(sender)
+        }
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
@@ -1472,6 +1534,7 @@ mod t {
     }
 
     mod vdev_block {
+        use std::pin::pin;
         use divbuf::DivBufShared;
         use futures::{
             Future,
@@ -1539,7 +1602,6 @@ mod t {
         mod issue_all {
             use super::*;
             use pretty_assertions::assert_eq;
-            use std::pin::pin;
 
             /// The upper layer creates two operations that can be accumulated.
             /// VdevBlock::issue_all should do that, and only issue one
@@ -1861,6 +1923,153 @@ mod t {
             let vdev = VdevBlock::new(leaf);
 
             vdev.readv_at(rbuf0, 2).await.unwrap();
+        }
+
+        /// Tests for VdevBlock::remove
+        mod remove {
+            use super::*;
+
+            /// VdevBlock::remove will wait for issued operations to complete
+            #[rstest]
+            #[tokio::test]
+            async fn issued(mut leaf: MockVdevFile) {
+                let (tx, rx) = oneshot::channel::<()>();
+                leaf.expect_write_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+
+                let mut ctx = noop_context();
+                let dbs = DivBufShared::from(vec![0u8; 4096]);
+                let wbuf = dbs.try_const().unwrap();
+                let vdev = VdevBlock::new(leaf);
+
+                // The first operation does not return immediately
+                let mut f0 = pin!(vdev.write_at(wbuf, 1));
+                assert!(f0.as_mut().poll(&mut ctx).is_pending());
+
+                // VdevBlock::remove does not return immediately either
+                let mut f1 = pin!(vdev.remove());
+                assert!(f1.as_mut().poll(&mut ctx).is_pending());
+
+                // After the write completes, then both futures will return
+                tx.send(()).unwrap();
+                f0.await.unwrap();
+                f1.await;
+            }
+
+            /// VdevBlock::remove with no outstanding operations, either issued
+            /// or not.
+            #[rstest]
+            #[tokio::test]
+            async fn no_backlog(leaf: MockVdevFile) {
+                let vdev = VdevBlock::new(leaf);
+                vdev.remove().await;
+            }
+
+            /// VdevBlock::remove will cancel any queued but unissued
+            /// operations.
+            #[rstest]
+            #[tokio::test]
+            async fn queued(mut leaf1: MockVdevFile) {
+                let (tx, rx) = oneshot::channel::<()>();
+                leaf1.expect_write_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+                leaf1.expect_write_at()
+                    .with(always(), eq(2))
+                    .once()
+                    .returning(|_, _| {
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .never();
+                        Box::pin(fut)
+                    });
+
+                let mut ctx = noop_context();
+                let dbs = DivBufShared::from(vec![0u8; 4096]);
+                let vdev = VdevBlock::new(leaf1);
+
+                // The first operation does not return immediately
+                let mut f0 = pin!(vdev.write_at(dbs.try_const().unwrap(), 1));
+                assert!(f0.as_mut().poll(&mut ctx).is_pending());
+                // So the second sits in the queue, never issued
+                let mut f1 = pin!(vdev.write_at(dbs.try_const().unwrap(), 2));
+                assert!(f1.as_mut().poll(&mut ctx).is_pending());
+
+                // VdevBlock::remove does not return immediately either
+                let mut f2 = pin!(vdev.remove());
+                assert!(f2.as_mut().poll(&mut ctx).is_pending());
+
+                // After the write completes, then all three futures will
+                // return.  Note that the second write never got issued to the
+                // leaf vdev.
+                tx.send(()).unwrap();
+                f0.await.unwrap();
+                assert_eq!(f1.await, Err(Error::ENXIO));
+                f2.await;
+            }
+
+            /// VdevBlock::remove will cancel all queued but unissued
+            /// operations.
+            // Note that the first queued operation is stored in a different
+            // place than subsequent ones, so it makes sense to have separate
+            // tests for 1 and 2 queued operations.
+            #[rstest]
+            #[tokio::test]
+            async fn queued2(mut leaf1: MockVdevFile) {
+                let (tx, rx) = oneshot::channel::<()>();
+                leaf1.expect_write_at()
+                    .with(always(), eq(1))
+                    .once()
+                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+                leaf1.expect_write_at()
+                    .with(always(), eq(3))
+                    .once()
+                    .returning(|_, _| {
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .never();
+                        Box::pin(fut)
+                    });
+                leaf1.expect_write_at()
+                    .with(always(), eq(5))
+                    .once()
+                    .returning(|_, _| {
+                        let mut fut = MockVdevFut::new();
+                        fut.expect_poll()
+                            .never();
+                        Box::pin(fut)
+                    });
+
+                let mut ctx = noop_context();
+                let dbs = DivBufShared::from(vec![0u8; 4096]);
+                let vdev = VdevBlock::new(leaf1);
+
+                // The first operation does not return immediately
+                let mut f0 = pin!(vdev.write_at(dbs.try_const().unwrap(), 1));
+                assert!(f0.as_mut().poll(&mut ctx).is_pending());
+                // So the others sit in the queue, never issued
+                let mut f1 = pin!(vdev.write_at(dbs.try_const().unwrap(), 3));
+                assert!(f1.as_mut().poll(&mut ctx).is_pending());
+                let mut f2 = pin!(vdev.write_at(dbs.try_const().unwrap(), 5));
+                assert!(f2.as_mut().poll(&mut ctx).is_pending());
+
+                // VdevBlock::remove does not return immediately either
+                let mut f3 = pin!(vdev.remove());
+                assert!(f3.as_mut().poll(&mut ctx).is_pending());
+
+                // After the write completes, then all three futures will
+                // return.  Note that the second write never got issued to the
+                // leaf vdev.
+                tx.send(()).unwrap();
+                f0.await.unwrap();
+                assert_eq!(f1.await, Err(Error::ENXIO));
+                assert_eq!(f2.await, Err(Error::ENXIO));
+                f3.await;
+            }
+
         }
 
         /// Tests for Inner::sched
