@@ -564,8 +564,8 @@ mod pool {
         assert_eq!(r5, (None, None));
     }
 
-    #[test]
-    fn free() {
+    #[tokio::test]
+    async fn free() {
         let c0 = mock_cluster(100, 32_768_000, 50);
         let mut c1 = mock_cluster(100, 32_768_000, 50);
         c1.expect_free()
@@ -573,11 +573,10 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let rt = basic_runtime();
         let clusters = vec![ c0, c1 ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
-        assert!(rt.block_on(pool.free(PBA::new(1, 12345), 16)).is_ok());
+        assert!(pool.free(PBA::new(1, 12345), 16).await.is_ok());
         // Freeing bytes should not decrease allocated.  Only erasing should.
         assert_eq!(pool.used(), 84);
     }
@@ -598,8 +597,8 @@ mod pool {
         assert_eq!(pool.used(), 800);
     }
 
-    #[test]
-    fn read() {
+    #[tokio::test]
+    async fn read() {
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_read()
             .with(always(), eq(10))
@@ -609,40 +608,38 @@ mod pool {
                 Box::pin(future::ok(()))
             });
 
-        let rt = basic_runtime();
         let clusters = vec![ cluster, ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let dbm0 = dbs.try_mut().unwrap();
         let pba = PBA::new(0, 10);
-        let result = rt.block_on(pool.read(dbm0, pba));
+        let result = pool.read(dbm0, pba).await;
         assert!(result.is_ok());
         let db0 = dbs.try_const().unwrap();
         assert_eq!(&db0[..], &vec![99u8; 4096][..]);
     }
 
-    #[test]
-    fn read_error() {
+    #[tokio::test]
+    async fn read_error() {
         let e = Error::EIO;
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_read()
             .once()
             .return_once(move |_, _| Box::pin(future::err(e)));
 
-        let rt = basic_runtime();
         let clusters = vec![cluster];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let dbm0 = dbs.try_mut().unwrap();
         let pba = PBA::new(0, 10);
-        let result = rt.block_on(pool.read(dbm0, pba));
+        let result = pool.read(dbm0, pba).await;
         assert_eq!(result.unwrap_err(), e);
     }
 
-    #[test]
-    fn sync_all() {
+    #[tokio::test]
+    async fn sync_all() {
         let cluster = || {
             let mut c = mock_cluster(0, 32_768_000, 0);
             c.expect_sync_all()
@@ -651,15 +648,14 @@ mod pool {
             c
         };
 
-        let rt = basic_runtime();
         let clusters = vec![cluster(), cluster()];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
-        assert!(rt.block_on(pool.sync_all()).is_ok());
+        assert!(pool.sync_all().await.is_ok());
     }
 
-    #[test]
-    fn write() {
+    #[tokio::test]
+    async fn write() {
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_write()
             .withf(|buf, txg| {
@@ -667,55 +663,52 @@ mod pool {
             }).once()
             .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
 
-        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let result = rt.block_on( pool.write(db0, TxgT::from(42)));
+        let result =  pool.write(db0, TxgT::from(42)).await;
         assert_eq!(result.unwrap(), PBA::new(0, 0));
         assert_eq!(pool.used(), 1);
     }
 
-    #[test]
-    fn write_async_error() {
+    #[tokio::test]
+    async fn write_async_error() {
         let e = Error::EIO;
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_write()
             .once()
             .return_once(move |_, _| Ok((0, Box::pin(future::err(e)))));
 
-        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let result = rt.block_on( pool.write(db0, TxgT::from(42)));
+        let result =  pool.write(db0, TxgT::from(42)).await;
         assert_eq!(result.unwrap_err(), e);
         assert_eq!(pool.used(), 0);
     }
 
-    #[test]
-    fn write_sync_error() {
+    #[tokio::test]
+    async fn write_sync_error() {
         let e = Error::ENOSPC;
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_write()
             .once()
             .return_once(move |_, _| Err(e));
 
-        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
-        let result = rt.block_on( pool.write(db0, TxgT::from(42)));
+        let result =  pool.write(db0, TxgT::from(42)).await;
         assert_eq!(result.unwrap_err(), e);
         assert_eq!(pool.used(), 0);
     }
 
     // Make sure allocated space accounting is symmetric
-    #[test]
-    fn write_and_free() {
+    #[tokio::test]
+    async fn write_and_free() {
         let mut cluster = mock_cluster(0, 32_768_000, 0);
         cluster.expect_write()
             .once()
@@ -724,13 +717,12 @@ mod pool {
             .once()
             .return_once(|_, _| Box::pin(future::ok(())));
 
-        let rt = basic_runtime();
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);
         let db0 = dbs.try_const().unwrap();
-        let drp = rt.block_on( pool.write(db0, TxgT::from(42))).unwrap();
-        rt.block_on( pool.free(drp, 1)).unwrap();
+        let drp =  pool.write(db0, TxgT::from(42)).await.unwrap();
+         pool.free(drp, 1).await.unwrap();
         assert_eq!(pool.used(), 0);
     }
 }

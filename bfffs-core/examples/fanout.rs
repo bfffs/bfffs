@@ -39,7 +39,6 @@ use std::{
         Mutex
     }
 };
-use tokio::runtime::Builder;
 
 const RECSIZE: u32 = 131_072;
 
@@ -329,9 +328,6 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
 {
     const INODE: u64 = 2;
 
-    let rt = Builder::new_current_thread()
-        .build()
-        .unwrap();
     let next_lba = Arc::new(AtomicU64::default());
     let alloct_ddml = Arc::new(FakeDDML::new("alloct", next_lba.clone(),
                                              save));
@@ -350,8 +346,7 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
     let data = vec![0u8; RECSIZE as usize];
     let cr = tree.credit_requirements();
 
-    let (alloct_entries, ridt_entries) = rt.block_on(
-        stream::iter(0..nelems)
+    let (alloct_entries, ridt_entries) = stream::iter(0..nelems)
         .map(Ok)
         .try_for_each(move |i| {
             let dbs = DivBufShared::from(data.clone());
@@ -379,8 +374,10 @@ fn experiment<F>(nelems: u64, save: bool, mut f: F)
                                  idml4.alloct.clone().flush(txg))
                 .map_ok(move |_| entries)
             })
-        })
-    ).unwrap();
+        // now_or_never works since fhe FakeIDML's futures are always ready.
+        }).now_or_never()
+        .unwrap()
+        .unwrap();
 
     let fs_metadata_size = idml.stats.metadata_size();
     println!("FS Metadata size:      {fs_metadata_size} bytes");

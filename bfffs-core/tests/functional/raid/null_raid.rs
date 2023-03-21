@@ -15,7 +15,6 @@ mod persistence {
         fs,
         io::{Read, Seek, SeekFrom},
     };
-    use super::super::super::*;
     use tempfile::{Builder, TempDir};
 
     const GOLDEN_VDEV_NULLRAID_LABEL: [u8; 36] = [
@@ -61,11 +60,10 @@ mod persistence {
     }
 
     #[rstest]
-    fn write_label(harness: (NullRaid, TempDir, String)) {
-        basic_runtime().block_on(async {
-            let label_writer = LabelWriter::new(0);
-            harness.0.write_label(label_writer).await
-        }).unwrap();
+    #[tokio::test]
+    async fn write_label(harness: (NullRaid, TempDir, String)) {
+        let label_writer = LabelWriter::new(0);
+        harness.0.write_label(label_writer).await.unwrap();
         let mut f = fs::File::open(harness.2).unwrap();
         let mut v = vec![0; 8192];
         f.seek(SeekFrom::Start(112)).unwrap();   // Skip the leaf, mirror labels

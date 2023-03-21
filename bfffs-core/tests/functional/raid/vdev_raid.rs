@@ -578,7 +578,7 @@ mod vdev_raid {
             }).and_then(|_| {
                 h.vdev.read_at(rbuf, zl.0)
             }).await
-        .expect("Runtime::block_on");
+            .unwrap();
         assert_eq!(wbuf1, dbsr.try_const().unwrap());
     }
 
@@ -601,7 +601,7 @@ mod vdev_raid {
                 }).and_then(|_| {
                     h.vdev.read_at(rbuf_short, zl.0)
                 }).await
-            .expect("Runtime::block_on");
+                .unwrap();
         }
         assert_eq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
