@@ -1,9 +1,9 @@
 // vim: tw=80
-///! Direct Data Management Layer
-///
-/// Interface for working with Direct Records.  Unifies cache, compression,
-/// disk, and hash operations.  A Direct Record is a record that can never be
-/// duplicated, either through snapshots, clones, or deduplication.
+//! Direct Data Management Layer
+//!
+//! Interface for working with Direct Records.  Unifies cache, compression,
+//! disk, and hash operations.  A Direct Record is a record that can never be
+//! duplicated, either through snapshots, clones, or deduplication.
 
 use crate::{
     types::*,
