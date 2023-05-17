@@ -1,10 +1,10 @@
 // vim: tw=80
-///! Indirect Data Management Layer
-///
-/// Interface for working with indirect records.  An indirect record is a record
-/// that is referenced by an immutable Record ID, rather than a disk address.
-/// Unlike a direct record, it may be duplicated, by through snapshots, clones,
-/// or deduplication.
+//! Indirect Data Management Layer
+//!
+//! Interface for working with indirect records.  An indirect record is a record
+//! that is referenced by an immutable Record ID, rather than a disk address.
+//! Unlike a direct record, it may be duplicated, by through snapshots, clones,
+//! or deduplication.
 
 use crate::{
     ddml::*,

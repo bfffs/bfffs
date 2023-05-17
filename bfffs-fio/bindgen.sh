@@ -2,7 +2,7 @@
 
 # fio doesn't install the necessary headers, so we have to reference its source
 # directory
-FIOPATH="/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.30"
+FIOPATH="/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.34"
 
 cat > src/ffi.rs << HERE
 #![allow(non_camel_case_types)]
@@ -16,16 +16,16 @@ HERE
 
 # Disable layout tests due to this bindgen bug:
 # https://github.com/rust-lang/rust-bindgen/issues/867
-bindgen --whitelist-type 'fio_file' \
-	--whitelist-type 'fio_option' \
-	--whitelist-type 'fio_opt_type.*' \
-	--whitelist-type 'ioengine_ops' \
-	--whitelist-type 'io_u' \
-	--whitelist-type 'opt_category.*' \
-	--whitelist-type 'thread_data' \
-	--whitelist-type 'fio_ioengine_flags' \
-	--blacklist-type 'timespec' \
-	--whitelist-var 'FIO_IOOPS_VERSION' \
+bindgen --allowlist-type 'fio_file' \
+	--allowlist-type 'fio_option' \
+	--allowlist-type 'fio_opt_type.*' \
+	--allowlist-type 'ioengine_ops' \
+	--allowlist-type 'io_u' \
+	--allowlist-type 'opt_category.*' \
+	--allowlist-type 'thread_data' \
+	--allowlist-type 'fio_ioengine_flags' \
+	--blocklist-type 'timespec' \
+	--allowlist-var 'FIO_IOOPS_VERSION' \
 	--ctypes-prefix libc \
 	--opaque-type FILE \
 	--opaque-type clat_prio_stat \

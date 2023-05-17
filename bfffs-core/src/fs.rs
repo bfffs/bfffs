@@ -575,7 +575,7 @@ impl Fs {
         move |dataset| async move {
             let ds = Arc::new(dataset);
             let mut inode_value = ds.get(inode_key).await?.unwrap();
-            let mut inode = inode_value.as_mut_inode().unwrap();
+            let inode = inode_value.as_mut_inode().unwrap();
             let rs = inode.record_size().unwrap() as u64;
             let filesize = inode.size;
             offset = filesize.min(offset);

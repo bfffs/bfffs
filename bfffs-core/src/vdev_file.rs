@@ -500,7 +500,7 @@ impl VdevFile {
     {
         let off = lba * (BYTES_PER_LBA as u64);
         {
-            let b: &[u8] = (*buf).borrow();
+            let b: &[u8] = buf.borrow();
             debug_assert!(b.len() % BYTES_PER_LBA == 0);
         }
 
