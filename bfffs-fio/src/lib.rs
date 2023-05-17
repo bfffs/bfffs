@@ -451,6 +451,8 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     dlhandle:           ptr::null_mut(),
     errdetails:         None,
     event:              Some(fio_bfffs_event),
+    fdp_fetch_ruhs:     None,
+    finish_zone:        None,
     flags:              fio_ioengine_flags_FIO_ASYNCIO_SYNC_TRIM as i32,
     get_file_size:      None,
     getevents:          Some(fio_bfffs_getevents),
