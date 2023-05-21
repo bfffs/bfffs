@@ -60,11 +60,15 @@ macro_rules! skip {
 #[macro_export]
 macro_rules! require_fusefs {
     () => {
-        use ::sysctl::CtlValue;
         use nix::unistd::Uid;
+        use sysctl::Sysctl as _;
 
         if (!Uid::current().is_root() &&
-            CtlValue::Int(0) == ::sysctl::value("vfs.usermount").unwrap()) ||
+            ::sysctl::CtlValue::Int(0) ==
+                ::sysctl::Ctl::new(&"vfs.usermount")
+                    .unwrap()
+                    .value()
+                    .unwrap()) ||
             !::std::path::Path::new("/dev/fuse").exists()
         {
             skip!(
