@@ -28,12 +28,7 @@ pub struct Cli {
     )]
     fill_time:  f64,
     /// File system properties, comma delimited.
-    #[clap(
-        short = 'p',
-        long,
-        require_value_delimiter(true),
-        value_delimiter(',')
-    )]
+    #[clap(short = 'p', long, value_delimiter(','))]
     properties: Option<String>,
 }
 

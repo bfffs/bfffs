@@ -121,22 +121,12 @@ enum SubCommand {
 #[clap(version = crate_version!())]
 struct Cli {
     /// Create pool on these devices, or create a file-backed pool if blank.
-    #[clap(
-        short = 'd',
-        long,
-        require_value_delimiter(true),
-        value_delimiter(',')
-    )]
+    #[clap(short = 'd', long, value_delimiter(','))]
     devices:    Vec<String>,
     #[clap(long, help = "Record a flamegraph to this file")]
     flamegraph: Option<PathBuf>,
     /// Daemon options, comma delimited.
-    #[clap(
-        short = 'o',
-        long,
-        require_value_delimiter(true),
-        value_delimiter(',')
-    )]
+    #[clap(short = 'o', long, value_delimiter(','))]
     options:    Option<String>,
     /// Name of the specific benchmark to run, or None to smoke test all
     /// benchmarks.

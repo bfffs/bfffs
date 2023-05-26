@@ -48,7 +48,7 @@ struct Cli {
     #[clap(
         short = 'o',
         long,
-        require_value_delimiter(true),
+        //require_value_delimiter(true),
         value_delimiter(',')
     )]
     options:   Vec<String>,
@@ -430,7 +430,7 @@ async fn main() {
 
 #[cfg(test)]
 mod t {
-    use clap::ErrorKind::*;
+    use clap::error::ErrorKind::*;
     use rstest::rstest;
 
     use super::*;
