@@ -11,7 +11,6 @@ use std::{
 
 use assert_cmd::prelude::*;
 use async_trait::async_trait;
-use bfffs::Result;
 use clap::{crate_version, Parser};
 use freebsd_libgeom as geom;
 use nix::{
@@ -246,7 +245,10 @@ async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+#[function_name::named]
+async fn main() {
+    require_fusefs!();
+
     tracing_subscriber::fmt()
         .pretty()
         .with_env_filter(EnvFilter::from_default_env())
@@ -278,11 +280,9 @@ async fn main() -> Result<()> {
                 process::exit(2);
             }
             bench_all(&geom_regex, &harness).await;
-            return Ok(());
+            return;
         }
     };
 
     bench_one(cli.flamegraph.as_ref(), &geom_regex, benchmark, &harness).await;
-
-    Ok(())
 }

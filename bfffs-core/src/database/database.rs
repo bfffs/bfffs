@@ -237,7 +237,7 @@ impl Inner {
     }
 
     // The txg is a ref in test mode, but a RwlockWriteGuard in normal mode
-    #[cfg_attr(test, allow(drop_ref))]
+    #[cfg_attr(test, allow(dropping_references))]
     fn fswrite<F, B, R>(
         inner: Arc<Self>,
         tree_id: TreeID,
