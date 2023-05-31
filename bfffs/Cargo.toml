@@ -20,7 +20,7 @@ bytes = "1.0"
 cfg-if = "1.0"
 fuse3 = { version = "0.6.1", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
-lalrpop-util = "0.19.7"
+lalrpop-util = "0.19.9"
 libc = "0.2.44"
 nix = { version = "0.26.1", default-features = false, features = ["user"] }
 si-scale = "0.1.5"
@@ -31,7 +31,7 @@ tokio-seqpacket = "0.5.4"
 tracing = "0.1.5"
 
 [dependencies.clap]
-version = "3.2.0"
+version = "4.0"
 default-features = true
 features=  [ "cargo", "derive", "wrap_help"]
 
@@ -46,7 +46,7 @@ lalrpop = "0.19.7"
 [dev-dependencies]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
-freebsd-libgeom = "0.2.1"
+freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
 mockall = "0.11.0"
 nix = { version = "0.26.1", default-features = false, features = ["mount", "process", "signal", "user"] }

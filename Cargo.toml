@@ -10,5 +10,5 @@ lto = true
 members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 
 [patch.crates-io]
-mockall = { git = "https://github.com/asomers/mockall.git", rev = "8af28ef" }
-mockall_double = { git = "https://github.com/asomers/mockall.git", rev = "8af28ef" }
+mockall = { git = "https://github.com/asomers/mockall.git", rev = "7aba6d3" }
+mockall_double = { git = "https://github.com/asomers/mockall.git", rev = "7aba6d3" }

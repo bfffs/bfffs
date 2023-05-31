@@ -16,7 +16,7 @@ use bfffs_core::{
     device_manager::DevManager,
     property::{Property, PropertyName, PropertySource},
 };
-use clap::{crate_version, Parser};
+use clap::{crate_version, ArgAction, Parser};
 use futures::{future, TryStreamExt};
 use tracing_subscriber::EnvFilter;
 
@@ -186,7 +186,7 @@ mod fs {
         #[clap(
             short = 'o',
             long,
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(',')
         )]
         pub(super) properties: Vec<String>,
@@ -275,9 +275,9 @@ mod fs {
             long,
             help = "Fields to display",
             default_value = "name,property,value,source",
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(','),
-            multiple_occurrences = false
+            //multiple_occurrences = false
         )]
         pub(super) fields:     Vec<GetField>,
         #[clap(
@@ -285,9 +285,9 @@ mod fs {
             long,
             help = "Only display properties coming from these sources.",
             default_value = "local,default,inherited,none",
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(','),
-            multiple_occurrences = false
+            //multiple_occurrences = false
         )]
         pub(super) sources:    Vec<PropertySource>,
         /// Recursively display all children
@@ -298,14 +298,14 @@ mod fs {
         pub(super) depth:      Option<usize>,
         /// Dataset properties to display, comma delimited
         #[clap(
-            require_value_delimiter(true),
+            action = ArgAction::Set,
+            num_args(1),
+            required(true),
             value_delimiter(','),
-            multiple_occurrences = false,
-            required(true)
         )]
         pub(super) properties: Vec<PropertyName>,
         /// Datasets to inspect, comma delimited
-        #[clap(multiple_values(true), required(true))]
+        #[clap( num_args(1..), required(true))]
         pub(super) datasets:   Vec<String>,
     }
 
@@ -404,7 +404,7 @@ mod fs {
         #[clap(
             short = 'o',
             long,
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(','),
             default_value = "name"
         )]
@@ -516,7 +516,7 @@ mod fs {
         #[clap(
             short = 'o',
             long,
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(',')
         )]
         pub(super) options: Vec<String>,
@@ -536,14 +536,14 @@ mod fs {
     pub(super) struct Set {
         /// Dataset properties to set, comma delimited
         #[clap(
-            require_value_delimiter(true),
+            action = ArgAction::Set,
+            num_args(1),
+            required(true),
             value_delimiter(','),
-            multiple_occurrences = false,
-            required(true)
         )]
         pub(super) properties: Vec<Property>,
         /// Datasets to modify, comma delimited
-        #[clap(multiple_values(true), required(true))]
+        #[clap(num_args(1..), required(true))]
         pub(super) datasets:   Vec<String>,
     }
 
@@ -657,7 +657,7 @@ mod pool {
         #[clap(
             short,
             long,
-            require_value_delimiter(true),
+            //require_value_delimiter(true),
             value_delimiter(',')
         )]
         pub(super) properties: Vec<String>,
@@ -851,7 +851,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod t {
-    use clap::ErrorKind::*;
+    use clap::error::ErrorKind::*;
     use rstest::rstest;
 
     use super::*;

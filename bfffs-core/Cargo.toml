@@ -46,13 +46,13 @@ tracing-futures = "0.2.4"
 uuid = { version = "0.8.2", features = ["serde", "v4"]}
 
 [dev-dependencies.clap]
-version = "3.0.14"
+version = "4.0"
 default-features = true
 features=  [ "derive", "wrap_help" ]
 
 [dev-dependencies]
 dashmap = "5"
-criterion = "0.4"
+criterion = "0.5"
 futures-test = "0.3.7"
 glob = "0.3"
 histogram = "0.6"
