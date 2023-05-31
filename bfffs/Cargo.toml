@@ -46,7 +46,7 @@ lalrpop = "0.19.7"
 [dev-dependencies]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "0a72fb5"}
-freebsd-libgeom = "0.2.1"
+freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
 mockall = "0.11.0"
 nix = { version = "0.26.1", default-features = false, features = ["mount", "process", "signal", "user"] }
