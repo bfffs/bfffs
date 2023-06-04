@@ -9,6 +9,7 @@ use crate::{
 };
 use divbuf::{DivBuf, DivBufShared};
 use futures::{
+    Future,
     TryFutureExt,
     TryStreamExt,
     future,
@@ -396,7 +397,7 @@ impl VdevRaid {
     }
 
     /// Read more than one whole stripe
-    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at_multi(&self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.mirrors.len();
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
@@ -414,7 +415,7 @@ impl VdevRaid {
             sglists.push(SGListMut::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
-        let mut futs = FuturesUnordered::<BoxVdevFut>::new();
+        let mut futs = FuturesUnordered::new();
         let start = ChunkId::Data(lba / self.chunksize);
         let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
         let mut starting = true;
@@ -444,9 +445,7 @@ impl VdevRaid {
                 let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
                 let old = mem::replace(&mut sglists[disk], new);
                 let lba = start_lbas[disk];
-                futs.push(Box::pin(
-                    self.mirrors[disk].readv_at(old, lba)
-                ));
+                futs.push(self.mirrors[disk].readv_at(old, lba));
                 start_lbas[disk] = disk_lba;
             }
             sglists[disk].push(col);
@@ -457,18 +456,16 @@ impl VdevRaid {
                               sglists.into_iter(),
                               start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
-            .map(|(mirrordev, sglist, lba)|
-                Box::pin(mirrordev.readv_at(sglist, lba)) as BoxVdevFut
-            )
+            .map(|(mirrordev, sglist, lba)| mirrordev.readv_at(sglist, lba))
         );
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(futs.try_collect::<Vec<_>>().map_ok(drop))
+        futs.try_collect::<Vec<_>>().map_ok(drop)
     }
 
     /// Read a (possibly improper) subset of one stripe
-    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at_one(&self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let f = self.codec.protection() as usize;
         let m = self.codec.stripesize() as usize - f;
@@ -490,7 +487,7 @@ impl VdevRaid {
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        Box::pin(fut)
+        fut
     }
 
     /// Write two or more whole stripes
