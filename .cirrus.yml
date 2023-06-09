@@ -37,7 +37,9 @@ task:
     - . $HOME/.cargo/env
     - cargo +$VERSION test $CARGO_ARGS --all --all-targets
   fio_script:
-    - if [ `fio --version | sed 's:fio-3.::'` -ge 30 ]; then
+    # Temporarily restrict the fio job to fio-3.34.0, due to bug
+    # https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=271927
+    - if [ `fio --version | sed 's:fio-3.::'` -eq 34 ]; then
     -   . $HOME/.cargo/env
     -   truncate -s 1g /tmp/bfffs.img
     -   cargo +$VERSION run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
