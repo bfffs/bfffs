@@ -276,9 +276,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "blosc"
-version = "0.1.3"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aa4be3ff6a15133256bcb58bdc8fefd074aebece453605386646bb96db0dc57"
+checksum = "e35aa1ac22858b0fa4f4e74d96c84d93b86a27093989a3f2b812b00ff7c6d2fe"
 dependencies = [
  "blosc-sys",
  "libc",
@@ -286,9 +286,9 @@ dependencies = [
 
 [[package]]
 name = "blosc-sys"
-version = "1.14.4"
+version = "1.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5cb47d18e3b7382569d8ee19671514a1633b9ddcfbd8b87d4708bdf5c0a90bc8"
+checksum = "76569aca625203c979c5c37343cdfdf4d2f9f4fd5f6a4eb89b68e7f2549d37e9"
 
 [[package]]
 name = "bstr"
