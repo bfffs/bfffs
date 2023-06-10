@@ -396,72 +396,98 @@ impl VdevRaid {
         )
     }
 
-    /// Read more than one whole stripe
-    fn read_at_multi(self: Arc<Self>, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>{
+    /// Read more than one whole stripe.  Optimized for reading many stripes.
+    // Assemble a vectorized read operation for each mirror child that includes
+    // all data chunks needed to reassemble the requested LBA range.  But
+    // skipping a Chunk would require issueing additional IOPs to the disk, and
+    // that slows down disk firmware.  So even though only Data chunks are
+    // needed, we will also read Parity chunks if they're bookended by Data
+    // chunks.  And we just might need them for reconstruction, if there's an
+    // EIO.
+    fn read_at_multi(self: Arc<Self>, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output=Result<()>>
+    {
+        const SENTINEL : LbaT = LbaT::max_value();
+
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.mirrors.len();
+        let f = self.codec.protection();
+        let k = self.codec.stripesize();
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         let lbas = (buf.len() / BYTES_PER_LBA) as LbaT;
         let chunks = div_roundup(buf.len(), col_len);
+        let stripes = div_roundup(chunks, (k - f) as usize);
+
+        // Allocate storage for parity, which we might need to read
+        let mut pbufs = (0..f)
+            .map(|_| DivBufShared::uninitialized(stripes * col_len))
+            .collect::<Vec<_>>();
+        let mut pmuts = pbufs.iter_mut()
+            .map(|dbs| dbs.try_mut().unwrap())
+            .collect::<Vec<_>>();
 
         // Create an SGList for each disk.
         let mut sglists = Vec::<SGListMut>::with_capacity(n);
-        const SENTINEL : LbaT = LbaT::max_value();
+        // Create additional SGLists to store Parity buffers, if we need them.
+        let mut psglists = Vec::<SGListMut>::new();
+        psglists.resize_with(n, Default::default);
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
-        let mut next_lbas : Vec<LbaT> = vec![SENTINEL; n];
         let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
             sglists.push(SGListMut::with_capacity(max_chunks_per_disk));
         }
         // Build the SGLists, one chunk at a time
-        let mut futs = FuturesUnordered::new();
         let start = ChunkId::Data(lba / self.chunksize);
         let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
         let mut starting = true;
-        for (_, loc) in self.locator.iter_data(start, end) {
-            let (col, disk_lba) = if starting && lba % self.chunksize != 0 {
-                // The operation begins mid-chunk
-                starting = false;
-                let lbas_into_chunk = lba % self.chunksize;
-                let chunk0lbas = self.chunksize - lbas_into_chunk;
-                let chunk0size = chunk0lbas as usize * BYTES_PER_LBA;
-                let col = buf.split_to(chunk0size);
-                let disk_lba = loc.offset * self.chunksize + lbas_into_chunk;
-                (col, disk_lba)
-            } else {
-                let chunklen = cmp::min(buf.len(), col_len);
-                let col = buf.split_to(chunklen);
-                let disk_lba = loc.offset * self.chunksize;
-                (col, disk_lba)
-            };
+        for (cid, loc) in self.locator.iter(start, end) {
+            let mut disk_lba = loc.offset * self.chunksize;
             let disk = loc.disk as usize;
-            if start_lbas[disk] == SENTINEL {
-                // First chunk assigned to this disk
-                start_lbas[disk] = disk_lba;
-            } else if next_lbas[disk] < disk_lba {
-                // There must've been a parity chunk on this disk, which we
-                // skipped.  Fire off a readv_at and keep going
-                let new = SGListMut::with_capacity(max_chunks_per_disk - 1);
-                let old = mem::replace(&mut sglists[disk], new);
-                let lba = start_lbas[disk];
-                futs.push(self.mirrors[disk].readv_at(old, lba));
-                start_lbas[disk] = disk_lba;
+            match cid {
+                ChunkId::Data(_did) => {
+                    let col = if starting && lba % self.chunksize != 0 {
+                        // The operation begins mid-chunk
+                        let lbas_into_chunk = lba % self.chunksize;
+                        let chunk0lbas = self.chunksize - lbas_into_chunk;
+                        let chunk0size = chunk0lbas as usize * BYTES_PER_LBA;
+                        disk_lba += lbas_into_chunk;
+                        buf.split_to(chunk0size)
+                    } else {
+                        let chunklen = cmp::min(buf.len(), col_len);
+                        buf.split_to(chunklen)
+                    };
+                    // Read any parity chunks that came before this data one
+                    sglists[disk].extend(psglists[disk].drain(..));
+                    sglists[disk].push(col);
+                    if start_lbas[disk] == SENTINEL {
+                        start_lbas[disk] = disk_lba;
+                    }
+                    starting = false;
+                }
+                ChunkId::Parity(_did, pid) => {
+                    if sglists[disk].is_empty() {
+                        // Skip this chunk if we aren't already reading a Data
+                        // chunk from an earlier LBA of this disk.
+                        let _ = pmuts[pid as usize].split_to(col_len);
+                    } else {
+                        let col = pmuts[pid as usize].split_to(col_len);
+                        psglists[disk].push(col);
+                    }
+                }
             }
-            sglists[disk].push(col);
-            next_lbas[disk] = disk_lba + self.chunksize;
         }
 
-        futs.extend(multizip((self.mirrors.iter(),
+        let futs = multizip((self.mirrors.iter(),
                               sglists.into_iter(),
                               start_lbas.into_iter()))
             .filter(|&(_, _, lba)| lba != SENTINEL)
             .map(|(mirrordev, sglist, lba)| mirrordev.readv_at(sglist, lba))
-        );
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
         // reconstruct the data.
-        futs.try_collect::<Vec<_>>().map_ok(drop)
+            .collect::<FuturesOrdered::<_>>()
+            .try_collect::<Vec<_>>().map_ok(drop);
+        futs
     }
 
     /// Read a (possibly improper) subset of one stripe
