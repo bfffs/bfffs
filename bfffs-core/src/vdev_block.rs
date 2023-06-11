@@ -1443,37 +1443,6 @@ mod t {
                 assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
                 assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
             }
-
-            // TODO: test cases for
-            // [✓] None
-            // [✓] read_at
-            // [✓] write_at
-            // [✓] writev_at
-            // [✓] readv_at
-            // [✓] read_at + readv_at
-            // [✓] write_at + writev_at
-            // [✓] readv_at + read_at
-            // [✓] writev_at + write_at
-            // [✓] gap in lba range: can't accumulate
-            // [✓] identical lba.  Can't accumulate
-            // [✓] backwards lba.  Can't accumulate
-            // [ ] left side's buffer only partially fills lba: can accumulate:
-            //   [ ] write_at
-            //   [ ] read_at
-            //   [ ] writev_at
-            //   [ ] readv_at
-            // [✓] Different cmds.  Can't accumulate
-            // [✓] Non-accumulatable commands:
-            //   [✓] OpenZone
-            //   [✓] ReadSpacemap
-            //   [✓] WriteLabel
-            //   [✓] WriteSpacemap
-            //   [✓] EraseZone
-            //   [✓] FinishZone
-            // [✓] SyncAll.
-            // [✓] Total iovec length would exceed _SC_IOV_MAX.  Can't accumulate.
-            // [✓] Total iovec byte length would exceed maxphys.  Can't
-            // accumulate
         }
 
         // pet kcov
