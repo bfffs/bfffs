@@ -52,7 +52,7 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+    fn read_spacemap(self: Arc<Self>, buf: IoVecMut, idx: u32) -> BoxVdevFut;
 
     /// Asynchronously reopen a zone on a RAID device
     ///

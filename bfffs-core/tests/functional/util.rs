@@ -60,6 +60,54 @@ impl Drop for Md {
     }
 }
 
+/// A gnop(4) device with controllable error probability
+pub struct Gnop {
+    _md: Md,
+    path: PathBuf
+}
+impl Gnop {
+    pub fn new() -> io::Result<Self> {
+        let md = Md::new()?;
+        let r = Command::new("gnop")
+            .arg("create")
+            .arg(md.as_path())
+            .status()
+            .expect("Failed to execute command")
+            .success();
+        if !r {
+            panic!("Failed to create gnop device");
+        }
+        let mut path = PathBuf::from(md.as_path());
+        path.set_extension("nop");
+        Ok(Self{_md: md, path})
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Set the probability of failure on read, from 0 to 100 percent.
+    pub fn error_prob(&self, prob: i32) {
+        let r = Command::new("gnop")
+            .args(["configure", "-r"])
+            .arg(format!("{}", prob))
+            .arg(self.as_path())
+            .status()
+            .expect("Failed to execute command")
+            .success();
+        assert!(r, "Failed to configure gnop");
+    }
+}
+impl Drop for Gnop {
+    fn drop(&mut self) {
+        Command::new("gnop")
+            .args(["destroy", "-f"])
+            .arg(self.as_path())
+            .output()
+            .expect("failed to deallocate gnop(4) device");
+    }
+}
+
 /// Helper to create a fresh pool
 #[derive(Debug)]
 pub struct PoolBuilder {

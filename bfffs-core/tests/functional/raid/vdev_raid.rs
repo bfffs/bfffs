@@ -1,7 +1,27 @@
 // vim: tw=80
-use bfffs_core::{mirror::Mirror, raid::VdevRaid};
 use std::{fs, path::PathBuf};
+
+use divbuf::DivBufShared;
+use rand::{Rng, thread_rng};
 use tempfile::Builder;
+
+use bfffs_core::{*, mirror::Mirror, raid::VdevRaid};
+
+fn make_bufs(chunksize: LbaT, k: i16, f: i16, s: usize) ->
+    (DivBufShared, DivBufShared)
+{
+    let chunks = s * (k - f) as usize;
+    let lbas = chunksize * chunks as LbaT;
+    let bytes = BYTES_PER_LBA * lbas as usize;
+    let mut wvec = vec![0u8; bytes];
+    let mut rng = thread_rng();
+    for x in &mut wvec {
+        *x = rng.gen();
+    }
+    let dbsw = DivBufShared::from(wvec);
+    let dbsr = DivBufShared::from(vec![0u8; bytes]);
+    (dbsw, dbsr)
+}
 
 #[test]
 #[should_panic]
@@ -45,6 +65,121 @@ fn create_stripesize_too_big() {
     VdevRaid::create(None, stripesize, redundancy, mirrors);
 }
 
+/// Tests related to fault-tolerance
+mod errors {
+    use bfffs_core::{
+        *,
+        mirror::Mirror,
+        raid::*,
+        vdev::Vdev,
+    };
+    use function_name::named;
+    use rstest::rstest;
+    use std::{
+        num::NonZeroU64,
+        sync::Arc
+    };
+    use super::make_bufs;
+    use super::super::super::*;
+    use tempfile::{Builder, TempDir};
+
+    #[derive(Clone, Copy, Debug)]
+    struct Config {
+        /// Number of disks in the RAID layout
+        n: i16,
+        /// Number of disks in each RAID stripe
+        k: i16,
+        /// Number of parity disks in each RAID stripe
+        f: i16,
+    }
+    fn config(n: i16, k: i16, f: i16) -> Config {
+        Config{n, k, f}
+    }
+
+    struct Harness {
+        vdev: Arc<VdevRaid>,
+        _tempdir: TempDir,
+        gnops: Vec<Gnop>,
+    }
+
+    async fn harness(config: Config, chunksize: LbaT) -> Harness {
+        let tempdir = Builder::new()
+            .prefix("vdev_raid::errors")
+            .tempdir()
+            .unwrap();
+        let cs = NonZeroU64::new(chunksize);
+        let gnops = (0..config.n).map(|_| Gnop::new().unwrap())
+            .collect::<Vec<_>>();
+        let mirrors = gnops.iter()
+            .map(|gnop| {
+                Mirror::create(&[gnop.as_path()], None).unwrap()
+            }).collect::<Vec<_>>();
+        let vdev = Arc::new(VdevRaid::create(cs, config.k, config.f, mirrors));
+        vdev.open_zone(0).await.unwrap();
+        Harness { vdev, _tempdir: tempdir, gnops}
+    }
+
+    mod read_at {
+        use super::*;
+
+        /// Use gnop to inject read errors in leaf vdevs, and verify that
+        /// VdevRaid can recover.
+        // Full coverage is provided in the unit tests.
+        #[named]
+        #[rstest]
+        #[tokio::test]
+        async fn recoverable_eio() {
+            require_root!();
+            // Stupid mirror; trivial configuration
+            let c = config(2, 2, 1);
+            // Read from enough stripes that the defective disk must be present
+            // in at least one.
+            let stripes = c.n * 2;
+            let h = harness(c, 1).await;
+            let (dbsw, dbsr) = make_bufs(1, c.k, c.f, stripes as usize);
+            let wbuf0 = dbsw.try_const().unwrap();
+            let wbuf1 = dbsw.try_const().unwrap();
+            let rbuf = dbsr.try_mut().unwrap();
+
+            let zl = h.vdev.zone_limits(0);
+            h.vdev.write_at(wbuf0, 0, zl.0).await.unwrap();
+            h.gnops[0].error_prob(100);
+            h.vdev.clone().read_at(rbuf, zl.0).await.unwrap();
+            assert!(wbuf1[..] == dbsr.try_const().unwrap()[..],
+                "miscompare!");
+        }
+    }
+
+    mod read_spacemap {
+        use super::*;
+
+        /// Use gnop to inject read errors in leaf vdevs, and verify that
+        /// VdevRaid can cope when reading the spacemap.
+        // Full coverage is provided in the unit tests.
+        #[named]
+        #[rstest]
+        #[tokio::test]
+        async fn recoverable_eio() {
+            require_root!();
+            // Stupid mirror; trivial configuration
+            let c = config(2, 2, 1);
+            let h = harness(c, 1).await;
+            let block = 0;
+            let idx = 0;
+            let (dbsw, dbsr) = make_bufs(1, 1, 0, 2);
+            let wbuf0 = dbsw.try_const().unwrap();
+            let wbuf1 = dbsw.try_const().unwrap();
+            let rbuf = dbsr.try_mut().unwrap();
+
+            h.vdev.write_spacemap(vec![wbuf0], idx, block).await.unwrap();
+            h.gnops[0].error_prob(100);
+            h.vdev.clone().read_spacemap(rbuf, idx).await.unwrap();
+            assert!(wbuf1[..] == dbsr.try_const().unwrap()[..],
+                "miscompare!");
+        }
+    }
+}
+
 /// These tests use real VdevBlock and VdevLeaf objects
 mod vdev_raid {
 
@@ -61,7 +196,6 @@ mod vdev_raid {
         TryStreamExt,
         stream::FuturesUnordered
     };
-    use rand::{Rng, thread_rng};
     use rstest::rstest;
     use rstest_reuse::{apply, template};
     use pretty_assertions::assert_eq;
@@ -71,6 +205,7 @@ mod vdev_raid {
         path::PathBuf,
         sync::Arc
     };
+    use super::make_bufs;
     use super::super::super::*;
     use tempfile::{Builder, TempDir};
 
@@ -121,22 +256,6 @@ mod vdev_raid {
     // https://github.com/la10736/rstest/issues/124
     fn raid_configs(h: Harness) {}
 
-    fn make_bufs(chunksize: LbaT, k: i16, f: i16, s: usize) ->
-        (DivBufShared, DivBufShared) {
-
-        let chunks = s * (k - f) as usize;
-        let lbas = chunksize * chunks as LbaT;
-        let bytes = BYTES_PER_LBA * lbas as usize;
-        let mut wvec = vec![0u8; bytes];
-        let mut rng = thread_rng();
-        for x in &mut wvec {
-            *x = rng.gen();
-        }
-        let dbsw = DivBufShared::from(wvec);
-        let dbsr = DivBufShared::from(vec![0u8; bytes]);
-        (dbsw, dbsr)
-    }
-
     async fn write_read(
         vr: Arc<VdevRaid>,
         wbufs: Vec<IoVec>,
@@ -165,6 +284,17 @@ mod vdev_raid {
             .try_collect::<Vec<_>>()
         }).await
         .unwrap();
+    }
+
+    async fn write_read_spacemap(
+        vr: Arc<VdevRaid>,
+        wbufs: Vec<IoVec>,
+        rbuf: IoVecMut,
+        idx: u32,
+        block: LbaT)
+    {
+        vr.write_spacemap(wbufs, idx, block).await.unwrap();
+        vr.read_spacemap(rbuf, idx).await.unwrap();
     }
 
     async fn write_read0(
@@ -291,6 +421,22 @@ mod vdev_raid {
         let wbuf_short = wbuf.slice_to(BYTES_PER_LBA);
         let rbuf = dbsr.try_mut().unwrap();
         write_read0(h.vdev, vec![wbuf_short], vec![rbuf]).await;
+    }
+
+    #[rstest(h, case(harness(3, 3, 1, 1)))]
+    #[tokio::test]
+    #[awt]
+    async fn read_spacemap(
+        #[future] h: Harness,
+        #[values(0, 1)]
+        idx: u32
+        ) {
+        let (dbsw, dbsr) = make_bufs(1, 1, 0, 1);
+        let wbuf = dbsw.try_const().unwrap();
+        let rbuf = dbsr.try_mut().unwrap();
+        let block = 0;
+        write_read_spacemap(h.vdev, vec![wbuf.clone()], rbuf, idx, block).await;
+        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]

@@ -29,6 +29,12 @@
 #[cfg(all(feature = "nightly", test))]
 extern crate test;
 
+// rstest_reuse must be imported at the crate root for macro reasons
+// https://github.com/la10736/rstest/issues/128
+#[allow(clippy::single_component_path_imports)]
+#[cfg(test)]
+use rstest_reuse;
+
 pub mod cache;
 pub mod cleaner;
 pub mod cluster;

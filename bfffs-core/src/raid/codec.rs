@@ -115,6 +115,7 @@ impl Codec {
         let k = self.m - self.f;
         let errs = erasures.count_ones(..k as usize) as u32;
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
+        assert_eq!(errs as usize, missing.len());
         let dec_tables = self.mk_decode_tables(erasures);
         isa_l::ec_encode_data(len, k, errs, &dec_tables, surviving, missing);
     }
