@@ -4,7 +4,7 @@
 //!
 //! Traditional RAID is *fully clustered*.  That is, each parity group, or
 //! stripe, has the same number of disks as the entire array.  *Declustered*
-//! RAID arrays, by contrast, can have more disks in the array that there are in
+//! RAID arrays, by contrast, can have more disks in the array than there are in
 //! each stripe.  Declustering improves the performance of user reads during a
 //! rebuild, and decreases the CPU and I/O usage of rebuilds too.  For a given
 //! array size, declustered RAID has worse space efficiency than fully clustered

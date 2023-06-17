@@ -1443,37 +1443,6 @@ mod t {
                 assert_eq!(&sglist[1][..], &dbs1.try_const().unwrap()[..]);
                 assert_eq!(&sglist[2][..], &dbs2.try_const().unwrap()[..]);
             }
-
-            // TODO: test cases for
-            // [✓] None
-            // [✓] read_at
-            // [✓] write_at
-            // [✓] writev_at
-            // [✓] readv_at
-            // [✓] read_at + readv_at
-            // [✓] write_at + writev_at
-            // [✓] readv_at + read_at
-            // [✓] writev_at + write_at
-            // [✓] gap in lba range: can't accumulate
-            // [✓] identical lba.  Can't accumulate
-            // [✓] backwards lba.  Can't accumulate
-            // [ ] left side's buffer only partially fills lba: can accumulate:
-            //   [ ] write_at
-            //   [ ] read_at
-            //   [ ] writev_at
-            //   [ ] readv_at
-            // [✓] Different cmds.  Can't accumulate
-            // [✓] Non-accumulatable commands:
-            //   [✓] OpenZone
-            //   [✓] ReadSpacemap
-            //   [✓] WriteLabel
-            //   [✓] WriteSpacemap
-            //   [✓] EraseZone
-            //   [✓] FinishZone
-            // [✓] SyncAll.
-            // [✓] Total iovec length would exceed _SC_IOV_MAX.  Can't accumulate.
-            // [✓] Total iovec byte length would exceed maxphys.  Can't
-            // accumulate
         }
 
         // pet kcov
@@ -1552,6 +1521,15 @@ mod t {
         use rstest::{fixture, rstest};
         use super::*;
 
+        fn rxflatten(rx: oneshot::Receiver<Result<()>>) -> BoxVdevFut {
+            Box::pin(
+                rx.map_err(|_| Error::EPIPE)
+                    // TODO: use Result::flatten when that stabilizes
+                    // https://github.com/rust-lang/rust/issues/70142
+                    .map(|rr| rr?)
+            )
+        }
+
         mock!{
             VdevFut {}
             impl Future for VdevFut {
@@ -1613,12 +1591,12 @@ mod t {
                     .return_const(1u32);
                 let mut seq = Sequence::new();
 
-                let (tx, rx) = oneshot::channel::<()>();
+                let (tx, rx) = oneshot::channel::<Result<()>>();
                 leaf1.expect_read_at()
                     .with(always(), eq(1))
                     .once()
                     .in_sequence(&mut seq)
-                    .return_once(|_, _| Box::pin(rx.map_err(|_| Error::EPIPE)));
+                    .return_once(|_, _| rxflatten(rx));
                 leaf1.expect_readv_at()
                     .withf(|iovec, lba| {
                         *lba == 2 && iovec.len() == 2
@@ -1647,7 +1625,7 @@ mod t {
                 assert!(f2.as_mut().poll(&mut ctx).is_pending());
                 // Now that all Futures have been polled to get into the
                 // scheduler loop, complete the first one.
-                tx.send(()).unwrap();
+                tx.send(Ok(())).unwrap();
                 future::try_join3(f0, f1, f2).await.unwrap();
             }
 
@@ -1746,9 +1724,8 @@ mod t {
             async fn unaccumulatable(mut leaf: MockVdevFile) {
                 let mut seq = Sequence::new();
 
-                let (sender, receiver) = oneshot::channel::<()>();
-                let e = Error::EPIPE;
-                let fut0 = Box::pin(receiver.map_err(move |_| e));
+                let (sender, receiver) = oneshot::channel();
+                let fut0 = rxflatten(receiver);
                 let fut1 = Box::pin(future::ok::<(), Error>(()));
                 leaf.expect_read_at()
                     .with(always(), eq(1))
@@ -1760,7 +1737,7 @@ mod t {
                     .once()
                     .in_sequence(&mut seq)
                     .return_once(move |_, _| {
-                        sender.send(()).unwrap();
+                        sender.send(Ok(())).unwrap();
                         fut1
                     });
                 let dbs0 = DivBufShared::from(vec![0u8; 4096]);
@@ -1908,6 +1885,46 @@ mod t {
             let vdev = VdevBlock::new(leaf);
 
             vdev.read_at(rbuf0, 2).await.unwrap();
+        }
+
+        // Fast I/O errors are handled correctly
+        #[rstest]
+        #[tokio::test]
+        async fn read_at_fail_fast(mut leaf: MockVdevFile) {
+            leaf.expect_read_at()
+                .with(always(), eq(2))
+                .returning(|_, _| Box::pin(future::err(Error::EIO)));
+
+            let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+            let rbuf0 = dbs0.try_mut().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            assert_eq!(vdev.read_at(rbuf0, 2).await.unwrap_err(), Error::EIO);
+        }
+
+        // Delayed I/O errors are handled correctly
+        #[rstest]
+        #[tokio::test]
+        async fn read_at_fail_slow(mut leaf: MockVdevFile) {
+            let mut seq = Sequence::new();
+            let mut fut = MockVdevFut::new();
+            fut.expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .return_const(Poll::Pending);
+            fut.expect_poll()
+                .once()
+                .in_sequence(&mut seq)
+                .return_const(Poll::Ready(Err(Error::EIO)));
+            leaf.expect_read_at()
+                .with(always(), eq(2))
+                .return_once(move |_, _| Box::pin(fut));
+
+            let dbs0 = DivBufShared::from(vec![0u8; 4096]);
+            let rbuf0 = dbs0.try_mut().unwrap();
+            let vdev = VdevBlock::new(leaf);
+
+            assert_eq!(vdev.read_at(rbuf0, 2).await.unwrap_err(), Error::EIO);
         }
 
         // vectored reading works

@@ -165,6 +165,7 @@ dependencies = [
  "downcast",
  "enum-primitive-derive",
  "fixedbitset",
+ "function_name",
  "futures",
  "futures-locks",
  "futures-test",
@@ -589,7 +590,7 @@ dependencies = [
 [[package]]
 name = "divbuf"
 version = "0.3.2-pre"
-source = "git+https://github.com/asomers/divbuf.git?rev=0a72fb5#0a72fb5520bd42e0af78a1f109cac6652e100cdb"
+source = "git+https://github.com/asomers/divbuf.git?rev=deb99e3#deb99e3abea12316caaa7b07329ce591032662e8"
 
 [[package]]
 name = "doc-comment"

@@ -1,6 +1,10 @@
 use std::{
+    ffi::OsStr,
+    io,
     num::NonZeroU64,
-    path::PathBuf
+    os::unix::ffi::OsStrExt,
+    path::{PathBuf, Path},
+    process::Command
 };
 
 use itertools::Itertools;
@@ -11,6 +15,98 @@ use bfffs_core::{
     mirror::Mirror,
     pool::Pool,
 };
+
+#[macro_export]
+macro_rules! require_root {
+    () => {
+        if ! ::nix::unistd::Uid::current().is_root() {
+            use ::std::io::Write;
+
+            let stderr = ::std::io::stderr();
+            let mut handle = stderr.lock();
+            writeln!(handle, "{} requires root privileges.  Skipping test.",
+                concat!(::std::module_path!(), "::", function_name!()))
+                .unwrap();
+            return;
+        }
+    }
+}
+
+/// An md(4) device.
+pub struct Md(pub PathBuf);
+impl Md {
+    pub fn new() -> io::Result<Self> {
+        let output = Command::new("mdconfig")
+            .args(["-a", "-t",  "swap", "-s", "64m"])
+            .output()?;
+        // Strip the trailing "\n"
+        let l = output.stdout.len() - 1;
+        let mddev = OsStr::from_bytes(&output.stdout[0..l]);
+        let pb = Path::new("/dev").join(mddev);
+        Ok(Self(pb))
+    }
+
+    pub fn as_path(&self) -> &Path {
+        self.0.as_path()
+    }
+}
+impl Drop for Md {
+    fn drop(&mut self) {
+        Command::new("mdconfig")
+            .args(["-d", "-u"])
+            .arg(&self.0)
+            .output()
+            .expect("failed to deallocate md(4) device");
+    }
+}
+
+/// A gnop(4) device with controllable error probability
+pub struct Gnop {
+    _md: Md,
+    path: PathBuf
+}
+impl Gnop {
+    pub fn new() -> io::Result<Self> {
+        let md = Md::new()?;
+        let r = Command::new("gnop")
+            .arg("create")
+            .arg(md.as_path())
+            .status()
+            .expect("Failed to execute command")
+            .success();
+        if !r {
+            panic!("Failed to create gnop device");
+        }
+        let mut path = PathBuf::from(md.as_path());
+        path.set_extension("nop");
+        Ok(Self{_md: md, path})
+    }
+
+    pub fn as_path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Set the probability of failure on read, from 0 to 100 percent.
+    pub fn error_prob(&self, prob: i32) {
+        let r = Command::new("gnop")
+            .args(["configure", "-r"])
+            .arg(format!("{}", prob))
+            .arg(self.as_path())
+            .status()
+            .expect("Failed to execute command")
+            .success();
+        assert!(r, "Failed to configure gnop");
+    }
+}
+impl Drop for Gnop {
+    fn drop(&mut self) {
+        Command::new("gnop")
+            .args(["destroy", "-f"])
+            .arg(self.as_path())
+            .output()
+            .expect("failed to deallocate gnop(4) device");
+    }
+}
 
 /// Helper to create a fresh pool
 #[derive(Debug)]
