@@ -3,7 +3,7 @@ setup: &SETUP
     HOME: /tmp # cargo needs it
     RUST_BACKTRACE: full  # Better info for debugging test failures.
   setup_script:
-    - pkg install -y c-blosc isa-l fio fusefs-libs llvm pkgconf
+    - pkg install -y c-blosc isa-l fio llvm pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal
     - $HOME/.cargo/bin/rustup toolchain install $VERSION
