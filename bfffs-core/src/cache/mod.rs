@@ -1,8 +1,5 @@
 // vim: tw=80
 
-// https://github.com/fkoep/downcast-rs/issues/6
-#![allow(clippy::missing_safety_doc)]
-
 use crate::types::{PBA, RID};
 use divbuf::{DivBuf, DivBufShared};
 use downcast::*;
