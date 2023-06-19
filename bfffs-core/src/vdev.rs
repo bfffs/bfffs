@@ -1,17 +1,19 @@
 // vim: tw=80
 
-use crate::types::*;
 use std::{
+    fmt,
     num::NonZeroU8,
     pin::Pin
 };
+use serde_derive::{Deserialize, Serialize};
+use crate::types::*;
 
 /// Represents the health of a vdev or pool
 ///
 /// The ordering reflects which Health is "sicker".  That is, a degraded vdev is
 /// sicker than an online one, a doubly-degraded vdev is sicker than a
 /// singly-degraded one, etc.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
 pub enum Health {
     /// Perfectly healthy
     Online,
@@ -23,6 +25,17 @@ pub enum Health {
     /// Faulted.  No I/O is possible
     // TODO: add reasons, like "offline" or "removed"
     Faulted,
+}
+
+impl fmt::Display for Health {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Online => "Online".fmt(f),
+            Self::Degraded(n) => write!(f, "Degraded({})", n),
+            Self::Rebuilding => "Rebuilding".fmt(f),
+            Self::Faulted => "Faulted".fmt(f),
+        }
+    }
 }
 
 /// Future representing an operation on a vdev.

@@ -23,6 +23,7 @@ futures = "0.3.0"
 lalrpop-util = { version = "0.19.9", features = ["lexer", "std"] }
 libc = "0.2.44"
 nix = { version = "0.26.1", default-features = false, features = ["user"] }
+prettytable = { version = "0.10.0", default-features = false }
 si-scale = "0.1.5"
 tabular = "0.2.0"
 time = { version = "0.3.0", features = [ "formatting" ] }

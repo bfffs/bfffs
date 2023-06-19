@@ -152,6 +152,8 @@ impl Stats {
 /// Return value of [`Pool::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
+    /// Overall health of the Pool
+    pub health: Health,
     pub name: String,
     pub clusters: Vec<cluster::Status>
 }
@@ -378,6 +380,7 @@ impl Pool {
 
     pub fn status(&self) -> Status {
         Status {
+            health: Health::Online,
             name: self.name().to_string(),
             clusters: self.clusters.iter()
                 .map(Cluster::status)

@@ -1248,6 +1248,7 @@ impl VdevRaidApi for VdevRaid {
         let f = self.codec.protection();
         let codec = format!("{}-{},{},{}", self.layout_algorithm, n, k, f);
         Status {
+            health: Health::Online,
             codec,
             mirrors: self.mirrors.iter()
                 .map(Mirror::status)

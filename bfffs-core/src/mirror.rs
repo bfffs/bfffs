@@ -105,6 +105,7 @@ impl Manager {
 /// Return value of [`Mirror::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
+    pub health: Health,
     pub leaves: Vec<vdev_block::Status>,
     pub uuid: Uuid
 }
@@ -400,6 +401,7 @@ impl Mirror {
 
     pub fn status(&self) -> Status {
         Status {
+            health: Health::Online,
             leaves: self.children.iter().map(Child::status)
                 .collect::<Vec<_>>(),
             uuid: self.uuid()

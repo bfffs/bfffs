@@ -125,6 +125,7 @@ impl Manager {
 /// Return value of [`VdevRaidApi::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
+    pub health: Health,
     pub codec: String,
     pub mirrors: Vec<mirror::Status>
 }

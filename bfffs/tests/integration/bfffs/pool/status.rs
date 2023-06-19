@@ -87,12 +87,12 @@ async fn all() {
         .args(["pool", "status"])
         .assert()
         .success()
-        .stdout(format!(
-            "NAME
-StatusPool
-  {}\n",
+        .stdout(predicates::str::diff(format!(
+            " NAME                                                   HEALTH 
+ StatusPool                                             Online 
+   {:51}  Online \n",
             files.paths[0].display()
-        ));
+        )));
 }
 
 #[tokio::test]
@@ -139,11 +139,11 @@ async fn mirror() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  mirror
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   mirror                                                 Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display()
@@ -168,10 +168,9 @@ async fn one_disk() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  {}
-",
+            " NAME                                                   HEALTH 
+ StatusPool                                             Online 
+   {:51}  Online \n",
             files.paths[0].display()
         ));
 }
@@ -193,12 +192,12 @@ async fn raid5() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),
@@ -225,16 +224,16 @@ async fn raid50() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),
@@ -267,21 +266,21 @@ async fn raid51() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    mirror
-      {}
-      {}
-      {}
-    mirror
-      {}
-      {}
-      {}
-    mirror
-      {}
-      {}
-      {}
+" NAME                                                       HEALTH 
+ StatusPool                                                 Online 
+   PrimeS-3,3,1                                             Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),

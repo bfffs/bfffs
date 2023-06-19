@@ -139,6 +139,7 @@ impl VdevRaidApi for NullRaid {
     fn status(&self) -> Status {
         let codec = String::from("NonRedundant");
         Status {
+            health: Health::Online,
             codec,
             mirrors: vec![self.mirror.status()]
         }

@@ -119,7 +119,7 @@ pub struct Label {
     /// Number of LBAs that were present at format time
     lbas:           LbaT,
     /// LBAs in the first zone reserved for storing each spacemap.
-    spacemap_space:    LbaT
+    spacemap_space: LbaT,
 }
 
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
@@ -153,6 +153,15 @@ impl Manager {
         Ok(reader)
     }
 }
+
+/// Return value of [`VdevFile::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    pub health: Health,
+    pub path: PathBuf,
+    pub uuid: Uuid
+}
+
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
@@ -544,6 +553,7 @@ impl VdevFile {
 
     pub fn status(&self) -> Status {
         Status {
+            health: Health::Online,
             path: self.path.clone(),
             uuid: self.uuid
         }

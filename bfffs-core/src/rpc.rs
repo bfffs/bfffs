@@ -121,7 +121,7 @@ pub mod pool {
     use std::path::PathBuf;
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
-    use crate::Uuid;
+    use crate::{vdev::Health, Uuid};
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct PoolInfo {
@@ -133,23 +133,27 @@ pub mod pool {
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct LeafStatus {
+        pub health: Health,
         pub path: PathBuf,
         pub uuid: Uuid
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct MirrorStatus {
-        pub leaves: Vec<LeafStatus>
+        pub leaves: Vec<LeafStatus>,
+        pub health: Health,
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct ClusterStatus {
+        pub health: Health,
         pub codec: String,
         pub mirrors: Vec<MirrorStatus>
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct PoolStatus {
+        pub health: Health,
         pub name: String,
         pub clusters: Vec<ClusterStatus>
     }

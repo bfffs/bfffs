@@ -825,35 +825,49 @@ mod pool {
 
     impl Status {
         fn print(stat: rpc::pool::PoolStatus) {
+            use prettytable::{format::consts::FORMAT_CLEAN, row, Table};
+
+            let mut table = Table::new();
+            table.set_format(*FORMAT_CLEAN);
+            table.set_titles(row!["NAME", "HEALTH"]);
+            table.add_row(row!(stat.name, stat.health));
             let mut indent = 0;
-            println!("{}", stat.name);
             indent += 2;
-            for cluster in stat.clusters.iter() {
-                if cluster.mirrors.len() > 1 {
-                    println!("{:indent$}{}", " ", cluster.codec);
+            for cl in stat.clusters.iter() {
+                if cl.mirrors.len() > 1 {
+                    table.add_row(row!(
+                        format!("{:indent$}{}", "", cl.codec),
+                        cl.health
+                    ));
                     indent += 2;
                 }
-                for mirror in cluster.mirrors.iter() {
+                for mirror in cl.mirrors.iter() {
                     if mirror.leaves.len() > 1 {
-                        println!("{:indent$}mirror", " ");
+                        table.add_row(row!(
+                            format!("{:indent$}mirror", ""),
+                            mirror.health
+                        ));
                         indent += 2;
                     }
                     for leaf in mirror.leaves.iter() {
-                        println!("{:indent$}{}", " ", leaf.path.display());
+                        table.add_row(row!(
+                            format!("{:indent$}{}", "", leaf.path.display()),
+                            leaf.health
+                        ));
                     }
                     if mirror.leaves.len() > 1 {
                         indent -= 2;
                     }
                 }
-                if cluster.mirrors.len() > 1 {
+                if cl.mirrors.len() > 1 {
                     indent -= 2;
                 }
             }
+            table.printstd();
         }
 
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            println!("NAME");
             if let Some(pool) = self.pool {
                 let stat = bfffs.pool_status(pool).await?;
                 Self::print(stat);
