@@ -37,9 +37,13 @@ sed -I "" -E '
 # Exclude edges for utility modules and trait definitions that are used at many
 # levels of the stack
 /-> "bfffs_core::types"/d
-/-> "bfffs_core::util"/d
+/-> "bfffs_core::util/d
 /-> "bfffs_core::vdev"/d
-/-> "bfffs_core::dml"/d
+#/-> "bfffs_core::dml"/d
+#
+# Exclude some constants that really dont contribute
+/"bfffs_core::(fs_tree|label|property|util|vdev_block|vdev_file::ffi)::[A-Z]/d
+#
 # Exclude serde serializer modules, which are tiny and only used by proc macros,
 # which cargo-modules does not understand.
 /_serializer"/d
@@ -52,6 +56,9 @@ s/label="uses", //
 # https://github.com/regexident/cargo-modules/issues/79
 s/cluster" -> "bfffs_core::raid::vdev_raid_api"/cluster" -> "bfffs_core::raid"/
 s/tree::node" -> "bfffs_core::cache"/tree::node" -> "bfffs_core::dml"/
+#
+# Use "use" edges for rank ordering
+s/constraint=false/constraint=true/
 ' $TEMPFILE
 
 if [ "$VERBOSE" -lt 2 ]; then
@@ -82,12 +89,16 @@ if [ "$VERBOSE" -lt 2 ]; then
 fi
 
 if [ "$VERBOSE" -lt 1 ]; then
-	# Exclude some control-path modules that are used all over the place
+	# Exclude some traits and control-path modules that are used all over
+	# the place
 	sed -I "" -E '
 		/-> "bfffs_core::cache/d
 		/"bfffs_core::cache::cache"/d
 		/"bfffs_core::device_manager" ->/d
+		/"bfffs_core::dml"/d
+		/-> "bfffs_core::raid::vdev_raid_api"/d
 		/-> "bfffs_core::label"/d
+		/-> "bfffs_core::property::/d
 		/-> "bfffs_core::writeback"/d
 		/"bfffs_core::writeback::writeback"/d
 	' $TEMPFILE
