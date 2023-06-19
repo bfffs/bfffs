@@ -580,11 +580,7 @@ impl<'a> FreeSpaceMap {
             self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
                 let zone = &zones[*zone_id as usize];
                 let avail_lbas = zone.total_blocks - oz.allocated_blocks;
-                // NB the next two lines can be replaced by
-                // u32::try_from(space), once that feature is stabilized
-                // https://github.com/rust-lang/rust/issues/33417
-                assert!(space < LbaT::from(u32::max_value()));
-                if avail_lbas < space as u32 {
+                if avail_lbas < u32::try_from(space).unwrap() {
                     nearly_full_zones.push(*zone_id);
                     false
                 } else {
