@@ -2493,10 +2493,7 @@ impl Fs {
                 inode.size = new_size;
                 // It's a bug if inode.bytes would drop below zero, but it's
                 // not worth panicking over.
-                // TODO: use saturating_add_unsigned when it stabilizes.
-                // https://github.com/rust-lang/rust/issues/87840
-                inode.bytes = (inode.bytes as i64).saturating_add(delta_len)
-                    as u64;
+                inode.bytes = inode.bytes.saturating_add_signed(delta_len);
                 let now = Timespec::now();
                 inode.mtime = now;
                 inode.ctime = now;
