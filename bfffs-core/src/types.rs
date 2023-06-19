@@ -285,8 +285,9 @@ impl TypicalSize for RID {
 ///
 /// This is just like the `Uuid` from the `uuid` crate, except that it
 /// serializes as a fixed-size array instead of a slice
-///
-/// See Also [#329](https://github.com/uuid-rs/uuid/issues/329)
+// The Uuid crate serializes to a slice, and its maintainers have ruled out ever
+// serializing to a fixed-size array instead.
+// See Also [Uuid #557](https://github.com/uuid-rs/uuid/issues/557)
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct Uuid(uuid::Uuid);
 

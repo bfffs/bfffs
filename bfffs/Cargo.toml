@@ -20,7 +20,7 @@ bytes = "1.0"
 cfg-if = "1.0"
 fuse3 = { version = "0.6.1", optional = true, features = ["tokio-runtime"] }
 futures = "0.3.0"
-lalrpop-util = "0.19.9"
+lalrpop-util = { version = "0.19.9", features = ["lexer", "std"] }
 libc = "0.2.44"
 nix = { version = "0.26.1", default-features = false, features = ["user"] }
 si-scale = "0.1.5"

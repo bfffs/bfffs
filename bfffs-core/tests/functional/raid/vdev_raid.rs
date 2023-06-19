@@ -252,9 +252,7 @@ mod vdev_raid {
              // Smallest quad-parity configuration
              case(harness(11, 9, 4, 2)),
      )]
-    // XXX Should be called "all_configs", but can't due to
-    // https://github.com/la10736/rstest/issues/124
-    fn raid_configs(h: Harness) {}
+    fn all_configs(h: Harness) {}
 
     async fn write_read(
         vr: Arc<VdevRaid>,
@@ -453,7 +451,7 @@ mod vdev_raid {
         write_read0(h.vdev, vec![wbuf_short], vec![rbuf_r]).await;
     }
 
-    #[apply(raid_configs)]
+    #[apply(all_configs)]
     #[tokio::test]
     #[awt]
     async fn write_read_one_stripe(#[future] h: Harness) {
@@ -468,7 +466,7 @@ mod vdev_raid {
         write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 1).await;
     }
 
-    #[apply(raid_configs)]
+    #[apply(all_configs)]
     #[tokio::test]
     #[awt]
     async fn write_read_two_stripes(#[future] h: Harness) {
@@ -487,7 +485,7 @@ mod vdev_raid {
     // that some disks will have two data chunks separated by one parity chunk,
     // which tests the ability of VdevRaid::read_at to split a single disk's
     // data up into multiple VdevBlock::readv_at calls.
-    #[apply(raid_configs)]
+    #[apply(all_configs)]
     #[tokio::test]
     #[awt]
     async fn write_read_three_rows(#[future] h: Harness) {
@@ -690,7 +688,7 @@ mod vdev_raid {
                    &dbsr.try_const().unwrap()[..]);
     }
 
-    #[apply(raid_configs)]
+    #[apply(all_configs)]
     #[tokio::test]
     #[awt]
     async fn writev_read_one_stripe(#[future] h: Harness) {

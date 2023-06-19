@@ -211,8 +211,6 @@ impl Codec {
     // Loosely based on erasure_code_perf.c from ISA-L's internal test suite
     // NB: For reasonably small values of m and f, it should be possible to
     // cache all possible decode tables.
-    // Clippy bug https://github.com/rust-lang-nursery/rust-clippy/issues/3308
-    #[allow(clippy::explicit_counter_loop)]
     fn mk_decode_tables(&self, erasures: &FixedBitSet) -> Box<[u8]> {
         let k : usize = (self.m - self.f) as usize;
         // Exclude missing parity columns from the list
@@ -278,8 +276,6 @@ mod tests {
 
     // Roundtrip data through the codec for various array sizes and erasure sets
     #[test]
-    // Clippy bug https://github.com/rust-lang-nursery/rust-clippy/issues/3308
-    #[allow(clippy::explicit_counter_loop)]
     pub fn comprehensive() {
         let cfgs = [
             (3, 1), (9, 1),

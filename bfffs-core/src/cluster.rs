@@ -455,9 +455,7 @@ impl<'a> FreeSpaceMap {
             for z in self.zones.len()..idx {
                 assert!(self.empty_zones.insert(z as ZoneT));
             }
-            // NB: this should use resize_default, once that API is stabilized:
-            // https://github.com/rust-lang/rust/issues/41758
-            self.zones.resize(idx + 1, Zone::default());
+            self.zones.resize_with(idx + 1, Default::default);
         }
         self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
@@ -582,11 +580,7 @@ impl<'a> FreeSpaceMap {
             self.open_zones.iter_mut().find(|&(zone_id, ref oz)| {
                 let zone = &zones[*zone_id as usize];
                 let avail_lbas = zone.total_blocks - oz.allocated_blocks;
-                // NB the next two lines can be replaced by
-                // u32::try_from(space), once that feature is stabilized
-                // https://github.com/rust-lang/rust/issues/33417
-                assert!(space < LbaT::from(u32::max_value()));
-                if avail_lbas < space as u32 {
+                if avail_lbas < u32::try_from(space).unwrap() {
                     nearly_full_zones.push(*zone_id);
                     false
                 } else {
