@@ -455,9 +455,7 @@ impl<'a> FreeSpaceMap {
             for z in self.zones.len()..idx {
                 assert!(self.empty_zones.insert(z as ZoneT));
             }
-            // NB: this should use resize_default, once that API is stabilized:
-            // https://github.com/rust-lang/rust/issues/41758
-            self.zones.resize(idx + 1, Zone::default());
+            self.zones.resize_with(idx + 1, Default::default);
         }
         self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
