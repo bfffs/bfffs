@@ -5,8 +5,7 @@ setup: &SETUP
   setup_script:
     - pkg install -y c-blosc isa-l fio llvm pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
-    - sh rustup.sh -y --profile=minimal
-    - $HOME/.cargo/bin/rustup toolchain install $VERSION
+    - sh rustup.sh -y --profile=minimal --default-toolchain $VERSION
     # In 12.2, aio on ufs is considered unsafe
     - sysctl vfs.aio.enable_unsafe=1
     - kldload fusefs
@@ -32,28 +31,28 @@ task:
     fingerprint_script: cat Cargo.lock || echo ""
   build_script:
     - . $HOME/.cargo/env
-    - cargo +$VERSION build $CARGO_ARGS --all
+    - cargo build $CARGO_ARGS --all
   test_script:
     - . $HOME/.cargo/env
-    - cargo +$VERSION test $CARGO_ARGS --all --all-targets
+    - cargo test $CARGO_ARGS --all --all-targets
   fio_script:
     # Temporarily restrict the fio job to fio-3.34.0, due to bug
     # https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=271927
     - if [ `fio --version | sed 's:fio-3.::'` -eq 34 ]; then
     -   . $HOME/.cargo/env
     -   truncate -s 1g /tmp/bfffs.img
-    -   cargo +$VERSION run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
+    -   cargo run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
     -   fio bfffs-fio/data/ci.fio
     - fi
   fuseless_script:
     - . $HOME/.cargo/env
     - cd bfffs
-    - cargo +$VERSION check --no-default-features --all-targets
+    - cargo check --no-default-features --all-targets
   release_script:
     # Release builds are too slow, and differ little from debug builds.  Just
     # check that it would compile, but don't try to build it.
     - . $HOME/.cargo/env
-    - cargo +$VERSION check $CARGO_ARGS --release --all --all-targets
+    - cargo check $CARGO_ARGS --release --all --all-targets
   before_cache_script: rm -rf $HOME/.cargo/registry/index
 
 lint_task:
@@ -68,12 +67,12 @@ lint_task:
     folder: $HOME/.cargo/registry
   clippy_script:
     - . $HOME/.cargo/env
-    - $HOME/.cargo/bin/rustup component add --toolchain $VERSION clippy
-    - cargo +$VERSION clippy --all-features --all-targets -- -D warnings
+    - $HOME/.cargo/bin/rustup component add clippy
+    - cargo clippy --all-features --all-targets -- -D warnings
   fmt_script:
     - . $HOME/.cargo/env
-    - rustup component add --toolchain $VERSION rustfmt
-    - cargo +$VERSION fmt --all -- --check --color=never
+    - rustup component add rustfmt
+    - cargo fmt --all -- --check --color=never
   audit_script:
     - pkg install -y cargo-audit
     - . $HOME/.cargo/env
