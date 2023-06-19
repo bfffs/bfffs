@@ -17,14 +17,24 @@ task:
       env:
         VERSION: nightly
         CARGO_ARGS: --all-features
-      freebsd_instance:
-        image_family: freebsd-14-0-snap
+      compute_engine_instance:
+        image_project: freebsd-org-cloud-dev
+        # Using image_family doesn't seem to work in conjunction with
+        # compute_engine_instance.  So specify a 14.0 snapshot explicitly.
+        image: freebsd-14-0-current-amd64-v20230413
+        platform: freebsd
+        cpu: 4
+        disk: 40
     # Use stable features
     - name: cargo test (stable)
       env:
         VERSION: 1.68.0
-      freebsd_instance:
+      compute_engine_instance:
+        image_project: freebsd-org-cloud-dev
         image: freebsd-13-2-release-amd64
+        platform: freebsd
+        cpu: 4
+        disk: 40
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
