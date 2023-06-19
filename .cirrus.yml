@@ -43,6 +43,7 @@ task:
     -   truncate -s 1g /tmp/bfffs.img
     -   cargo run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
     -   fio bfffs-fio/data/ci.fio
+    -   rm /tmp/bfffs.img
     - fi
   fuseless_script:
     - . $HOME/.cargo/env
