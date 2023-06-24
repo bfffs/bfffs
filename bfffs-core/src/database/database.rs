@@ -407,6 +407,11 @@ impl Database {
         }
     }
 
+    /// Dump the FreeSpaceMap in human-readable form, for debugging purposes
+    pub fn dump_fsm(&self) -> Vec<String> {
+        self.inner.idml.dump_fsm()
+    }
+
     pub async fn dump_alloct(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.inner.idml.dump_alloct(f).await

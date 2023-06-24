@@ -7,12 +7,18 @@
 //! or deduplication.
 
 use crate::{
+    cache::Cache,
     ddml::*,
+    label::LabelReader,
     // Import tree::tree::Tree rather than tree::Tree so we can use the real
     // object and not the mock one, even in test mode.
     tree::tree::Tree,
     tree::Value,
     types::*,
+};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex}
 };
 use mockall_double::*;
 use serde_derive::{Deserialize, Serialize};
@@ -45,3 +51,30 @@ impl TypicalSize for RidtEntry {
 }
 
 impl Value for RidtEntry {}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager(crate::ddml::Manager);
+
+impl Manager {
+    /// Import a pool that is already known to exist
+    pub async fn import(&mut self, uuid: Uuid, cache: Arc<Mutex<Cache>>, wbs: usize)
+        -> Result<(IDML, LabelReader)>
+    {
+        let (ddml, label_reader) = self.0.import(uuid, cache.clone()).await?;
+        Ok(IDML::open(Arc::new(ddml), cache, wbs, label_reader))
+    }
+
+    /// List every pool that hasn't been imported, but can be
+    pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
+        self.0.importable_pools()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<()> {
+        self.0.taste(p).await
+    }
+}

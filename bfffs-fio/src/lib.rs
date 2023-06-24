@@ -13,7 +13,7 @@ use std::{
 };
 
 use bfffs_core::{
-    device_manager::DevManager,
+    database,
     fs::{FileDataMut, Fs},
     IoVec,
 };
@@ -302,19 +302,19 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                 };
                 (pool, vdevs)
             };
-            let mut dev_manager = DevManager::default();
+            let mut manager = database::Manager::default();
             if (*opts).cache_size != 0 {
-                dev_manager.cache_size((*opts).cache_size);
+                manager.cache_size((*opts).cache_size);
             }
             if (*opts).writeback_size != 0 {
-                dev_manager.writeback_size((*opts).writeback_size);
+                manager.writeback_size((*opts).writeback_size);
             }
             rt.block_on(async {
                 for vdev in vdevs.split_whitespace() {
                     let borrowed_vdev: &str = vdev.borrow();
-                    dev_manager.taste(borrowed_vdev).await.unwrap();
+                    manager.taste(borrowed_vdev).await.unwrap();
                 }
-                let r = dev_manager.import_by_name(pool).await;
+                let r = manager.import_by_name(pool).await;
                 if let Ok(db) = r {
                     let adb = Arc::new(db);
                     let tree_id = adb.lookup_fs("").await.unwrap().1.unwrap();

@@ -28,6 +28,7 @@ use std::{
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
     ops::Range,
+    path::Path,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -1028,6 +1029,31 @@ impl Cluster {
     pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut
     {
         self.vdev.write_label(labeller)
+    }
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager(crate::raid::Manager);
+
+impl Manager {
+    /// Import a Cluster that is already known to exist
+    #[cfg(not(test))]
+    pub fn import(&mut self, uuid: Uuid)
+        -> impl Future<Output=Result<(Cluster, LabelReader)>>
+    {
+        self.0.import(uuid)
+            .and_then(|(vra, lr)| Cluster::open(vra)
+                .map_ok(|cluster| (cluster, lr))
+            )
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
+        self.0.taste(p).await
     }
 }
 

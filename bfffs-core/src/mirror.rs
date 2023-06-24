@@ -6,6 +6,7 @@
 //! as temporary mirrors, used for spares and replacements.
 
 use std::{
+    collections::BTreeMap,
     io,
     num::NonZeroU64,
     path::Path,
@@ -24,6 +25,8 @@ use futures::{
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
+#[cfg(not(test))]
+use futures::{FutureExt, future};
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 
@@ -46,6 +49,43 @@ pub struct Label {
     /// Vdev UUID, fixed at format time
     pub uuid:           Uuid,
     pub children:       Vec<Uuid>
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager {
+    vbm: crate::vdev_block::Manager,
+    mirrors: BTreeMap<Uuid, Label>,
+}
+
+impl Manager {
+    /// Import a mirror that is already known to exist
+    #[cfg(not(test))]
+    pub fn import(&mut self, uuid: Uuid)
+        -> impl Future<Output=Result<(Mirror, LabelReader)>>
+    {
+        let ml = match self.mirrors.remove(&uuid) {
+            Some(ml) => ml,
+            None => return future::err(Error::ENOENT).boxed()
+        };
+        ml.children.into_iter()
+            .map(move |child_uuid| self.vbm.import(child_uuid))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+        .map_ok(move |pairs| Mirror::open(Some(uuid), pairs))
+        .boxed()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
+        let mut reader = self.vbm.taste(p).await?;
+        let ml: Label = reader.deserialize().unwrap();
+        self.mirrors.insert(ml.uuid, ml);
+        Ok(reader)
+    }
 }
 
 /// `Mirror`: Device mirroring, both permanent and temporary

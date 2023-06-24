@@ -6,6 +6,7 @@
 //! also owns the Forest and manages Transactions.
 
 use crate::{
+    cache::Cache,
     dataset::ITree,
     idml::IDML,
     tree::{Key, MinValue, RangeQuery, TreeOnDisk, Value},
@@ -30,8 +31,9 @@ use std::{
     hash::Hasher,
     io,
     ops::Range,
+    path::Path,
     pin::Pin,
-    sync::Arc
+    sync::{Arc, Mutex}
 };
 
 mod database;
@@ -407,6 +409,78 @@ impl From<ITree<ForestKey, ForestValue>> for Forest {
         Self(Arc::new(mock_tree))
     }
 }
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager {
+    im: crate::idml::Manager,
+    // TODO: move cache_size and writeback_size into the Controller
+    cache_size: Option<usize>,
+    writeback_size: Option<usize>
+}
+
+impl Manager {
+    /// Set the maximum size in bytes of the Cache
+    pub fn cache_size(&mut self, cache_size: usize) {
+        self.cache_size = Some(cache_size);
+    }
+
+    /// Import a pool that is already known to exist
+    async fn import(&mut self, uuid: Uuid) -> Result<database::Database>
+    {
+        let cs = self.cache_size.unwrap_or(1_073_741_824);
+        let wbs = self.writeback_size.unwrap_or(268_435_456);
+        let cache = Cache::with_capacity(cs);
+        let arc_cache = Arc::new(Mutex::new(cache));
+        let (idml, label_reader) = self.im.import(uuid, arc_cache, wbs).await?;
+        Ok(database::Database::open(Arc::new(idml), label_reader))
+    }
+
+    /// Import a pool by its pool name
+    pub async fn import_by_name<S>(&mut self, name: S) -> Result<database::Database>
+        where S: AsRef<str>
+    {
+        let r = self.im.importable_pools().iter()
+        .filter_map(|(pname, uuid)| {
+            if pname == name.as_ref() {
+                Some(*uuid)
+            } else {
+                None
+            }
+        }).next();
+        match r {
+            Some(uuid) => self.import(uuid).await,
+            None => Err(Error::ENOENT)
+       }
+    }
+
+    /// Import a pool by its UUID
+    pub async fn import_by_uuid(&mut self, uuid: Uuid) -> Result<database::Database>
+    {
+        self.import(uuid).await
+    }
+
+    /// List every pool that hasn't been imported, but can be
+    pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
+        self.im.importable_pools()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<()> {
+        self.im.taste(p).await
+    }
+
+    /// Set the maximum amount of dirty cached data, in bytes.
+    ///
+    /// This is independent of [`self.cache_size`].
+    pub fn writeback_size(&mut self, writeback_size: usize) {
+        self.writeback_size = Some(writeback_size);
+    }
+}
+
 
 // LCOV_EXCL_START
 #[cfg(test)]

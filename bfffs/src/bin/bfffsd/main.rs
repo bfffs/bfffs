@@ -10,7 +10,7 @@ use std::{
 
 use bfffs_core::{
     controller::Controller,
-    device_manager::DevManager,
+    database,
     property::{Property, PropertyName},
     rpc,
     Error,
@@ -103,9 +103,9 @@ impl Socket {
 }
 
 struct Bfffsd {
-    controller:   Controller,
-    _dev_manager: DevManager,
-    mount_opts:   MountOptions,
+    controller: Controller,
+    _manager:   database::Manager,
+    mount_opts: MountOptions,
 }
 
 impl Bfffsd {
@@ -176,20 +176,20 @@ impl Bfffsd {
             mount_opts.custom_options(o);
         }
 
-        let mut dev_manager = DevManager::default();
+        let mut manager = database::Manager::default();
         if let Some(cs) = cache_size {
-            dev_manager.cache_size(cs);
+            manager.cache_size(cs);
         }
         if let Some(wbs) = writeback_size {
-            dev_manager.writeback_size(wbs);
+            manager.writeback_size(wbs);
         }
 
         for dev in cli.devices.iter() {
             // TODO: taste devices in parallel
-            dev_manager.taste(dev).await.unwrap();
+            manager.taste(dev).await.unwrap();
         }
 
-        let uuid = dev_manager
+        let uuid = manager
             .importable_pools()
             .iter()
             .find(|(name, _uuid)| **name == cli.pool_name)
@@ -198,12 +198,12 @@ impl Bfffsd {
                 std::process::exit(1);
             })
             .1;
-        let db = dev_manager.import_by_uuid(uuid).await.unwrap();
+        let db = manager.import_by_uuid(uuid).await.unwrap();
         let controller = Controller::new(db);
 
         Bfffsd {
             controller,
-            _dev_manager: dev_manager,
+            _manager: manager,
             mount_opts,
         }
     }

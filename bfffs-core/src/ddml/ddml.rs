@@ -66,6 +66,10 @@ impl DDML {
         Box::pin(self.pool.free(drp.pba, drp.asize()))
     }
 
+    pub fn dump_fsm(&self) -> Vec<String> {
+        self.pool.dump_fsm()
+    }
+
     pub fn flush(&self, idx: u32) -> BoxVdevFut {
         Box::pin(self.pool.flush(idx))
     }
@@ -372,6 +376,7 @@ mock! {
         pub fn advance_transaction(&self, txg: TxgT) -> BoxVdevFut;
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT);
         pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
+        pub fn dump_fsm(&self) -> Vec<String>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
         pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
