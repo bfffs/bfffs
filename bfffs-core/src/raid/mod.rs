@@ -99,7 +99,7 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
 {
     let mut label_pair = None;
     let all_mirrors = combined.into_iter()
-        .map(|(mirror, mut label_reader)| {
+    .map(|(mirror, mut label_reader)| {
         let label: Label = label_reader.deserialize().unwrap();
         if let Some(u) = uuid {
             assert_eq!(u, label.uuid(), "Opening disk from wrong cluster");
