@@ -24,6 +24,7 @@ use fuse3::{
 };
 use futures::{
     stream::{FuturesOrdered, FuturesUnordered},
+    FutureExt,
     TryFutureExt,
     TryStreamExt,
 };
@@ -391,6 +392,23 @@ impl Bfffsd {
                     let r = self.controller.clean(&req.pool).map(drop);
                     rpc::Response::PoolClean(r)
                 }
+            }
+            rpc::Request::PoolList(req) => {
+                self.controller
+                    .list_pool(req.pool, req.offset)
+                    .try_collect::<Vec<_>>()
+                    .map_ok(|v| {
+                        v.into_iter()
+                            .map(|p| {
+                                rpc::pool::PoolInfo {
+                                    name: p.name,
+                                    offs: p.offs,
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .map(rpc::Response::PoolList)
+                    .await
             }
         }
     }

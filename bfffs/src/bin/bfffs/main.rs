@@ -789,11 +789,49 @@ mod pool {
         }
     }
 
+    /// List one or more storage pools
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct List {
+        /// Pool properties, comma delimited
+        #[clap(short, long, value_delimiter(','))]
+        pub(super) properties: Vec<String>,
+        /// Optional pool names
+        pub(super) pools:      Vec<String>,
+    }
+
+    impl List {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            println!("NAME");
+            if self.pools.is_empty() {
+                bfffs
+                    .pool_list(None, None)
+                    .try_for_each(|poolinfo| {
+                        println!("{}", poolinfo.name);
+                        future::ok(())
+                    })
+                    .await?;
+            } else {
+                for pool in self.pools.into_iter() {
+                    bfffs
+                        .pool_list(Some(pool), None)
+                        .try_for_each(|poolinfo| {
+                            println!("{}", poolinfo.name);
+                            future::ok(())
+                        })
+                        .await?;
+                }
+            }
+            Ok(())
+        }
+    }
+
     #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify storage pools
     pub(super) enum PoolCmd {
         Clean(Clean),
         Create(Create),
+        List(List),
     }
 }
 
@@ -845,6 +883,9 @@ async fn main() -> Result<()> {
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
         SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
             clean.main(&cli.sock).await
+        }
+        SubCommand::Pool(pool::PoolCmd::List(list)) => {
+            list.main(&cli.sock).await
         }
     }
 }
@@ -1382,6 +1423,22 @@ mod t {
                 ));
                 if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.zone_size, Some(128));
+                }
+            }
+        }
+
+        mod list {
+            use super::*;
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "pool", "list", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Pool(PoolCmd::List(_))));
+                if let SubCommand::Pool(PoolCmd::List(list)) = cli.cmd {
+                    assert_eq!(list.pools.len(), 1);
+                    assert_eq!(list.pools[0], "testpool");
+                    assert!(list.properties.is_empty());
                 }
             }
         }

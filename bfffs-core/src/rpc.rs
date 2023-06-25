@@ -53,7 +53,6 @@ pub mod fs {
     ///
     /// The named dataset itself will not be included.  If `offset` is provided,
     /// it can be used to resume a previous listing, as in `getdirentries`.
-    ///
     pub fn list(name: String, props: Vec<PropertyName>, offset: Option<u64>)
         -> Request
     {
@@ -122,6 +121,22 @@ pub mod pool {
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
 
+    // Maybe someday the Controller and RPC will need to have different
+    // structures, but not right now.
+    //pub use crate::controller::PoolDirent as PoolInfo;
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    pub struct PoolInfo {
+        /// Pool name.
+        pub name: String,
+        /// Stream resume token
+        pub offs: u64
+    }
+    //impl From<PoolDirent> for PoolInfo {
+        //fn from(p: PoolDirent) -> Self {
+            //Self { name: p.name, offs: p.offs}
+        //}
+    //}
+
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Clean {
         pub pool: String
@@ -131,6 +146,21 @@ pub mod pool {
         Request::PoolClean(Clean {
             pool
         })
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct List {
+        pub pool: Option<String>,
+        pub offset: Option<u64>
+    }
+
+    /// Like `readdirplus`, list one or all imported pools with the requested
+    /// properties.
+    ///
+    /// If `offset` is provided, it can be used to resume a previous listing, as
+    /// in `getdirentries`.
+    pub fn list(pool: Option<String>, offset: Option<u64>) -> Request {
+        Request::PoolList(List { pool, offset })
     }
 }
 
@@ -145,7 +175,8 @@ pub enum Request {
     FsSet(fs::Set),
     FsStat(fs::Stat),
     FsUnmount(fs::Unmount),
-    PoolClean(pool::Clean)
+    PoolClean(pool::Clean),
+    PoolList(pool::List)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -159,6 +190,7 @@ pub enum Response {
     FsStat(Result<fs::DsInfo>),
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
+    PoolList(Result<Vec<pool::PoolInfo>>),
 }
 
 impl Response {
@@ -214,6 +246,13 @@ impl Response {
     pub fn into_pool_clean(self) -> Result<()> {
         match self {
             Response::PoolClean(r) => r,
+            x => panic!("Unexpected response type {x:?}")
+        }
+    }
+
+    pub fn into_pool_list(self) -> Result<Vec<pool::PoolInfo>> {
+        match self {
+            Response::PoolList(r) => r,
             x => panic!("Unexpected response type {x:?}")
         }
     }
