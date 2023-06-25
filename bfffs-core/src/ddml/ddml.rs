@@ -23,9 +23,10 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex}
 };
-use super::DRP;
+use super::{DRP, Status};
 use tracing::instrument;
 use tracing_futures::Instrument;
+
 
 #[cfg(not(test))] use crate::pool::Pool;
 #[cfg(test)] use crate::pool::MockPool as Pool;
@@ -283,6 +284,10 @@ impl DDML {
         self.pool.size()
     }
 
+    pub fn status(&self) -> Status {
+        self.pool.status()
+    }
+
     /// How many blocks are currently used?
     pub fn used(&self) -> LbaT {
         self.pool.used()
@@ -392,6 +397,7 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>
             where T: borrow::Borrow<dyn CacheRef>;
         pub fn size(&self) -> LbaT;
+        pub fn status(&self) -> Status;
         pub fn used(&self) -> LbaT;
         pub fn write_label(&self, labeller: LabelWriter)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;

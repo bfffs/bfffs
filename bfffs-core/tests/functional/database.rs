@@ -469,6 +469,72 @@ root:
         db.shutdown().await;
     }
 
+    mod status {
+        use super::*;
+
+        type Harness = (Database, Vec<PathBuf>, TempDir);
+        const POOLNAME: &str = "StatusPool";
+
+        struct Config {
+            n: usize,
+            m: usize,
+            k: i16,
+            f: i16,
+            nclusters: usize
+        }
+
+        fn config(n: usize, m: usize, k: i16, f: i16, nc: usize) -> Config {
+            Config{n, m, k, f, nclusters: nc}
+        }
+
+        async fn harness(config: &Config) -> Harness {
+            let (tempdir, paths, pool) = crate::PoolBuilder::new()
+                .name(POOLNAME)
+                .disks(config.n)
+                .mirror_size(config.m)
+                .stripe_size(config.k)
+                .redundancy_level(config.f)
+                .nclusters(config.nclusters)
+                .build();
+            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let idml = Arc::new(IDML::create(ddml, cache));
+            let db = Database::create(idml);
+
+            (db, paths, tempdir)
+        }
+
+        /// Status of a healthy, well-balanced pool.
+        #[rstest(config,
+                 case(config(1, 1, 1, 0, 1)),       // Single disk
+                 case(config(2, 1, 1, 0, 2)),       // RAID0
+                 case(config(2, 2, 1, 0, 1)),       // RAID1
+                 case(config(3, 1, 3, 1, 1)),       // RAID5
+                 case(config(6, 1, 3, 1, 2)),       // RAID50
+                 case(config(6, 2, 3, 1, 1)),       // RAID51
+                 case(config(12, 2, 3, 1, 2)))]     // RAID510
+        #[tokio::test]
+        async fn normal(config: Config) {
+            let (db, _paths, _tempdir) = harness(&config).await;
+            let stat = db.status();
+            assert_eq!(stat.name, POOLNAME);
+            assert_eq!(stat.clusters.len(), config.nclusters);
+            for cluster in stat.clusters.iter() {
+                let rn = config.n / (config.m * config.nclusters);
+                if rn == 1 {
+                    assert_eq!(cluster.codec, "NonRedundant");
+                } else {
+                    assert_eq!(cluster.codec,
+                           format!("PrimeS-{},{},{}", rn, config.k, config.f));
+                }
+                assert_eq!(cluster.mirrors.len(), rn);
+                for mirror in cluster.mirrors.iter() {
+                    assert_eq!(mirror.leaves.len(), config.m);
+                }
+            }
+        }
+    }
+
     mod sync_transaction {
         use super::*;
         use divbuf::DivBufShared;

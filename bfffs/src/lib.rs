@@ -223,6 +223,14 @@ impl Bfffs {
             .try_flatten_stream()
     }
 
+    pub async fn pool_status(
+        &self,
+        pool: String,
+    ) -> Result<rpc::pool::PoolStatus> {
+        let req = rpc::pool::status(pool);
+        self.call(req).await.unwrap().into_pool_status()
+    }
+
     /// Submit an RPC request to the server
     async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
         const BUFSIZ: usize = 4096;

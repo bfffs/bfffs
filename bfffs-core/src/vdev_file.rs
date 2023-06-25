@@ -166,6 +166,9 @@ pub struct VdevFile {
     spacemap_space: LbaT,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
+    /// The name used to open this Vdev.  It may change if the pool is exported
+    /// and reimported.
+    path:           PathBuf,
     size:           LbaT,
     uuid:           Uuid,
     /// How does the underlying file deallocate data?
@@ -249,6 +252,7 @@ impl VdevFile {
         -> io::Result<Self>
         where P: AsRef<Path>
     {
+        let pb = path.as_ref().to_path_buf();
         let f = OpenOptions::new()
             .read(true)
             .write(true)
@@ -268,6 +272,7 @@ impl VdevFile {
             file: f,
             spacemap_space,
             lbas_per_zone: lpz,
+            path: pb,
             size,
             uuid,
             erase_method
@@ -361,6 +366,7 @@ impl VdevFile {
     pub async fn open<P: AsRef<Path>>(path: P)
         -> Result<(Self, LabelReader)>
     {
+        let pb = path.as_ref().to_path_buf();
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -389,6 +395,7 @@ impl VdevFile {
                             file: f,
                             spacemap_space: label.spacemap_space,
                             lbas_per_zone: label.lbas_per_zone,
+                            path: pb,
                             size: label.lbas,
                             uuid: label.uuid,
                             erase_method
@@ -411,6 +418,11 @@ impl VdevFile {
     pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
         Box::pin(future::ok(()))
+    }
+
+    /// The pathname most recently used to open this device.
+    pub fn path(&self) -> &Path {
+        self.path.as_path()
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -743,6 +755,7 @@ mock!{
         pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
             where P: AsRef<Path>;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub fn path(&self) -> &Path;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;

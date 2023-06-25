@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     io,
     num::NonZeroU64,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         Arc,
@@ -86,6 +86,13 @@ impl Manager {
         self.mirrors.insert(ml.uuid, ml);
         Ok(reader)
     }
+}
+
+/// Return value of [`Mirror::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    /// Paths to each leaf
+    pub leaves: Vec<(PathBuf, Uuid)>
 }
 
 /// `Mirror`: Device mirroring, both permanent and temporary
@@ -274,6 +281,14 @@ impl Mirror {
             dbis,
             lba,
             fut
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        Status {
+            leaves: self.blockdevs.iter()
+                .map(|vb| (vb.path(), vb.uuid()))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -529,6 +544,7 @@ mock! {
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn status(&self) -> Status;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;

@@ -27,6 +27,7 @@ use std::{
     sync::{Arc, Weak}
 };
 
+pub use crate::database::Status;
 pub type TreeID = crate::database::TreeID;
 
 /// A directory entry in the Forest.
@@ -144,6 +145,13 @@ impl Controller {
         -> Result<()>
     {
         self.db.dump_fs(f, tree).await
+    }
+
+    pub fn get_pool_status(&self, pool: &str) -> Result<Status> {
+        if pool != self.db.pool_name() {
+            return Err(Error::ENOENT);
+        }
+        Ok(self.db.status())
     }
 
     /// Get the value of the `propname` property on the given dataset

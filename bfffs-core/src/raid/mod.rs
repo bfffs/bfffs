@@ -9,6 +9,7 @@
 use crate::{
     label::*,
     types::*,
+    mirror,
     vdev::*,
 };
 #[cfg(not(test))] use futures::{
@@ -104,6 +105,13 @@ impl Manager {
     }
 }
 
+/// Return value of [`VdevRaidApi::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    pub codec: String,
+    pub mirrors: Vec<mirror::Status>
+}
+
 /// Create a raid-like `Vdev` from its components.
 ///
 ///
@@ -188,6 +196,7 @@ mock!{
         fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         fn read_spacemap(self: Arc<Self>, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+        fn status(&self) -> Status;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
         fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
         fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

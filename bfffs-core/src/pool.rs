@@ -1,6 +1,7 @@
 // vim: tw=80
 
 use crate::{
+    cluster,
     label::*,
     types::*,
     util::*,
@@ -134,6 +135,13 @@ impl Stats {
     fn used(&self) -> LbaT {
         self.used_space.load(Ordering::Relaxed)
     }
+}
+
+/// Return value of [`Pool::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    pub name: String,
+    pub clusters: Vec<cluster::Status>
 }
 
 /// An BFFFS storage pool
@@ -354,6 +362,15 @@ impl Pool {
     /// Return approximately the Pool's usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.stats.size()
+    }
+
+    pub fn status(&self) -> Status {
+        Status {
+            name: self.name().to_string(),
+            clusters: self.clusters.iter()
+                .map(Cluster::status)
+                .collect::<Vec<_>>()
+        }
     }
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable

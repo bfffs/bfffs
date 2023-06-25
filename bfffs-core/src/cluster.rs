@@ -37,6 +37,8 @@ use std::{
     },
 };
 
+pub use crate::raid::Status;
+
 /// Minimal in-memory representation of a zone.
 ///
 /// A Closed zone is one which contains data, and may not be written to again
@@ -951,6 +953,10 @@ impl Cluster {
     /// Return approximately the usable space of the Cluster in LBAs.
     pub fn size(&self) -> LbaT {
         self.vdev.size()
+    }
+
+    pub fn status(&self) -> Status {
+        self.vdev.status()
     }
 
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable

@@ -38,6 +38,8 @@ use std::{
 
 mod database;
 
+pub use crate::idml::Status;
+
 #[double]
 pub use self::database::Database;
 pub use self::database::Dirent;

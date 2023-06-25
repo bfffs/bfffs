@@ -25,6 +25,7 @@ use pin_project::pin_project;
 use std::{
     collections::BTreeMap,
     cmp,
+    fmt,
     mem,
     num::NonZeroU64,
     pin::Pin,
@@ -33,6 +34,7 @@ use std::{
 };
 use serde_derive::{Deserialize, Serialize};
 use super::{
+    Status,
     codec::*,
     declust::*,
     prime_s::*,
@@ -54,6 +56,14 @@ mod tests;
 pub enum LayoutAlgorithm {
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
+}
+
+impl fmt::Display for LayoutAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PrimeS => "PrimeS".fmt(f)
+        }
+    }
 }
 
 /// In-memory cache of data that has not yet been flushed the Mirror devices.
@@ -1229,6 +1239,19 @@ impl VdevRaidApi for VdevRaid {
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut
     {
         self.open_zone_priv(zone, allocated)
+    }
+
+    fn status(&self) -> Status {
+        let n = self.mirrors.len();
+        let k = self.codec.stripesize();
+        let f = self.codec.protection();
+        let codec = format!("{}-{},{},{}", self.layout_algorithm, n, k, f);
+        Status {
+            codec,
+            mirrors: self.mirrors.iter()
+                .map(Mirror::status)
+                .collect::<Vec<_>>(),
+        }
     }
 
     fn write_at(&self, buf: IoVec, zone: ZoneT, mut lba: LbaT) -> BoxVdevFut
