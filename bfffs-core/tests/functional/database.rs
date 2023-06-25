@@ -551,6 +551,7 @@ mod manager {
     use rstest::rstest;
     use rstest_reuse::{apply, template};
     use std::{
+        fs,
         path::PathBuf,
         sync::{Arc, Mutex}
     };
@@ -558,8 +559,8 @@ mod manager {
 
     type Harness = (Manager, Vec<PathBuf>, TempDir);
 
-    async fn harness(n: usize, m: usize, k: i16, f: i16, cs: Option<usize>,
-               wb: Option<usize>)
+    async fn harness(n: usize, m: usize, k: i16, f: i16, nclusters: usize,
+                     cs: Option<usize>, wb: Option<usize>)
         -> Harness
     {
         let (tempdir, paths, pool) = crate::PoolBuilder::new()
@@ -567,6 +568,7 @@ mod manager {
             .mirror_size(m)
             .stripe_size(k)
             .redundancy_level(f)
+            .nclusters(nclusters)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
         let ddml = Arc::new(DDML::new(pool, cache.clone()));
@@ -587,22 +589,24 @@ mod manager {
 
     #[template]
     #[rstest(h,
-             case(harness(1, 1, 1, 0, None, None)), // Single-disk configuration
-             case(harness(2, 2, 1, 0, None, None)), // RAID1
-             case(harness(3, 1, 3, 1, None, None)), // RAID5 configuration
-             case(harness(6, 2, 3, 1, None, None)), // RAID51 configuration
+             case(harness(1, 1, 1, 0, 1, None, None)), // Single-disk
+             case(harness(2, 1, 1, 0, 2, None, None)), // RAID0
+             case(harness(2, 2, 1, 0, 1, None, None)), // RAID1
+             case(harness(3, 1, 3, 1, 1, None, None)), // RAID5
+             case(harness(6, 2, 3, 1, 1, None, None)), // RAID51
+             case(harness(12, 2, 3, 1, 2, None, None)), // RAID510
      )]
     fn all_configs(h: Harness) {}
 
     /// No disks have been tasted
-    #[apply(all_configs)]
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     #[awt]
     async fn empty(#[future] h: Harness) {
         assert!(h.0.importable_pools().is_empty());
     }
 
-    #[rstest(h, case(harness(1, 1, 1, 0, Some(100_000_000), None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, Some(100_000_000), None)))]
     #[tokio::test]
     #[awt]
     async fn cache_size(#[future] h: Harness) {
@@ -612,8 +616,8 @@ mod manager {
         assert_eq!(db.cache_size(), 100_000_000);
     }
 
-    /// Import a single pool by its name.  Try both single-disk and raid pools
-    #[apply(all_configs)]
+    /// Import a single pool by its name.
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     #[awt]
     async fn import_by_name(#[future] h: Harness) {
@@ -625,7 +629,7 @@ mod manager {
     }
 
     /// Fail to import a nonexistent pool by name
-    #[rstest(h, case(harness(1, 1, 1, 0, None, None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     #[awt]
     async fn import_by_name_enoent(#[future] h: Harness) {
@@ -637,7 +641,7 @@ mod manager {
     }
 
 
-    /// Import a single pool by its UUID
+    /// Import a single pool by its UUID.  Try both single-disk and raid pools.
     #[apply(all_configs)]
     #[tokio::test]
     #[awt]
@@ -651,8 +655,28 @@ mod manager {
         dm.import_by_uuid(uuid).await.unwrap();
     }
 
+    /// Try to import a single pool, but all of the disks are gone.
+    #[apply(all_configs)]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_uuid_no_disks(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        for path in paths.iter() {
+            dm.taste(path).await.unwrap();
+        }
+        for path in paths.iter() {
+            fs::remove_file(path).unwrap();
+        }
+        // importable_pools should still work
+        let (name, uuid) = dm.importable_pools().pop().unwrap();
+        assert_eq!(name, "functional_test_pool");
+        // But actually importing them should not
+        let e = dm.import_by_uuid(uuid).await.err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
     /// Fail to import a nonexistent pool by UUID
-    #[rstest(h, case(harness(1, 1, 1, 0, None, None)))]
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     #[awt]
     async fn import_by_uuid_enoent(#[future] h: Harness) {
@@ -662,7 +686,7 @@ mod manager {
         assert_eq!(e, Error::ENOENT);
     }
 
-    #[rstest(h, case(harness(1, 1, 1, 0, None, Some(100_000_000))))]
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, Some(100_000_000))))]
     #[tokio::test]
     #[awt]
     async fn writeback_size(#[future] h: Harness) {
