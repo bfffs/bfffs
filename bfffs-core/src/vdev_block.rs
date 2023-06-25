@@ -6,6 +6,7 @@ use futures::{
     channel::oneshot,
     task::{Context, Poll}
 };
+#[cfg(not(test))] use futures::TryFutureExt;
 use lazy_static::lazy_static;
 use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
@@ -984,6 +985,29 @@ impl Vdev for VdevBlock {
 
     fn zones(&self) -> ZoneT {
         self.inner.read().unwrap().leaf.zones()
+    }
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager(crate::vdev_file::Manager);
+
+impl Manager {
+    /// Import a block device that is already known to exist
+    #[cfg(not(test))]
+    pub fn import(&mut self, uuid: Uuid)
+        -> impl Future<Output=Result<(VdevBlock, LabelReader)>>
+    {
+        self.0.import(uuid)
+            .map_ok(|(vf, lr)| (VdevBlock::new(vf), lr))
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
+        self.0.taste(p).await
     }
 }
 

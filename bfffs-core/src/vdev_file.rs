@@ -22,6 +22,7 @@ use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
+    collections::BTreeMap,
     fs::OpenOptions,
     io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
@@ -30,7 +31,7 @@ use std::{
         fs::OpenOptionsExt,
         io::{AsRawFd, RawFd}
     },
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin
 };
 use tokio_file::File;
@@ -119,6 +120,36 @@ pub struct Label {
     lbas:           LbaT,
     /// LBAs in the first zone reserved for storing each spacemap.
     spacemap_space:    LbaT
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager {
+    // NB: these labels may be out-of-date because we don't open devices
+    // exclusively until import time.
+    devices: BTreeMap<Uuid, PathBuf>,
+}
+
+impl Manager {
+    /// Import a block device that is already known to exist
+    pub fn import(&mut self, uuid: Uuid)
+        -> impl Future<Output=Result<(VdevFile, LabelReader)>>
+    {
+        future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
+            .and_then(VdevFile::open)
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    // TODO: add a method for tasting disks in parallel.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
+        let pathbuf = p.as_ref().to_owned();
+        let (vdev_file, reader) = VdevFile::open(p).await?;
+        self.devices.insert(vdev_file.uuid(), pathbuf);
+        Ok(reader)
+    }
 }
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`

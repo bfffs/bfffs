@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 use assert_cmd::prelude::*;
 use bfffs_core::{
     controller::Controller,
-    device_manager::DevManager,
+    database,
     property::{Property, PropertyName, PropertySource},
     vdev::Vdev,
     vdev_file::VdevFile,
@@ -35,17 +35,17 @@ fn harness() -> Harness {
 }
 
 async fn open(pool_name: &str, filenames: &[PathBuf]) -> Controller {
-    let dev_manager = DevManager::default();
+    let mut manager = database::Manager::default();
     for pb in filenames {
-        dev_manager.taste(pb.clone()).await.unwrap();
+        manager.taste(pb.clone()).await.unwrap();
     }
-    let uuid = dev_manager
+    let uuid = manager
         .importable_pools()
         .iter()
         .find(|(name, _uuid)| *name == pool_name)
         .unwrap()
         .1;
-    let db = dev_manager.import_by_uuid(uuid).await.unwrap();
+    let db = manager.import_by_uuid(uuid).await.unwrap();
     Controller::new(db)
 }
 

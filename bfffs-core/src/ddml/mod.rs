@@ -6,11 +6,19 @@
 //! duplicated, either through snapshots, clones, or deduplication.
 
 use crate::{
+    cache::Cache,
+    label::LabelReader,
     types::*,
     util::*,
     dml::Compression
 };
 #[cfg(test)] use rand::{self, Rng};
+
+use cfg_if::cfg_if;
+use std::{
+    path::Path,
+    sync::{Arc, Mutex}
+};
 
 pub type ClosedZone = crate::pool::ClosedZone;
 
@@ -119,4 +127,37 @@ impl TypicalSize for DRP {
     const TYPICAL_SIZE: usize = 27;
 }
 
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager(crate::pool::Manager);
 
+impl Manager {
+    /// Import a pool that is already known to exist
+    #[cfg_attr(test, allow(unused_variables))]
+    pub async fn import(&mut self, uuid: Uuid, cache: Arc<Mutex<Cache>>)
+        -> Result<(DDML, LabelReader)>
+    {
+        cfg_if! {
+            if #[cfg(test)] {
+                unimplemented!()
+            } else {
+                let (pool, label_reader) = self.0.import(uuid).await?;
+                let ddml = DDML::open(pool, cache.clone());
+                Ok((ddml, label_reader))
+            }
+        }
+    }
+
+    /// List every pool that hasn't been imported, but can be
+    pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
+        self.0.importable_pools()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<()> {
+        self.0.taste(p).await
+    }
+}

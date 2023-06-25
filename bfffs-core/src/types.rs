@@ -292,6 +292,10 @@ impl TypicalSize for RID {
 pub struct Uuid(uuid::Uuid);
 
 impl Uuid {
+    pub const fn from_uuid(uuid: uuid::Uuid) -> Self {
+        Self(uuid)
+    }
+
     pub fn new_v4() -> Self {
         Uuid(uuid::Uuid::new_v4())
     }

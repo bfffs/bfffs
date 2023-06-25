@@ -263,6 +263,10 @@ impl<'a> IDML {
         self.alloct.dump(f).await
     }
 
+    pub fn dump_fsm(&self) -> Vec<String> {
+        self.ddml.dump_fsm()
+    }
+
     pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.ridt.dump(f).await
@@ -674,6 +678,7 @@ mock!{
         pub fn drop_cache(&self);
         pub fn dump_alloct(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+        pub fn dump_fsm(&self) -> Vec<String>;
         pub fn dump_ridt(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)

@@ -25,7 +25,10 @@ use std::{
         Arc
     }
 };
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    path::Path
+};
 
 #[cfg(test)]
 use crate::cluster::MockCluster as Cluster;
@@ -61,6 +64,49 @@ pub struct Label {
 
     /// `UUID`s of all component `VdevRaid`s
     pub children:           Vec<Uuid>,
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager {
+    cm: crate::cluster::Manager,
+    pools: BTreeMap<Uuid, Label>,
+}
+
+impl Manager {
+    /// Import a pool that is already known to exist
+    #[cfg(not(test))]
+    pub async fn import(&mut self, uuid: Uuid) -> Result<(Pool, LabelReader)>
+    {
+        let pl = match self.pools.remove(&uuid) {
+            Some(l) => l,
+            None => return Err(Error::ENOENT)
+        };
+        let cc = pl.children.into_iter()
+            .map(move |child_uuid| self.cm.import(child_uuid))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>().await?;
+        Ok(Pool::open(Some(uuid), cc))
+    }
+
+    /// List every pool that hasn't been imported, but can be
+    pub fn importable_pools(&self) -> Vec<(String, Uuid)> {
+        self.pools.values()
+            .map(|label| {
+                (label.name.clone(), label.uuid)
+            }).collect::<Vec<_>>()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<()> {
+        let mut reader = self.cm.taste(p).await?;
+        let pl: Label = reader.deserialize().unwrap();
+        self.pools.insert(pl.uuid, pl);
+        Ok(())
+    }
 }
 
 struct Stats {
@@ -154,6 +200,12 @@ impl Pool {
     pub fn create(name: String, clusters: Vec<Cluster>) -> Self
     {
         Pool::new(name, Uuid::new_v4(), clusters)
+    }
+
+    pub fn dump_fsm(&self) -> Vec<String> {
+        self.clusters.iter()
+            .map(|cluster| cluster.dump_fsm())
+            .collect::<Vec<_>>()
     }
 
     pub fn flush(&self, idx: u32)

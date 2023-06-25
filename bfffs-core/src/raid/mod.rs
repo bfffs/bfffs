@@ -11,6 +11,14 @@ use crate::{
     types::*,
     vdev::*,
 };
+#[cfg(not(test))] use futures::{
+    Future,
+    FutureExt,
+    TryFutureExt,
+    TryStreamExt,
+    future,
+    stream::FuturesUnordered
+};
 #[cfg(test)] use mockall::*;
 use mockall_double::double;
 use serde_derive::{Deserialize, Serialize};
@@ -18,6 +26,7 @@ use std::{
     collections::BTreeMap,
     iter::once,
     num::NonZeroU64,
+    path::Path,
     sync::Arc
 };
 
@@ -55,6 +64,43 @@ impl<'a> Label {
             Label::Raid(l) => l.uuid,
             Label::NullRaid(l) => l.uuid,
         }
+    }
+}
+
+/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
+#[derive(Default)]
+pub struct Manager {
+    mm: crate::mirror::Manager,
+    raids: BTreeMap<Uuid, Label>,
+}
+
+impl Manager {
+    /// Import a RAID device that is already known to exist
+    #[cfg(not(test))]
+    pub fn import(&mut self, uuid: Uuid)
+        -> impl Future<Output=Result<(Arc<dyn VdevRaidApi>, LabelReader)>>
+    {
+        let rl = match self.raids.remove(&uuid) {
+            Some(rl) => rl,
+            None => return future::err(Error::ENOENT).boxed()
+        };
+        rl.iter_children()
+            .map(move |child_uuid| self.mm.import(*child_uuid))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+        .map_ok(move |pairs| open(Some(uuid), pairs))
+        .boxed()
+    }
+
+    /// Taste the device identified by `p` for a BFFFS label.
+    ///
+    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// for building Pools.
+    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
+        let mut reader = self.mm.taste(p).await?;
+        let rl: Label = reader.deserialize().unwrap();
+        self.raids.insert(rl.uuid(), rl);
+        Ok(reader)
     }
 }
 
@@ -99,7 +145,7 @@ pub fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
 {
     let mut label_pair = None;
     let all_mirrors = combined.into_iter()
-        .map(|(mirror, mut label_reader)| {
+    .map(|(mirror, mut label_reader)| {
         let label: Label = label_reader.deserialize().unwrap();
         if let Some(u) = uuid {
             assert_eq!(u, label.uuid(), "Opening disk from wrong cluster");

@@ -42,7 +42,6 @@ pub mod controller;
 pub mod database;
 pub mod dataset;
 pub mod ddml;
-pub mod device_manager;
 pub mod dml;
 pub mod fs;
 pub mod fs_tree;

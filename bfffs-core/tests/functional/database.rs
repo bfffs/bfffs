@@ -1,14 +1,8 @@
 // vim: tw=80
 use bfffs_core::cache::*;
-use bfffs_core::cluster::Cluster;
 use bfffs_core::database::*;
-use bfffs_core::ddml::*;
-use bfffs_core::idml::*;
-use bfffs_core::mirror::Mirror;
-use bfffs_core::pool::*;
-use bfffs_core::vdev_block::*;
-use bfffs_core::vdev_file::*;
-use bfffs_core::raid;
+use bfffs_core::ddml::DDML;
+use bfffs_core::idml::IDML;
 use futures::{StreamExt, TryStreamExt, future};
 use rstest::rstest;
 use std::{
@@ -16,18 +10,12 @@ use std::{
     sync::{Arc, Mutex}
 };
 
+const POOLNAME: &str = "TestPool";
+
 async fn open_db(path: &Path) -> Database {
-    let (leaf, reader) = VdevFile::open(path).await.unwrap();
-    let block = VdevBlock::new(leaf);
-    let (mirror, reader) = Mirror::open(None, vec![(block, reader)]);
-    let (vr, lr) = raid::open(None, vec![(mirror, reader)]);
-    let cluster = Cluster::open(vr).await.unwrap();
-    let (pool, reader) = Pool::open(None, vec![(cluster, lr)]);
-    let cache = Cache::with_capacity(4_194_304);
-    let arc_cache = Arc::new(Mutex::new(cache));
-    let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
-    let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
-    Database::open(Arc::new(idml), reader)
+    let mut manager = Manager::default();
+    manager.taste(path).await.unwrap();
+    manager.import_by_name(POOLNAME).await.unwrap()
 }
 
 mod persistence {
@@ -61,8 +49,6 @@ mod persistence {
         // Root node's TXG range as a pair of 32-bit numbers
         0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00
     ];
-
-    const POOLNAME: &str = "TestPool";
 
     async fn harness() -> (Database, TempDir, Vec<PathBuf>) {
         let (tempdir, paths, pool) = crate::PoolBuilder::new()
@@ -116,12 +102,9 @@ mod persistence {
     }
 }
 
-mod t {
+mod database {
     use bfffs_core::{
         Error,
-        cache::*,
-        ddml::*,
-        idml::*,
     };
     use super::*;
     use tempfile::TempDir;
@@ -488,7 +471,7 @@ root:
 
     mod sync_transaction {
         use super::*;
-    use divbuf::DivBufShared;
+        use divbuf::DivBufShared;
         use bfffs_core::fs_tree::{FSKey, FSValue, InlineExtent, ObjKey};
 
         /// If the file system crashes in the middle of a transaction, the pool
@@ -501,6 +484,7 @@ root:
                 .fsize(1 << 26)     // 64 MB
                 .zone_size(17)
                 .build();
+            let uuid = pool.uuid();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
@@ -538,10 +522,12 @@ root:
             }).await.unwrap();
 
             // Now drop the database without syncing it
-            drop(db);
+            db.shutdown().await;
 
             // And reopen
-            let db = open_db(&paths[0]).await;
+            let mut manager = database::Manager::default();
+            manager.taste(&paths[0]).await.unwrap();
+            let db = manager.import_by_uuid(uuid).await.unwrap();
             assert!(db.check().await.unwrap());
         }
     }
@@ -549,4 +535,164 @@ root:
     // TODO: add a test that Database::flush gets called periodically.  Verify
     // by writing some data, then checking the size of the writeback cache until
     // it goes to zero.
+}
+
+/// Tests database::Manager
+mod manager {
+    use bfffs_core::{
+        Error,
+        Uuid,
+        database::*,
+        cache::*,
+        ddml::DDML,
+        idml::IDML
+    };
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+    use rstest_reuse::{apply, template};
+    use std::{
+        fs,
+        path::PathBuf,
+        sync::{Arc, Mutex}
+    };
+    use tempfile::TempDir;
+
+    type Harness = (Manager, Vec<PathBuf>, TempDir);
+
+    async fn harness(n: usize, m: usize, k: i16, f: i16, nclusters: usize,
+                     cs: Option<usize>, wb: Option<usize>)
+        -> Harness
+    {
+        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            .disks(n)
+            .mirror_size(m)
+            .stripe_size(k)
+            .redundancy_level(f)
+            .nclusters(nclusters)
+            .build();
+        let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
+        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let idml = Arc::new(IDML::create(ddml, cache));
+        let db = Database::create(idml);
+        db.sync_transaction().await.unwrap();
+        db.shutdown().await;
+
+        let mut manager = Manager::default();
+        if let Some(cs) = cs {
+            manager.cache_size(cs);
+        }
+        if let Some(wb) = wb {
+            manager.writeback_size(wb);
+        }
+        (manager, paths, tempdir)
+    }
+
+    #[template]
+    #[rstest(h,
+             case(harness(1, 1, 1, 0, 1, None, None)), // Single-disk
+             case(harness(2, 1, 1, 0, 2, None, None)), // RAID0
+             case(harness(2, 2, 1, 0, 1, None, None)), // RAID1
+             case(harness(3, 1, 3, 1, 1, None, None)), // RAID5
+             case(harness(6, 2, 3, 1, 1, None, None)), // RAID51
+             case(harness(12, 2, 3, 1, 2, None, None)), // RAID510
+     )]
+    fn all_configs(h: Harness) {}
+
+    /// No disks have been tasted
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
+    #[tokio::test]
+    #[awt]
+    async fn empty(#[future] h: Harness) {
+        assert!(h.0.importable_pools().is_empty());
+    }
+
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, Some(100_000_000), None)))]
+    #[tokio::test]
+    #[awt]
+    async fn cache_size(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+        let db = dm.import_by_name("functional_test_pool").await.unwrap();
+        assert_eq!(db.cache_size(), 100_000_000);
+    }
+
+    /// Import a single pool by its name.
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_name(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        for path in paths.iter() {
+            dm.taste(path).await.unwrap();
+        }
+        dm.import_by_name("functional_test_pool").await.unwrap();
+    }
+
+    /// Fail to import a nonexistent pool by name
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_name_enoent(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+        let e = dm.import_by_name("does_not_exist").await
+            .err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
+
+    /// Import a single pool by its UUID.  Try both single-disk and raid pools.
+    #[apply(all_configs)]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_uuid(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        for path in paths.iter() {
+            dm.taste(path).await.unwrap();
+        }
+        let (name, uuid) = dm.importable_pools().pop().unwrap();
+        assert_eq!(name, "functional_test_pool");
+        dm.import_by_uuid(uuid).await.unwrap();
+    }
+
+    /// Try to import a single pool, but all of the disks are gone.
+    #[apply(all_configs)]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_uuid_no_disks(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        for path in paths.iter() {
+            dm.taste(path).await.unwrap();
+        }
+        for path in paths.iter() {
+            fs::remove_file(path).unwrap();
+        }
+        // importable_pools should still work
+        let (name, uuid) = dm.importable_pools().pop().unwrap();
+        assert_eq!(name, "functional_test_pool");
+        // But actually importing them should not
+        let e = dm.import_by_uuid(uuid).await.err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
+    /// Fail to import a nonexistent pool by UUID
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, None)))]
+    #[tokio::test]
+    #[awt]
+    async fn import_by_uuid_enoent(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+        let e = dm.import_by_uuid(Uuid::new_v4()).await.err().unwrap();
+        assert_eq!(e, Error::ENOENT);
+    }
+
+    #[rstest(h, case(harness(1, 1, 1, 0, 1, None, Some(100_000_000))))]
+    #[tokio::test]
+    #[awt]
+    async fn writeback_size(#[future] h: Harness) {
+        let (mut dm, paths, _tempdir) = h;
+        dm.taste(paths.into_iter().next().unwrap()).await.unwrap();
+        let db = dm.import_by_name("functional_test_pool").await.unwrap();
+        assert_eq!(db.writeback_size(), 100_000_000);
+    }
 }

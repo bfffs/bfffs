@@ -27,7 +27,7 @@ use crate::mirror::Mirror;
 pub struct Label {
     /// Vdev UUID, fixed at format time
     pub uuid:   Uuid,
-    /// UUID of the wrapped `VdevFile`
+    /// UUID of the wrapped `Mirror`
     pub child:  Uuid
 }
 

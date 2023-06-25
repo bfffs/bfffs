@@ -12,8 +12,7 @@ use std::{
 use bfffs::{Bfffs, Error, Result};
 use bfffs_core::{
     controller::Controller,
-    database::{Database, TreeID},
-    device_manager::DevManager,
+    database::{self, Database, TreeID},
     property::{Property, PropertyName, PropertySource},
 };
 use clap::{crate_version, ArgAction, Parser};
@@ -40,13 +39,13 @@ impl Check {
     // * RIDT contains no orphan entries not found in the FSTrees
     // * Spacemaps match actual usage
     pub async fn main(self) -> Result<()> {
-        let dev_manager = DevManager::default();
+        let mut manager = database::Manager::default();
         for dev in self.disks.iter() {
-            dev_manager.taste(dev).await.unwrap();
+            manager.taste(dev).await.unwrap();
         }
 
         let db = Arc::new(
-            dev_manager
+            manager
                 .import_by_name(self.pool_name)
                 .await
                 .unwrap_or_else(|_e| {
@@ -108,19 +107,9 @@ impl Dump {
     }
 
     async fn dump_fsm(self) {
-        let dev_manager = DevManager::default();
-        for disk in self.disks.iter() {
-            dev_manager.taste(disk).await.unwrap();
-        }
-        let uuid = dev_manager
-            .importable_pools()
-            .iter()
-            .find(|(name, _uuid)| *name == self.pool_name)
-            .unwrap()
-            .1;
-        let clusters = dev_manager.import_clusters(uuid).await.unwrap();
-        for c in clusters {
-            println!("{}", c.dump_fsm());
+        let db = self.load_db().await;
+        for s in db.dump_fsm().into_iter() {
+            println!("{}", s)
         }
     }
 
@@ -137,11 +126,11 @@ impl Dump {
     }
 
     async fn load_db(&self) -> Arc<Database> {
-        let dev_manager = DevManager::default();
+        let mut manager = database::Manager::default();
         for disk in self.disks.iter() {
-            dev_manager.taste(disk).await.unwrap();
+            manager.taste(disk).await.unwrap();
         }
-        let db = dev_manager
+        let db = manager
             .import_by_name(&self.pool_name)
             .await
             .unwrap_or_else(|_e| {
