@@ -2,16 +2,10 @@
 mod persistence {
     use bfffs_core::{
         cache::{self, Cache},
-        cluster::Cluster,
         ddml::{self, DDML},
         idml::{self, IDML},
         label::*,
-        mirror::Mirror,
-        pool::Pool,
-        raid,
         types::*,
-        vdev_block::*,
-        vdev_file::*,
     };
     use futures::TryFutureExt;
     use pretty_assertions::assert_eq;
@@ -135,16 +129,15 @@ mod persistence {
         }).await.unwrap();
         drop(old_idml);
 
-        let (leaf, reader) = VdevFile::open(&paths[0]).await.unwrap();
-        let block = VdevBlock::new(leaf);
-        let (mirror, reader) = Mirror::open(None, vec![(block, reader)]);
-        let (vr, reader) = raid::open(None, vec![(mirror, reader)]);
-        let cluster = Cluster::open(vr).await.unwrap();
-        let (pool, reader) = Pool::open(None, vec![(cluster, reader)]);
         let cache = cache::Cache::with_capacity(4_194_304);
         let arc_cache = Arc::new(Mutex::new(cache));
-        let ddml = Arc::new(ddml::DDML::open(pool, arc_cache.clone()));
-        idml::IDML::open(ddml, arc_cache, 1<<30, reader);
+        let mut manager = ddml::Manager::default();
+        manager.taste(&paths[0]).await.unwrap();
+        let uuid = manager.importable_pools()[0].1;
+        let (ddml, reader) = manager.import(uuid, arc_cache.clone())
+            .await.unwrap();
+        let addml = Arc::new(ddml);
+        idml::IDML::open(addml, arc_cache, 1<<30, reader);
     }
 
     #[rstest]

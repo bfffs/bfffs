@@ -1,14 +1,8 @@
 // vim: tw=80
 use bfffs_core::cache::*;
-use bfffs_core::cluster::Cluster;
 use bfffs_core::database::*;
-use bfffs_core::ddml::*;
-use bfffs_core::idml::*;
-use bfffs_core::mirror::Mirror;
-use bfffs_core::pool::*;
-use bfffs_core::vdev_block::*;
-use bfffs_core::vdev_file::*;
-use bfffs_core::raid;
+use bfffs_core::ddml::DDML;
+use bfffs_core::idml::IDML;
 use futures::{StreamExt, TryStreamExt, future};
 use rstest::rstest;
 use std::{
@@ -16,18 +10,12 @@ use std::{
     sync::{Arc, Mutex}
 };
 
+const POOLNAME: &str = "TestPool";
+
 async fn open_db(path: &Path) -> Database {
-    let (leaf, reader) = VdevFile::open(path).await.unwrap();
-    let block = VdevBlock::new(leaf);
-    let (mirror, reader) = Mirror::open(None, vec![(block, reader)]);
-    let (vr, lr) = raid::open(None, vec![(mirror, reader)]);
-    let cluster = Cluster::open(vr).await.unwrap();
-    let (pool, reader) = Pool::open(None, vec![(cluster, lr)]);
-    let cache = Cache::with_capacity(4_194_304);
-    let arc_cache = Arc::new(Mutex::new(cache));
-    let ddml = Arc::new(DDML::open(pool, arc_cache.clone()));
-    let (idml, reader) = IDML::open(ddml, arc_cache, 1<<30, reader);
-    Database::open(Arc::new(idml), reader)
+    let mut manager = Manager::default();
+    manager.taste(path).await.unwrap();
+    manager.import_by_name(POOLNAME).await.unwrap()
 }
 
 mod persistence {
@@ -61,8 +49,6 @@ mod persistence {
         // Root node's TXG range as a pair of 32-bit numbers
         0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00
     ];
-
-    const POOLNAME: &str = "TestPool";
 
     async fn harness() -> (Database, TempDir, Vec<PathBuf>) {
         let (tempdir, paths, pool) = crate::PoolBuilder::new()
@@ -119,9 +105,6 @@ mod persistence {
 mod database {
     use bfffs_core::{
         Error,
-        cache::*,
-        ddml::*,
-        idml::*,
     };
     use super::*;
     use tempfile::TempDir;
@@ -488,7 +471,7 @@ root:
 
     mod sync_transaction {
         use super::*;
-    use divbuf::DivBufShared;
+        use divbuf::DivBufShared;
         use bfffs_core::fs_tree::{FSKey, FSValue, InlineExtent, ObjKey};
 
         /// If the file system crashes in the middle of a transaction, the pool
@@ -501,6 +484,7 @@ root:
                 .fsize(1 << 26)     // 64 MB
                 .zone_size(17)
                 .build();
+            let uuid = pool.uuid();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::new(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
@@ -538,10 +522,12 @@ root:
             }).await.unwrap();
 
             // Now drop the database without syncing it
-            drop(db);
+            db.shutdown().await;
 
             // And reopen
-            let db = open_db(&paths[0]).await;
+            let mut manager = database::Manager::default();
+            manager.taste(&paths[0]).await.unwrap();
+            let db = manager.import_by_uuid(uuid).await.unwrap();
             assert!(db.check().await.unwrap());
         }
     }
