@@ -197,6 +197,32 @@ impl Bfffs {
         self.call(req).await.unwrap().into_pool_clean()
     }
 
+    /// List one or more active pools
+    ///
+    /// # Arguments
+    ///
+    /// `pool`      -   Optional pool to list.  If not given, list all.
+    /// `offs`      -   A stream resume token.  It must be either `None` or the
+    ///                 value returned from a previous call to this function.
+    ///                 Children will be returned beginning after the entry
+    ///                 whose offset is `offs`.
+    pub fn pool_list(
+        &self,
+        pool: Option<String>,
+        _offs: Option<u64>,
+    ) -> impl Stream<Item = Result<rpc::pool::PoolInfo>> + '_ {
+        let req = rpc::pool::list(pool, None);
+        self.call(req)
+            .map_ok(rpc::Response::into_pool_list)
+            // TODO: use Result::flatten once that stabilizes
+            // https://github.com/rust-lang/rust/issues/70142
+            .map(|x| x.and_then(std::convert::identity))
+            .map_ok(|v: Vec<rpc::pool::PoolInfo>| {
+                stream::iter(v.into_iter().map(Ok))
+            })
+            .try_flatten_stream()
+    }
+
     /// Submit an RPC request to the server
     async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
         const BUFSIZ: usize = 4096;

@@ -15,6 +15,7 @@ use futures::{
     Stream,
     channel::oneshot,
     future,
+    stream,
     task::{Context, Poll}
 };
 use futures_locks::RwLock;
@@ -31,11 +32,22 @@ pub type TreeID = crate::database::TreeID;
 /// A directory entry in the Forest.
 ///
 /// Each dirent corresponds to one file system.
+// Analogous to a struct dirent from readdir
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Dirent {
+pub struct FsDirent {
     /// Dataset name, including pool and parent file system name
     pub name: String,
     pub id: TreeID,
+    pub offs: u64
+}
+
+/// Information about one imported Pool.
+// Analogous to a struct dirent from readdir
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PoolDirent {
+    /// Pool name.
+    pub name: String,
+    /// Stream resume token
     pub offs: u64
 }
 
@@ -217,7 +229,7 @@ impl Controller {
     ///                 whose offset is `offs`.
     // TODO: list properties
     pub fn list_fs(&self, dataset: &str, offs: Option<u64>)
-        -> impl Stream<Item=Result<Dirent>> + Send
+        -> impl Stream<Item=Result<FsDirent>> + Send
     {
         enum LookupOrList {
             Lookup(Pin<Box<dyn Future<Output=Result<(Option<TreeID>, Option<TreeID>)>> + Send>>),
@@ -233,7 +245,7 @@ impl Controller {
             offs: Option<u64>,
         }
         impl Stream for ListFs {
-            type Item=Result<Dirent>;
+            type Item=Result<FsDirent>;
 
             fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
                 -> Poll<Option<Self::Item>>
@@ -261,7 +273,7 @@ impl Controller {
                     } else {
                         format!("{}/{}", self.parentname, de.name)
                     };
-                    Dirent {
+                    FsDirent {
                         name: dsname,
                         id: de.id,
                         offs: de.offs
@@ -276,6 +288,30 @@ impl Controller {
         };
         let lol = LookupOrList::Lookup(fut);
         ListFs{db: self.db.clone(), parentname: dataset.to_owned(), lol, offs}
+    }
+
+    /// List pools
+    ///
+    /// # Arguments
+    ///
+    /// `pool`    -     The pool name.  If `None`, list all pools
+    /// `offs`    -     A stream resume token.  It must be either None or the
+    ///                 value returned from a previous call to `list_pool`.
+    ///                 Pools will be returned beginning after the entry
+    ///                 whose offset is `offs`.
+    pub fn list_pool(&self, pool: Option<String>, _offs: Option<u64>)
+        -> impl Stream<Item=Result<PoolDirent>> + Send
+    {
+        if let Some(p) = pool {
+            if p != self.db.pool_name() {
+                return stream::once(future::err(Error::ENOENT));
+            }
+        }
+        let dirent = PoolDirent {
+            name: self.db.pool_name().to_string(),
+            offs: 0
+        };
+        stream::once(future::ok(dirent))
     }
 
     pub fn new(db: Database) -> Self {

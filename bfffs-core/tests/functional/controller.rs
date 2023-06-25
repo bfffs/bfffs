@@ -422,6 +422,42 @@ mod list_fs {
     }
 }
 
+mod list_pool {
+    use super::*;
+
+    #[rstest]
+    #[tokio::test]
+    async fn all(harness: Harness) {
+        let pools = harness.0.list_pool(None, None)
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(1, pools.len());
+        assert_eq!(pools[0].name, POOLNAME);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(harness: Harness) {
+        assert_eq!(
+            Err(Error::ENOENT),
+            harness.0.list_pool(Some(String::from("XXX")), None)
+            .try_collect::<Vec<_>>().await
+        );
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn one(harness: Harness) {
+        let pools = harness.0.list_pool(Some(String::from(POOLNAME)), None)
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(1, pools.len());
+        assert_eq!(pools[0].name, POOLNAME);
+    }
+}
+
 mod set_prop {
     use super::*;
 
