@@ -121,9 +121,6 @@ pub mod pool {
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
 
-    // Maybe someday the Controller and RPC will need to have different
-    // structures, but not right now.
-    //pub use crate::controller::PoolDirent as PoolInfo;
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct PoolInfo {
         /// Pool name.
@@ -131,11 +128,6 @@ pub mod pool {
         /// Stream resume token
         pub offs: u64
     }
-    //impl From<PoolDirent> for PoolInfo {
-        //fn from(p: PoolDirent) -> Self {
-            //Self { name: p.name, offs: p.offs}
-        //}
-    //}
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Clean {
