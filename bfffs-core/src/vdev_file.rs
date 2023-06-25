@@ -370,16 +370,16 @@ impl VdevFile {
             .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
         match file {
             Ok(f) => {
-                let r = match VdevFile::read_label(f, 0).await {
-                    Err((_e, f)) => {
+                let r = match VdevFile::read_label(&f, 0).await {
+                    Err(_e) => {
                         // Try the second label
-                        VdevFile::read_label(f, 1).await
+                        VdevFile::read_label(&f, 1).await
                     },
                     Ok(r) => Ok(r)
                 };
                 match r {
-                    Err((e, _f)) => Err(e),
-                    Ok((mut label_reader, f)) => {
+                    Err(e) => Err(e),
+                    Ok(mut label_reader) => {
                         let erase_method = EraseMethod::get(f.as_raw_fd())?;
                         let size = f.len().unwrap() / BYTES_PER_LBA as u64;
                         let label: Label = label_reader.deserialize().unwrap();
@@ -433,25 +433,21 @@ impl VdevFile {
     }
 
     /// Read just one of a vdev's labels
-    // TODO: Take File by reference`
-    async fn read_label(f: File, label: u32)
-        -> std::result::Result<(LabelReader, File), (Error, File)>
+    async fn read_label(f: &File, label: u32) -> Result<LabelReader>
     {
         let lba = LabelReader::lba(label);
         let offset = lba * BYTES_PER_LBA as u64;
         // TODO: figure out how to use mem::MaybeUninit with File::read_at
         let mut rbuf = vec![0; LABEL_SIZE];
-        let r = {
-            f.read_at(&mut rbuf[..], offset).unwrap().await
-        };
+        let r = f.read_at(&mut rbuf[..], offset).unwrap().await;
         match r {
             Ok(_aio_result) => {
                 match LabelReader::new(rbuf) {
-                    Ok(lr) => Ok((lr, f)),
-                    Err(e) => Err((e, f))
+                    Ok(lr) => Ok(lr),
+                    Err(e) => Err(e)
                 }
             },
-            Err(e) => Err((Error::from(e), f))
+            Err(e) => Err(Error::from(e))
         }
     }
 
