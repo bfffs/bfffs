@@ -205,7 +205,7 @@ impl Mirror {
         -> (Self, LabelReader)
     {
         let mut label_pair = None;
-        let children = combined.into_iter()
+        let mut leaves = combined.into_iter()
             .map(|(vdev_block, mut label_reader)| {
                 let label: Label = label_reader.deserialize().unwrap();
                 if let Some(u) = uuid {
@@ -214,11 +214,16 @@ impl Mirror {
                 if label_pair.is_none() {
                     label_pair = Some((label, label_reader));
                 }
-                vdev_block
-            }).collect::<Vec<VdevBlock>>()
-            .into_boxed_slice();
+                (vdev_block.uuid(), vdev_block)
+            }).collect::<BTreeMap<Uuid, VdevBlock>>();
         let (label, reader) = label_pair.unwrap();
-        (Mirror::new(label.uuid, children), reader)
+        assert_eq!(leaves.len(), label.children.len(),
+            "Opening with missing children is TODO");
+        let mut children = Vec::with_capacity(leaves.len());
+        for i in 0..leaves.len() {
+            children.push(leaves.remove(&label.children[i]).unwrap());
+        }
+        (Mirror::new(label.uuid, children.into_boxed_slice()), reader)
     }
 
     pub fn open_zone(&self, start: LbaT) -> BoxVdevFut {
