@@ -6,7 +6,7 @@
 
 use crate::{
     controller::TreeID,
-    Result
+    Result,
 };
 use serde_derive::{Deserialize, Serialize};
 
@@ -118,12 +118,11 @@ pub mod fs {
 }
 
 pub mod pool {
+    use std::path::PathBuf;
     use super::Request;
     use serde_derive::{Deserialize, Serialize};
+    use crate::Uuid;
 
-    // Maybe someday the Controller and RPC will need to have different
-    // structures, but not right now.
-    //pub use crate::controller::PoolDirent as PoolInfo;
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct PoolInfo {
         /// Pool name.
@@ -131,11 +130,30 @@ pub mod pool {
         /// Stream resume token
         pub offs: u64
     }
-    //impl From<PoolDirent> for PoolInfo {
-        //fn from(p: PoolDirent) -> Self {
-            //Self { name: p.name, offs: p.offs}
-        //}
-    //}
+
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    pub struct LeafStatus {
+        pub path: PathBuf,
+        pub uuid: Uuid
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    pub struct MirrorStatus {
+        pub leaves: Vec<LeafStatus>
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    pub struct ClusterStatus {
+        pub codec: String,
+        pub mirrors: Vec<MirrorStatus>
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    pub struct PoolStatus {
+        pub name: String,
+        pub clusters: Vec<ClusterStatus>
+    }
+
 
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Clean {
@@ -162,6 +180,16 @@ pub mod pool {
     pub fn list(pool: Option<String>, offset: Option<u64>) -> Request {
         Request::PoolList(List { pool, offset })
     }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Status {
+        pub pool: String
+    }
+
+    /// Get the health and configuration of a single pool.
+    pub fn status(pool: String) -> Request {
+        Request::PoolStatus(Status { pool})
+    }
 }
 
 /// An RPC request from bfffs to bfffsd
@@ -176,7 +204,8 @@ pub enum Request {
     FsStat(fs::Stat),
     FsUnmount(fs::Unmount),
     PoolClean(pool::Clean),
-    PoolList(pool::List)
+    PoolList(pool::List),
+    PoolStatus(pool::Status)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -191,6 +220,7 @@ pub enum Response {
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
     PoolList(Result<Vec<pool::PoolInfo>>),
+    PoolStatus(Result<pool::PoolStatus>),
 }
 
 impl Response {
@@ -253,6 +283,13 @@ impl Response {
     pub fn into_pool_list(self) -> Result<Vec<pool::PoolInfo>> {
         match self {
             Response::PoolList(r) => r,
+            x => panic!("Unexpected response type {x:?}")
+        }
+    }
+
+    pub fn into_pool_status(self) -> Result<pool::PoolStatus> {
+        match self {
+            Response::PoolStatus(r) => r,
             x => panic!("Unexpected response type {x:?}")
         }
     }

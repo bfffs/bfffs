@@ -26,7 +26,7 @@ use std::{
 };
 use tracing::instrument;
 use tracing_futures::Instrument;
-use super::{DTree, RidtEntry};
+use super::{DTree, RidtEntry, Status};
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {
@@ -434,6 +434,10 @@ impl<'a> IDML {
         self.ddml.size()
     }
 
+    pub fn status(&self) -> Status {
+        self.ddml.status()
+    }
+
     /// Get a reference to the current transaction group.
     ///
     /// The reference will prevent the current transaction group from syncing,
@@ -689,6 +693,7 @@ mock!{
                      mut label_reader: LabelReader) -> (Self, LabelReader);
         pub fn pool_name(&self) -> &str;
         pub fn size(&self) -> LbaT;
+        pub fn status(&self) -> Status;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write
         pub fn txg(&self)

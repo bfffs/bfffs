@@ -36,7 +36,7 @@ use std::{
         Arc,
     },
 };
-use super::{Forest, TreeID};
+use super::{Forest, Status, TreeID};
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
@@ -684,6 +684,11 @@ impl Database {
             size: self.inner.idml.size(),
             used: self.inner.idml.used(),
         }
+    }
+
+    /// Retrieve the topology and health of the storage pool
+    pub fn status(&self) -> Status {
+        self.inner.idml.status()
     }
 
     /// Finish the current transaction group and start a new one.

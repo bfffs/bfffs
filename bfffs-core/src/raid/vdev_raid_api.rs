@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use crate::{
     label::*,
+    raid::Status,
     types::*,
     vdev::*
 };
@@ -64,6 +65,9 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// - `already_allocated`: The amount of data that was previously allocated
     ///                        in this zone.
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+
+    /// Return information about the health and composition of this RAID vdev.
+    fn status(&self) -> Status;
 
     /// Asynchronously write a contiguous portion of the vdev.
     ///

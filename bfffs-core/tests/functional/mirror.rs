@@ -1,20 +1,72 @@
 // vim: tw=80
 
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+};
+use bfffs_core::{
+    label::*,
+    mirror::Mirror,
+    vdev_block::*,
+    vdev::Vdev,
+    vdev_file::*,
+};
+use itertools::Itertools;
+use rstest::{fixture, rstest};
+use tempfile::{Builder, TempDir};
+
+type Harness = (Mirror, TempDir, Vec<String>);
+#[fixture]
+fn harness() -> Harness {
+    let num_disks = 3;
+    let len = 1 << 26;  // 64 MB
+    let tempdir = t!(
+        Builder::new().prefix("test_mirror_persistence").tempdir()
+    );
+    let paths = (0..num_disks).map(|i| {
+        let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+        let file = t!(fs::File::create(&fname));
+        t!(file.set_len(len));
+        fname
+    }).collect::<Vec<_>>();
+    let mirror = Mirror::create(&paths, None).unwrap();
+    (mirror, tempdir, paths)
+}
+
+mod open {
+    use super::*;
+
+    /// Regardless of the order in which the devices are given to
+    /// Mirror::open, it will construct itself in the correct order.
+    #[rstest]
+    #[tokio::test]
+    async fn ordering(harness: Harness) {
+        let (old_mirror, _tempdir, paths) = harness;
+        let uuid = old_mirror.uuid();
+        let label_writer = LabelWriter::new(0);
+        old_mirror.write_label(label_writer).await.unwrap();
+        drop(old_mirror);
+
+        for perm in paths.iter().permutations(paths.len()) {
+            let mut combined = Vec::new();
+            for path in perm.iter() {
+                let (leaf, reader) = VdevFile::open(path).await.unwrap();
+                combined.push((VdevBlock::new(leaf), reader));
+            }
+            let (mirror, _) = Mirror::open(Some(uuid), combined);
+            let status = mirror.status();
+            assert_eq!(status.leaves[0].0, Path::new(&paths[0]));
+            assert_eq!(status.leaves[1].0, Path::new(&paths[1]));
+            assert_eq!(status.leaves[2].0, Path::new(&paths[2]));
+        }
+    }
+
+}
+
 mod persistence {
-    use std::{
-        fs,
-        io::{Read, Seek, SeekFrom},
-    };
-    use bfffs_core::{
-        label::*,
-        mirror::Mirror,
-        vdev_block::*,
-        vdev::Vdev,
-        vdev_file::*,
-    };
+    use super::*;
     use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
-    use tempfile::{Builder, TempDir};
 
     const GOLDEN_MIRROR_LABEL: [u8; 72] = [
         // Past the VdevFile::Label, we have a mirror::Label
@@ -31,24 +83,6 @@ mod persistence {
         0x17, 0x18, 0x4a, 0xc5, 0xbd, 0x06, 0x24, 0xd1,
         0xd2, 0xa9, 0x6d, 0x67, 0x24, 0x31, 0xb8, 0x32,
     ];
-
-    type Harness = (Mirror, TempDir, Vec<String>);
-    #[fixture]
-    fn harness() -> Harness {
-        let num_disks = 3;
-        let len = 1 << 26;  // 64 MB
-        let tempdir = t!(
-            Builder::new().prefix("test_mirror_persistence").tempdir()
-        );
-        let paths = (0..num_disks).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-            let file = t!(fs::File::create(&fname));
-            t!(file.set_len(len));
-            fname
-        }).collect::<Vec<_>>();
-        let mirror = Mirror::create(&paths, None).unwrap();
-        (mirror, tempdir, paths)
-    }
 
     #[rstest]
     #[tokio::test]

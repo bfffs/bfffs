@@ -14,9 +14,10 @@ use bfffs_core::{
     controller::Controller,
     database::{self, Database, TreeID},
     property::{Property, PropertyName, PropertySource},
+    rpc,
 };
 use clap::{crate_version, ArgAction, Parser};
-use futures::{future, TryStreamExt};
+use futures::{future, TryFutureExt, TryStreamExt};
 use tracing_subscriber::EnvFilter;
 
 mod pool_create_ast;
@@ -815,12 +816,66 @@ mod pool {
         }
     }
 
+    /// Get the health and configuration of one storage pool
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Status {
+        /// Pool name.  If not given, list all pools.
+        pub(super) pool: Option<String>,
+    }
+
+    impl Status {
+        fn print(stat: rpc::pool::PoolStatus) {
+            let mut indent = 0;
+            println!("{}", stat.name);
+            indent += 2;
+            for cluster in stat.clusters.iter() {
+                if cluster.mirrors.len() > 1 {
+                    println!("{:indent$}{}", " ", cluster.codec);
+                    indent += 2;
+                }
+                for mirror in cluster.mirrors.iter() {
+                    if mirror.leaves.len() > 1 {
+                        println!("{:indent$}mirror", " ");
+                        indent += 2;
+                    }
+                    for leaf in mirror.leaves.iter() {
+                        println!("{:indent$}{}", " ", leaf.path.display());
+                    }
+                    if mirror.leaves.len() > 1 {
+                        indent -= 2;
+                    }
+                }
+                if cluster.mirrors.len() > 1 {
+                    indent -= 2;
+                }
+            }
+        }
+
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            println!("NAME");
+            if let Some(pool) = self.pool {
+                let stat = bfffs.pool_status(pool).await?;
+                Self::print(stat);
+            } else {
+                bfffs
+                    .pool_list(None, None)
+                    .try_for_each(|poolinfo| {
+                        bfffs.pool_status(poolinfo.name).map_ok(Self::print)
+                    })
+                    .await?;
+            }
+            Ok(())
+        }
+    }
+
     #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify storage pools
     pub(super) enum PoolCmd {
         Clean(Clean),
         Create(Create),
         List(List),
+        Status(Status),
     }
 }
 
@@ -875,6 +930,9 @@ async fn main() -> Result<()> {
         }
         SubCommand::Pool(pool::PoolCmd::List(list)) => {
             list.main(&cli.sock).await
+        }
+        SubCommand::Pool(pool::PoolCmd::Status(status)) => {
+            status.main(&cli.sock).await
         }
     }
 }
@@ -1428,6 +1486,36 @@ mod t {
                     assert_eq!(list.pools.len(), 1);
                     assert_eq!(list.pools[0], "testpool");
                     assert!(list.properties.is_empty());
+                }
+            }
+        }
+
+        mod status {
+            use super::*;
+
+            #[test]
+            fn all_pools() {
+                let args = vec!["bfffs", "pool", "status"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(
+                    cli.cmd,
+                    SubCommand::Pool(PoolCmd::Status(_))
+                ));
+                if let SubCommand::Pool(PoolCmd::Status(status)) = cli.cmd {
+                    assert_eq!(status.pool, None);
+                }
+            }
+
+            #[test]
+            fn plain() {
+                let args = vec!["bfffs", "pool", "status", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(
+                    cli.cmd,
+                    SubCommand::Pool(PoolCmd::Status(_))
+                ));
+                if let SubCommand::Pool(PoolCmd::Status(status)) = cli.cmd {
+                    assert_eq!(status.pool.unwrap(), "testpool");
                 }
             }
         }

@@ -25,6 +25,8 @@ use serde_derive::{Deserialize, Serialize};
 
 mod idml;
 
+pub use crate::ddml::Status;
+
 #[double]
 pub use self::idml::IDML;
 

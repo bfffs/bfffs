@@ -17,6 +17,7 @@ use futures::future;
 use mockall_double::double;
 use serde_derive::{Deserialize, Serialize};
 use super::{
+    Status,
     vdev_raid_api::*,
 };
 
@@ -133,6 +134,14 @@ impl VdevRaidApi for NullRaid {
     fn reopen_zone(&self, _zone: ZoneT, _allocated: LbaT) -> BoxVdevFut
     {
         Box::pin(future::ok(()))
+    }
+
+    fn status(&self) -> Status {
+        let codec = String::from("NonRedundant");
+        Status {
+            codec,
+            mirrors: vec![self.mirror.status()]
+        }
     }
 
     fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut

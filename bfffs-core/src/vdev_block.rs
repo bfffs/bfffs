@@ -17,7 +17,7 @@ use std::{
     io,
     mem,
     num::{NonZeroU64, NonZeroUsize},
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, RwLock, Weak},
     ops,
@@ -841,6 +841,11 @@ impl VdevBlock {
         }
     }
 
+    /// The pathname most recently used to open this device.
+    pub fn path(&self) -> PathBuf {
+        self.inner.read().unwrap().leaf.path().to_path_buf()
+    }
+
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
@@ -1023,6 +1028,7 @@ mock! {
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn new(leaf: VdevLeaf) -> Self;
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
+        pub fn path(&self) -> PathBuf;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;

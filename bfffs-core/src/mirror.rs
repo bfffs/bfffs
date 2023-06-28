@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     io,
     num::NonZeroU64,
-    path::Path,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::{
         Arc,
@@ -86,6 +86,13 @@ impl Manager {
         self.mirrors.insert(ml.uuid, ml);
         Ok(reader)
     }
+}
+
+/// Return value of [`Mirror::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    /// Paths to each leaf
+    pub leaves: Vec<(PathBuf, Uuid)>
 }
 
 /// `Mirror`: Device mirroring, both permanent and temporary
@@ -198,7 +205,7 @@ impl Mirror {
         -> (Self, LabelReader)
     {
         let mut label_pair = None;
-        let children = combined.into_iter()
+        let mut leaves = combined.into_iter()
             .map(|(vdev_block, mut label_reader)| {
                 let label: Label = label_reader.deserialize().unwrap();
                 if let Some(u) = uuid {
@@ -207,11 +214,16 @@ impl Mirror {
                 if label_pair.is_none() {
                     label_pair = Some((label, label_reader));
                 }
-                vdev_block
-            }).collect::<Vec<VdevBlock>>()
-            .into_boxed_slice();
+                (vdev_block.uuid(), vdev_block)
+            }).collect::<BTreeMap<Uuid, VdevBlock>>();
         let (label, reader) = label_pair.unwrap();
-        (Mirror::new(label.uuid, children), reader)
+        assert_eq!(leaves.len(), label.children.len(),
+            "Opening with missing children is TODO");
+        let mut children = Vec::with_capacity(leaves.len());
+        for i in 0..leaves.len() {
+            children.push(leaves.remove(&label.children[i]).unwrap());
+        }
+        (Mirror::new(label.uuid, children.into_boxed_slice()), reader)
     }
 
     pub fn open_zone(&self, start: LbaT) -> BoxVdevFut {
@@ -274,6 +286,14 @@ impl Mirror {
             dbis,
             lba,
             fut
+        }
+    }
+
+    pub fn status(&self) -> Status {
+        Status {
+            leaves: self.blockdevs.iter()
+                .map(|vb| (vb.path(), vb.uuid()))
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -529,6 +549,7 @@ mock! {
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn status(&self) -> Status;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;

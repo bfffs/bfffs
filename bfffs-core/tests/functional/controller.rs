@@ -108,6 +108,28 @@ mod create_fs {
     }
 }
 
+mod get_pool_status {
+    use super::*;
+
+    /// Try to lookup status for a pool that doesn't exist
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(harness: Harness) {
+        assert_eq!(Error::ENOENT,
+                   harness.0.get_pool_status("XXXPool").err().unwrap());
+    }
+
+    /// Try to lookup status for a healty pool
+    // The database::database::status tests will exhaustively test the returned
+    // object's contents.
+    #[rstest]
+    #[tokio::test]
+    async fn healthy(harness: Harness) {
+        harness.0.get_pool_status(POOLNAME).unwrap();
+    }
+
+}
+
 mod get_prop {
     use super::*;
     use rstest_reuse::{apply, template};

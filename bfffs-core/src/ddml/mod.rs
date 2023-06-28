@@ -27,6 +27,8 @@ use serde_derive::{Deserialize, Serialize};
 
 mod ddml;
 
+pub use crate::pool::Status;
+
 #[double]
 pub use self::ddml::DDML;
 

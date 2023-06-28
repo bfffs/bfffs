@@ -410,6 +410,38 @@ impl Bfffsd {
                     .map(rpc::Response::PoolList)
                     .await
             }
+            rpc::Request::PoolStatus(req) => {
+                let r =
+                    self.controller.get_pool_status(&req.pool).map(|stat| {
+                        rpc::pool::PoolStatus {
+                            name:     stat.name,
+                            clusters: stat
+                                .clusters
+                                .into_iter()
+                                .map(|cl| {
+                                    rpc::pool::ClusterStatus {
+                                        codec:   cl.codec,
+                                        mirrors: cl
+                                            .mirrors
+                                            .into_iter()
+                                            .map(|m| {
+                                                rpc::pool::MirrorStatus {
+                                        leaves: m.leaves.into_iter().map(|l|
+                                            rpc::pool::LeafStatus {
+                                                path: l.0,
+                                                uuid: l.1
+                                            }
+                                        ).collect()
+                                    }
+                                            })
+                                            .collect(),
+                                    }
+                                })
+                                .collect(),
+                        }
+                    });
+                rpc::Response::PoolStatus(r)
+            }
         }
     }
 
