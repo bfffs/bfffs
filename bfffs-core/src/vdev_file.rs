@@ -125,9 +125,7 @@ pub struct Label {
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
 #[derive(Default)]
 pub struct Manager {
-    // NB: these labels may be out-of-date because we don't open devices
-    // exclusively until import time.
-    devices: BTreeMap<Uuid, PathBuf>,
+    devices: BTreeMap<Uuid, VdevFile>,
 }
 
 impl Manager {
@@ -136,7 +134,12 @@ impl Manager {
         -> impl Future<Output=Result<(VdevFile, LabelReader)>>
     {
         future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
-            .and_then(VdevFile::open)
+            .and_then(move |vf| async move {
+                let mut lr = VdevFile::read_label(&vf.file).await?;
+                let label: Label = lr.deserialize().unwrap();
+                assert_eq!(uuid, label.uuid);
+                Ok((vf, lr))
+            })
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
@@ -145,9 +148,8 @@ impl Manager {
     /// for building Pools.
     // TODO: add a method for tasting disks in parallel.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let pathbuf = p.as_ref().to_owned();
         let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(vdev_file.uuid(), pathbuf);
+        self.devices.insert(vdev_file.uuid(), vdev_file);
         Ok(reader)
     }
 }

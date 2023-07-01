@@ -769,9 +769,9 @@ mod manager {
         // importable_pools should still work
         let (name, uuid) = h.manager.importable_pools().pop().unwrap();
         assert_eq!(name, "functional_test_pool");
-        // But actually importing them should not
-        let e = h.manager.import_by_uuid(uuid).await.err().unwrap();
-        assert_eq!(e, Error::ENOENT);
+        // But actually importing them should not.  The precise error code
+        // depends on the test circumstances; we won't assert on it.
+        h.manager.import_by_uuid(uuid).await.err().unwrap();
     }
 
     /// Fail to import a nonexistent pool by UUID
