@@ -15,6 +15,8 @@ use futures::{
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
+#[cfg(not(test))]
+use futures::StreamExt;
 use pin_project::pin_project;
 #[cfg(test)] use mockall::automock;
 use serde_derive::{Deserialize, Serialize};
@@ -83,10 +85,20 @@ impl Manager {
             Some(l) => l,
             None => return Err(Error::ENOENT)
         };
-        let cc = pl.children.into_iter()
+        let mut cc = Vec::with_capacity(pl.children.len());
+        let results = pl.children.into_iter()
             .map(move |child_uuid| self.cm.import(child_uuid))
             .collect::<FuturesUnordered<_>>()
-            .try_collect::<Vec<_>>().await?;
+            .collect::<Vec<_>>().await;
+        // XXX Can't use StreamExt::try_collect, because that will drop
+        // incomplete futures on error.  Could use Iterator::try_collect if it
+        // stabilizes.  https://github.com/rust-lang/rust/issues/94047
+        for r in results.into_iter() {
+            match r {
+                Ok(c) => cc.push(c),
+                Err(e) => return Err(e)
+            }
+        };
         Ok(Pool::open(Some(uuid), cc))
     }
 

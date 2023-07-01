@@ -15,8 +15,7 @@ use crate::{
 #[cfg(not(test))] use futures::{
     Future,
     FutureExt,
-    TryFutureExt,
-    TryStreamExt,
+    StreamExt,
     future,
     stream::FuturesUnordered
 };
@@ -60,6 +59,13 @@ impl<'a> Label {
         }
     }
 
+    pub fn nchildren(&self) -> usize {
+        match self {
+            Label::NullRaid(_) => 1,
+            Label::Raid(rl) => rl.children.len()
+        }
+    }
+
     pub fn uuid(&self) -> Uuid {
         match self {
             Label::Raid(l) => l.uuid,
@@ -88,9 +94,20 @@ impl Manager {
         rl.iter_children()
             .map(move |child_uuid| self.mm.import(*child_uuid))
             .collect::<FuturesUnordered<_>>()
-            .try_collect::<Vec<_>>()
-        .map_ok(move |pairs| open(Some(uuid), pairs))
-        .boxed()
+            // XXX Can't use StreamExt::try_collect, because that will drop
+            // incomplete futures on error.  Could use Iterator::try_collect if
+            // it stabilizes.  https://github.com/rust-lang/rust/issues/94047
+            .collect::<Vec<_>>()
+            .map(move |v| {
+                let mut pairs = Vec::with_capacity(rl.nchildren());
+                for r in v.into_iter() {
+                    match r {
+                        Ok(pair) => pairs.push(pair),
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(open(Some(uuid), pairs))
+            }).boxed()
     }
 
     /// Taste the device identified by `p` for a BFFFS label.

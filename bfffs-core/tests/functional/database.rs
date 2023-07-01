@@ -619,7 +619,6 @@ mod manager {
     use rstest::rstest;
     use rstest_reuse::{apply, template};
     use std::{
-        fs,
         path::PathBuf,
         sync::{Arc, Mutex}
     };
