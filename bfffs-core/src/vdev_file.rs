@@ -376,14 +376,7 @@ impl VdevFile {
             .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
         match file {
             Ok(f) => {
-                let r = match VdevFile::read_label(&f, 0).await {
-                    Err(_e) => {
-                        // Try the second label
-                        VdevFile::read_label(&f, 1).await
-                    },
-                    Ok(r) => Ok(r)
-                };
-                match r {
+                match VdevFile::read_label(&f).await {
                     Err(e) => Err(e),
                     Ok(mut label_reader) => {
                         let erase_method = EraseMethod::get(f.as_raw_fd())?;
@@ -445,22 +438,34 @@ impl VdevFile {
     }
 
     /// Read just one of a vdev's labels
-    async fn read_label(f: &File, label: u32) -> Result<LabelReader>
+    async fn read_label(f: &File) -> Result<LabelReader>
     {
-        let lba = LabelReader::lba(label);
-        let offset = lba * BYTES_PER_LBA as u64;
-        // TODO: figure out how to use mem::MaybeUninit with File::read_at
-        let mut rbuf = vec![0; LABEL_SIZE];
-        let r = f.read_at(&mut rbuf[..], offset).unwrap().await;
-        match r {
-            Ok(_aio_result) => {
-                match LabelReader::new(rbuf) {
-                    Ok(lr) => Ok(lr),
-                    Err(e) => Err(e)
+        let mut r = Err(Error::EDOOFUS);    // Will get overridden
+
+        for label in 0..2 {
+            let lba = LabelReader::lba(label);
+            let offset = lba * BYTES_PER_LBA as u64;
+            // TODO: figure out how to use mem::MaybeUninit with File::read_at
+            let mut rbuf = vec![0; LABEL_SIZE];
+            match f.read_at(&mut rbuf[..], offset).unwrap().await {
+                Ok(_aio_result) => {
+                    match LabelReader::new(rbuf) {
+                        Ok(lr) => {
+                            r = Ok(lr);
+                            break
+                        }
+                        Err(e) => {
+                            // If this is the first label, try the second.
+                            r = Err(e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    r = Err(Error::from(e));
                 }
-            },
-            Err(e) => Err(Error::from(e))
+            }
         }
+        r
     }
 
     /// Read one of the spacemaps from disk.
