@@ -100,7 +100,14 @@ impl Manager {
 #[derive(Clone, Debug)]
 pub struct Status {
     /// Paths to each leaf
-    pub leaves: Vec<(PathBuf, Uuid)>
+    pub leaves: Vec<(PathBuf, Uuid)>,
+    pub uuid: Uuid
+}
+
+impl Status {
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
 }
 
 /// `Mirror`: Device mirroring, both permanent and temporary
@@ -302,6 +309,7 @@ impl Mirror {
             leaves: self.blockdevs.iter()
                 .map(|vb| (vb.path(), vb.uuid()))
                 .collect::<Vec<_>>(),
+            uuid: self.uuid()
         }
     }
 
