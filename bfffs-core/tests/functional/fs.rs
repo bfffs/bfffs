@@ -34,11 +34,11 @@ mod fs {
     }
 
     async fn harness(props: Vec<Property>) -> Harness {
-        let (_, _, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(16_000_000)));
         let cache2 = cache.clone();
-        let ddml = Arc::new(DDML::new(pool, cache2.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache2.clone()));
         let idml = IDML::create(ddml, cache2);
         let db = Arc::new(Database::create(Arc::new(idml)));
         let tree_id = db.create_fs(None, "").await.unwrap();

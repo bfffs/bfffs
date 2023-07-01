@@ -23,16 +23,16 @@ type Harness = (Controller,);
 #[fixture]
 fn harness() -> Harness {
     let len = 1 << 26;  // 64 MB
-    let (tempdir, _, pool) = crate::PoolBuilder::new()
+    let ph = crate::PoolBuilder::new()
         .name(POOLNAME)
         .build();
-    let filename = tempdir.path().join("vdev");
+    let filename = ph.tempdir.path().join("vdev");
     {
         let file = fs::File::create(filename).unwrap();
         file.set_len(len).unwrap();
     }
     let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
-    let ddml = Arc::new(DDML::new(pool, cache.clone()));
+    let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
     let db = Database::create(Arc::new(idml));
     (Controller::new(db),)

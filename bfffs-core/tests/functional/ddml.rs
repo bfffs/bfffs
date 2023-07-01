@@ -19,11 +19,11 @@ mod ddml {
 
     #[fixture]
     fn ddml() -> DDML {
-        let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .chunksize(1)
             .build();
         let cache = Cache::with_capacity(1_000_000_000);
-        DDML::new(pool, Arc::new(Mutex::new(cache)))
+        DDML::new(ph.pool, Arc::new(Mutex::new(cache)))
     }
 
     #[rstest]

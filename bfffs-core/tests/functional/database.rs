@@ -51,14 +51,14 @@ mod persistence {
     ];
 
     async fn harness() -> (Database, TempDir, Vec<PathBuf>) {
-        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .chunksize(1)
             .fsize(1 << 26)     // 64 MB
             .name(POOLNAME)
             .build();
 
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
         // Due to bincode's variable-length encoding and the
@@ -67,7 +67,7 @@ mod persistence {
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
         // let tree_id = db.create_fs(None, "").await.unwrap();
-        (db, tempdir, paths)
+        (db, ph.tempdir, ph.paths)
     }
 
     // Test open-after-write
@@ -112,16 +112,16 @@ mod database {
     const POOLNAME: &str = "TestPool";
 
     fn new_empty_database() -> (Database, TempDir, Vec<PathBuf>) {
-        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .fsize(1 << 26)     // 64 MB
             .name(POOLNAME)
             .chunksize(1)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
-        (db, tempdir, paths)
+        (db, ph.tempdir, ph.paths)
     }
 
     async fn harness() -> (Database, TempDir, TreeID, Vec<PathBuf>) {
@@ -456,14 +456,14 @@ root:
 
     #[tokio::test]
     async fn shutdown() {
-        let (_tempdir, _paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .build();
         let cache = Arc::new(
             Mutex::new(
                 Cache::with_capacity(4_194_304)
             )
         );
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         let db = Database::create(Arc::new(idml));
         db.shutdown().await;
@@ -488,7 +488,7 @@ root:
         }
 
         async fn harness(config: &Config) -> Harness {
-            let (tempdir, paths, pool) = crate::PoolBuilder::new()
+            let ph = crate::PoolBuilder::new()
                 .name(POOLNAME)
                 .disks(config.n)
                 .mirror_size(config.m)
@@ -497,11 +497,11 @@ root:
                 .nclusters(config.nclusters)
                 .build();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml);
 
-            (db, paths, tempdir)
+            (db, ph.paths, ph.tempdir)
         }
 
         /// Status of a healthy, well-balanced pool.
@@ -546,13 +546,13 @@ root:
         // differently sized files on each iteration.
         #[tokio::test]
         async fn crash_and_restore() {
-            let (_tempdir, paths, pool) = crate::PoolBuilder::new()
+            let ph = crate::PoolBuilder::new()
                 .fsize(1 << 26)     // 64 MB
                 .zone_size(17)
                 .build();
-            let uuid = pool.uuid();
+            let uuid = ph.pool.uuid();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml);
             let tree_id = db.create_fs(None, "").await.unwrap();
@@ -592,7 +592,7 @@ root:
 
             // And reopen
             let mut manager = database::Manager::default();
-            manager.taste(&paths[0]).await.unwrap();
+            manager.taste(&ph.paths[0]).await.unwrap();
             let db = manager.import_by_uuid(uuid).await.unwrap();
             assert!(db.check().await.unwrap());
         }
@@ -605,6 +605,7 @@ root:
 
 /// Tests database::Manager
 mod manager {
+    use crate::require_root;
     use bfffs_core::{
         Error,
         Uuid,
@@ -613,6 +614,7 @@ mod manager {
         ddml::DDML,
         idml::IDML
     };
+    use function_name::named;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use rstest_reuse::{apply, template};
@@ -659,20 +661,22 @@ mod manager {
     struct Harness {
         manager: Manager,
         paths: Vec<PathBuf>,
-        _tempdir: TempDir
+        _tempdir: TempDir,
+        gnops: Vec<crate::Gnop>
     }
 
-    async fn harness(c: &Config) -> Harness
+    async fn harness(c: &Config, gnop: bool) -> Harness
     {
-        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .disks(c.n)
             .mirror_size(c.m)
             .stripe_size(c.k)
             .redundancy_level(c.f)
             .nclusters(c.nclusters)
+            .gnop(gnop)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
         db.sync_transaction().await.unwrap();
@@ -685,7 +689,7 @@ mod manager {
         if let Some(wb) = c.wb {
             manager.writeback_size(wb);
         }
-        Harness{manager, paths, _tempdir: tempdir}
+        Harness{manager, paths: ph.paths, _tempdir: ph.tempdir, gnops: ph.gnops}
     }
 
     #[template]
@@ -703,14 +707,14 @@ mod manager {
     #[rstest(c, case(Config::new(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     async fn empty(c: Config) {
-        let h = harness(&c).await;
+        let h = harness(&c, false).await;
         assert!(h.manager.importable_pools().is_empty());
     }
 
     #[rstest(c, case(Config::new(1, 1, 1, 0, 1, Some(100_000_000), None)))]
     #[tokio::test]
     async fn cache_size(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         h.manager.taste(h.paths.into_iter().next().unwrap()).await.unwrap();
         let db = h.manager.import_by_name("functional_test_pool").await.unwrap();
         assert_eq!(db.cache_size(), 100_000_000);
@@ -720,7 +724,7 @@ mod manager {
     #[rstest(c, case(Config::new(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     async fn import_by_name(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         for path in h.paths.iter() {
             h.manager.taste(path).await.unwrap();
         }
@@ -731,7 +735,7 @@ mod manager {
     #[rstest(c, case(Config::new(1, 1, 1, 0, 1, None, None)))]
     #[tokio::test]
     async fn import_by_name_enoent(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         h.manager.taste(h.paths.into_iter().next().unwrap()).await.unwrap();
         let e = h.manager.import_by_name("does_not_exist").await
             .err().unwrap();
@@ -743,7 +747,7 @@ mod manager {
     #[apply(all_configs)]
     #[tokio::test]
     async fn import_by_uuid(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         for path in h.paths.iter() {
             h.manager.taste(path).await.unwrap();
         }
@@ -753,16 +757,16 @@ mod manager {
     }
 
     /// Try to import a single pool, but all of the disks are gone.
+    #[named]
     #[apply(all_configs)]
     #[tokio::test]
     async fn import_by_uuid_no_disks(c: Config) {
-        let mut h = harness(&c).await;
+        require_root!();
+        let mut h = harness(&c, true).await;
         for path in h.paths.iter() {
             h.manager.taste(path).await.unwrap();
         }
-        for path in h.paths.iter() {
-            fs::remove_file(path).unwrap();
-        }
+        h.gnops.drain(..);
         // importable_pools should still work
         let (name, uuid) = h.manager.importable_pools().pop().unwrap();
         assert_eq!(name, "functional_test_pool");
@@ -776,7 +780,7 @@ mod manager {
     #[tokio::test]
     #[awt]
     async fn import_by_uuid_enoent(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         h.manager.taste(h.paths.into_iter().next().unwrap()).await.unwrap();
         let e = h.manager.import_by_uuid(Uuid::new_v4()).await.err().unwrap();
         assert_eq!(e, Error::ENOENT);
@@ -785,7 +789,7 @@ mod manager {
     #[rstest(c, case(Config::new(1, 1, 1, 0, 1, None, Some(100_000_000))))]
     #[tokio::test]
     async fn writeback_size(c: Config) {
-        let mut h = harness(&c).await;
+        let mut h = harness(&c, false).await;
         h.manager.taste(h.paths.into_iter().next().unwrap()).await.unwrap();
         let db = h.manager.import_by_name("functional_test_pool").await.unwrap();
         assert_eq!(db.writeback_size(), 100_000_000);
