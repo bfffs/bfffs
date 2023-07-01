@@ -188,7 +188,8 @@ root:
         // Sync the database, then drop and reopen it.  That's the only way to
         // clear Inner::fs_trees
         db.sync_transaction().await.unwrap();
-        drop(db);
+        db.shutdown().await;
+
         let db = open_db(&paths[0]).await;
         db.fsread(tree_id, |_| future::ok(())).await.unwrap();
     }
@@ -216,7 +217,8 @@ root:
             // Sync the database, then drop and reopen it.  That's the only way
             // to clear Inner::fs_trees
             db.sync_transaction().await.unwrap();
-            drop(db);
+            db.shutdown().await;
+
             let db = open_db(&paths[0]).await;
 
             let tree_id = db.create_fs(None, "").await.unwrap();

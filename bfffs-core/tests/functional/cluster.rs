@@ -95,6 +95,7 @@ mod persistence {
             f.write_all(&GOLDEN_LABEL).unwrap();
             f.seek(SeekFrom::Start(32768)).unwrap();
             f.write_all(&GOLDEN_SPACEMAP).unwrap();
+            drop(objects.0);
         }
         let mut manager = Manager::default();
         manager.taste(objects.2).await.unwrap();

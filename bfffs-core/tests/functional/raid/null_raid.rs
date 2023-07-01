@@ -52,6 +52,8 @@ mod persistence {
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
         old_vdev.write_label(label_writer).await.unwrap();
+        drop(old_vdev);
+
         let (leaf, reader) = VdevFile::open(path).await.unwrap();
         let mirror_children = vec![(VdevBlock::new(leaf), reader)];
         let (mirror, reader) = Mirror::open(None, mirror_children);

@@ -940,6 +940,8 @@ mod persistence {
         let uuid = old_raid.uuid();
         let label_writer = LabelWriter::new(0);
         old_raid.write_label(label_writer).await.unwrap();
+        drop(old_raid);
+
         let mut combined = Vec::new();
         for path in paths {
             let (leaf, reader) = VdevFile::open(path).await.unwrap();

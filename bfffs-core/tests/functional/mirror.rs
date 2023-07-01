@@ -91,6 +91,8 @@ mod persistence {
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
         old_vdev.write_label(label_writer).await.unwrap();
+        drop(old_vdev);
+
         let mut children = Vec::new();
         for path in paths {
             let (leaf, reader) = VdevFile::open(path).await.unwrap();

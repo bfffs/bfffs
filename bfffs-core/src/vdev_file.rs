@@ -255,10 +255,14 @@ impl VdevFile {
         where P: AsRef<Path>
     {
         let pb = path.as_ref().to_path_buf();
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
         let f = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_DIRECT)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
             .open(path)
             .map(File::new)?;
         let lpz = match lbas_per_zone {
@@ -369,10 +373,14 @@ impl VdevFile {
         -> Result<(Self, LabelReader)>
     {
         let pb = path.as_ref().to_path_buf();
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_DIRECT)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
             .open(path)
             .map(File::new)
             .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
