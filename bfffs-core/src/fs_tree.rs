@@ -402,7 +402,7 @@ impl TryFrom<FSValue> for Dirent {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct DyingInode(u64);
 
 impl DyingInode {
@@ -414,6 +414,23 @@ impl DyingInode {
 impl From<u64> for DyingInode {
     fn from(ino: u64) -> Self {
         DyingInode(ino)
+    }
+}
+
+impl Serialize for DyingInode {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+        where S: Serializer
+    {
+        if serializer.is_human_readable() {
+            // This puts annoying quotes around the number, but that's
+            // unfortunately impossible to avoid until the serde-yaml crate
+            // grows more features.
+            // https://github.com/dtolnay/serde-yaml/issues/198
+            // https://github.com/dtolnay/serde-yaml/issues/235
+            format!("{:x}", self.0).serialize(serializer)
+        } else {
+            self.0.serialize(serializer)
+        }
     }
 }
 
