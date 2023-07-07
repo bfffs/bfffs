@@ -542,6 +542,13 @@ impl VdevFile {
         self.spacemap_space
     }
 
+    pub fn status(&self) -> Status {
+        Status {
+            path: self.path.clone(),
+            uuid: self.uuid
+        }
+    }
+
     /// Asynchronously write a contiguous portion of the vdev.
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
@@ -775,6 +782,7 @@ mock!{
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn spacemap_space(&self) -> LbaT;
+        pub fn status(&self) -> Status;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
         pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)

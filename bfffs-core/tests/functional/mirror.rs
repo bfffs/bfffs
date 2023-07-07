@@ -56,9 +56,9 @@ mod open {
             }
             let (mirror, _) = Mirror::open(Some(uuid), combined);
             let status = mirror.status();
-            assert_eq!(status.leaves[0].0, Path::new(&paths[0]));
-            assert_eq!(status.leaves[1].0, Path::new(&paths[1]));
-            assert_eq!(status.leaves[2].0, Path::new(&paths[2]));
+            assert_eq!(status.leaves[0].path, Path::new(&paths[0]));
+            assert_eq!(status.leaves[1].path, Path::new(&paths[1]));
+            assert_eq!(status.leaves[2].path, Path::new(&paths[2]));
         }
     }
 

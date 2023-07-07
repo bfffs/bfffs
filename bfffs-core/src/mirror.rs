@@ -9,7 +9,7 @@ use std::{
     collections::BTreeMap,
     io,
     num::NonZeroU64,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::{
         Arc,
@@ -34,14 +34,15 @@ use crate::{
     label::*,
     types::*,
     vdev::*,
+    vdev_block,
 };
 #[cfg(not(test))]
-use crate::vdev_block::VdevBlockFut;
+use vdev_block::VdevBlockFut;
 #[cfg(test)] use mockall::mock;
 #[cfg(test)]
-use crate::vdev_block::MockVdevBlock as VdevBlock;
+use vdev_block::MockVdevBlock as VdevBlock;
 #[cfg(not(test))]
-use crate::vdev_block::VdevBlock;
+use vdev_block::VdevBlock;
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -99,8 +100,7 @@ impl Manager {
 /// Return value of [`Mirror::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
-    /// Paths to each leaf
-    pub leaves: Vec<(PathBuf, Uuid)>,
+    pub leaves: Vec<vdev_block::Status>,
     pub uuid: Uuid
 }
 
@@ -306,8 +306,7 @@ impl Mirror {
 
     pub fn status(&self) -> Status {
         Status {
-            leaves: self.blockdevs.iter()
-                .map(|vb| (vb.path(), vb.uuid()))
+            leaves: self.blockdevs.iter().map(VdevBlock::status)
                 .collect::<Vec<_>>(),
             uuid: self.uuid()
         }

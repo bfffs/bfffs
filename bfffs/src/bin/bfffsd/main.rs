@@ -428,8 +428,8 @@ impl Bfffsd {
                                                 rpc::pool::MirrorStatus {
                                         leaves: m.leaves.into_iter().map(|l|
                                             rpc::pool::LeafStatus {
-                                                path: l.0,
-                                                uuid: l.1
+                                                path: l.path,
+                                                uuid: l.uuid
                                             }
                                         ).collect()
                                     }

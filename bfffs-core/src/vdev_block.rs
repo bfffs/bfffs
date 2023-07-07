@@ -33,6 +33,8 @@ use crate::{
     vdev_file::*,
 };
 
+pub use crate::vdev_file::Status;
+
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
@@ -906,6 +908,10 @@ impl VdevBlock {
         }
     }
 
+    pub fn status(&self) -> Status {
+        self.inner.read().unwrap().leaf.status()
+    }
+
     /// Asynchronously write a contiguous portion of the vdev.
     ///
     /// Returns nothing on success, and on error on failure
@@ -1032,6 +1038,7 @@ mock! {
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn status(&self) -> Status;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
