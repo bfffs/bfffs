@@ -1,7 +1,29 @@
 // vim: tw=80
 
 use crate::types::*;
-use std::pin::Pin;
+use std::{
+    num::NonZeroU8,
+    pin::Pin
+};
+
+/// Represents the health of a vdev or pool
+///
+/// The ordering reflects which Health is "sicker".  That is, a degraded vdev is
+/// sicker than an online one, a doubly-degraded vdev is sicker than a
+/// singly-degraded one, etc.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+pub enum Health {
+    /// Perfectly healthy
+    Online,
+    /// Operating with reduced redundancy
+    Degraded(NonZeroU8),
+    /// Rebuild in progress.  Not all data is present.  Reads may not be
+    /// possible.
+    Rebuilding,
+    /// Faulted.  No I/O is possible
+    // TODO: add reasons, like "offline" or "removed"
+    Faulted,
+}
 
 /// Future representing an operation on a vdev.
 pub type VdevFut = dyn futures::Future<Output = Result<()>> + Send + Sync;
@@ -57,4 +79,19 @@ pub trait Vdev {
 
     /// Return the number of zones in the Vdev
     fn zones(&self) -> ZoneT;
+}
+
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    #[test]
+    fn health_order() {
+        assert!(Health::Online < Health::Degraded(NonZeroU8::new(1).unwrap()));
+        assert!(Health::Degraded(NonZeroU8::new(1).unwrap()) <
+                Health::Degraded(NonZeroU8::new(2).unwrap()));
+        assert!(Health::Degraded(NonZeroU8::new(2).unwrap()) <
+                Health::Rebuilding);
+        assert!(Health::Rebuilding < Health::Faulted);
+    }
 }
