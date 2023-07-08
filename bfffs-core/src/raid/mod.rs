@@ -165,7 +165,7 @@ pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 /// * `combined`:   An array of pairs of `Mirror`s and their
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
-pub fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
+fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
     -> (Arc<dyn VdevRaidApi>, LabelReader)
 {
     let mut label_pair = None;

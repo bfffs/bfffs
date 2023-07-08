@@ -974,6 +974,74 @@ mod layout {
     }
 }
 
+mod open {
+    use super::*;
+    use itertools::Itertools;
+    use crate::{
+        mirror,
+        raid::{self, vdev_raid}
+    };
+
+    /// Regardless of the order in which the devices are given to
+    /// raid::open, it will construct itself in the correct order.
+    #[test]
+    fn ordering() {
+        let child_uuid0 = Uuid::new_v4();
+        let child_uuid1 = Uuid::new_v4();
+        let child_uuid2 = Uuid::new_v4();
+        fn mock(child_uuid: &Uuid) -> Mirror {
+            let mut m = Mirror::default();
+            m.expect_uuid()
+                .return_const(*child_uuid);
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const((1, 4096));
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            m.expect_status()
+                .return_const(mirror::Status {
+                    health: Health::Online,
+                    leaves: Vec::new(),
+                    uuid: *child_uuid
+                });
+            m
+        }
+        let label = raid::Label::Raid(vdev_raid::Label {
+            uuid: Uuid::new_v4(),
+            chunksize: 1,
+            disks_per_stripe: 3,
+            redundancy: 1,
+            layout_algorithm: LayoutAlgorithm::PrimeS,
+            children: vec![child_uuid0, child_uuid1, child_uuid2]
+        });
+        let mut serialized = Vec::new();
+        let mut lw = LabelWriter::new(0);
+        lw.serialize(&label).unwrap();
+        for buf in lw.into_sglist().into_iter() {
+            serialized.extend(&buf[..]);
+        }
+        let child_uuids = [child_uuid0, child_uuid1, child_uuid2];
+
+        for perm in child_uuids.iter().permutations(child_uuids.len()) {
+            let m0 = mock(perm[0]);
+            let m1 = mock(perm[1]);
+            let m2 = mock(perm[2]);
+            let mut combined = Vec::new();
+            for m in [m0, m1, m2] {
+                let lr = LabelReader::new(serialized.clone()).unwrap();
+                combined.push((m, lr));
+            }
+            let (vdev_raid, _) = raid::open(Some(label.uuid()), combined);
+            let status = vdev_raid.status();
+            assert_eq!(status.mirrors[0].uuid(), child_uuid0);
+            assert_eq!(status.mirrors[1].uuid(), child_uuid1);
+            assert_eq!(status.mirrors[2].uuid(), child_uuid2);
+        }
+    }
+}
+
 mod open_zone {
     use super::*;
 

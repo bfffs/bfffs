@@ -1,12 +1,7 @@
 // vim: tw=80
 use bfffs_core::{
-    cluster::Cluster,
     label::*,
-    mirror::Mirror,
     pool::*,
-    raid,
-    vdev_block::*,
-    vdev_file::*,
     Error,
     TxgT
 };
@@ -17,7 +12,7 @@ use std::{
 };
 
 mod persistence {
-    use futures::{TryFutureExt, future};
+    use futures::future;
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
     use super::*;
@@ -62,25 +57,12 @@ mod persistence {
         future::try_join(harness.pool.flush(0), harness.pool.write_label(label_writer))
             .await.unwrap();
         drop(harness.pool);
-        let c0_fut = VdevFile::open(harness.paths[0].clone())
-            .and_then(|(leaf, reader)| {
-                let block = VdevBlock::new(leaf);
-                let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
-                let (vr, lr) = raid::open(None, vec![(mirror, lr)]);
-                Cluster::open(vr)
-                .map_ok(move |cluster| (cluster, lr))
-        });
-        let c1_fut = VdevFile::open(harness.paths[1].clone())
-            .and_then(|(leaf, reader)| {
-                let block = VdevBlock::new(leaf);
-                let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
-                let (vr, lr) = raid::open(None, vec![(mirror, lr)]);
-                Cluster::open(vr)
-                .map_ok(move |cluster| (cluster, lr))
-        });
-        let ((c0, c0r), (c1, c1r)) = future::try_join(c0_fut, c1_fut)
-            .await.unwrap();
-        let (pool, _) = Pool::open(Some(uuid), vec![(c0, c0r), (c1,c1r)]);
+
+        let mut manager = Manager::default();
+        for path in harness.paths.iter() {
+            manager.taste(path).await.unwrap();
+        }
+        let (pool, _) = manager.import(uuid).await.unwrap();
         assert_eq!(name, pool.name());
         assert_eq!(uuid, pool.uuid());
     }

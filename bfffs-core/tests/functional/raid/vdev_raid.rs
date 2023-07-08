@@ -185,12 +185,9 @@ mod vdev_raid {
 
     use bfffs_core::{
         *,
-        label::LabelWriter,
-        mirror::{self, Mirror},
+        mirror::Mirror,
         raid::*,
         vdev::Vdev,
-        vdev_block::VdevBlock,
-        vdev_file::VdevFile,
     };
     use divbuf::DivBufShared;
     use futures::{
@@ -199,7 +196,6 @@ mod vdev_raid {
         TryStreamExt,
         stream::FuturesUnordered
     };
-    use itertools::Itertools;
     use rstest::rstest;
     use rstest_reuse::{apply, template};
     use pretty_assertions::assert_eq;
@@ -220,17 +216,14 @@ mod vdev_raid {
         k: i16,
         f: i16,
         chunksize: LbaT,
-        paths: Vec<PathBuf>
     }
 
     async fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
         let len = 1 << 30;  // 1 GB
         let tempdir = t!(Builder::new().prefix("test_vdev_raid").tempdir());
-        let mut paths = Vec::new();
         let mirrors = (0..n).map(|i| {
             let mut fname = PathBuf::from(tempdir.path());
             fname.push(format!("vdev.{i}"));
-            paths.push(fname.clone());
             let file = t!(fs::File::create(&fname));
             t!(file.set_len(len));
             Mirror::create(&[fname], None).unwrap()
@@ -239,7 +232,7 @@ mod vdev_raid {
         let vdev = Arc::new(VdevRaid::create(cs, k, f, mirrors));
         vdev.open_zone(0).await
             .expect("open_zone");
-        Harness { vdev, _tempdir: tempdir, n, k, f, chunksize, paths }
+        Harness { vdev, _tempdir: tempdir, n, k, f, chunksize}
     }
 
     #[template]
@@ -345,41 +338,6 @@ mod vdev_raid {
         }).await
         .expect("read_at");
         assert_eq!(wbuf, dbsr.try_const().unwrap());
-    }
-
-    /// Regardless of the order in which the devices are given to
-    /// raid::open, it will construct itself in the correct order.
-    #[rstest(h, case(harness(3, 3, 1, 1)))]
-    #[tokio::test]
-    #[awt]
-    async fn open_ordering(#[future] h: Harness) {
-        let uuid = h.vdev.uuid();
-        let label_writer = LabelWriter::new(0);
-        h.vdev.write_label(label_writer).await.unwrap();
-        let original_mirror_uuids = h.vdev
-            .status()
-            .mirrors
-            .iter()
-            .map(mirror::Status::uuid)
-            .collect::<Vec<_>>();
-        drop(h.vdev);
-
-        for perm in h.paths.iter().permutations(h.paths.len()) {
-            let mut combined = Vec::new();
-            for path in perm.iter() {
-                let (leaf, reader) = VdevFile::open(path).await.unwrap();
-                let mirror_children = vec![(VdevBlock::new(leaf), reader)];
-                let (mirror, reader) = Mirror::open(None, mirror_children);
-                combined.push((mirror, reader));
-            }
-            let (raid, _) = bfffs_core::raid::open(Some(uuid), combined);
-            let mirror_uuids = raid.status()
-                .mirrors
-                .iter()
-                .map(mirror::Status::uuid)
-                .collect::<Vec<_>>();
-            assert_eq!(original_mirror_uuids, mirror_uuids);
-        }
     }
 
     // read_at should work when directed at the middle of the stripe buffer
@@ -858,10 +816,8 @@ mod persistence {
     use bfffs_core::{
         label::*,
         mirror::Mirror,
-        vdev_block::*,
         vdev::Vdev,
-        vdev_file::*,
-        raid::{self, VdevRaid, VdevRaidApi},
+        raid::{Manager, VdevRaid, VdevRaidApi},
     };
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
@@ -942,14 +898,11 @@ mod persistence {
         old_raid.write_label(label_writer).await.unwrap();
         drop(old_raid);
 
-        let mut combined = Vec::new();
-        for path in paths {
-            let (leaf, reader) = VdevFile::open(path).await.unwrap();
-            let mirror_children = vec![(VdevBlock::new(leaf), reader)];
-            let (mirror, reader) = Mirror::open(None, mirror_children);
-            combined.push((mirror, reader));
+        let mut manager = Manager::default();
+        for path in paths.iter() {
+            manager.taste(path).await.unwrap();
         }
-        let (vdev_raid, _) = raid::open(Some(uuid), combined);
+        let (vdev_raid, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, vdev_raid.uuid());
     }
 

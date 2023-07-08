@@ -3,16 +3,12 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    path::Path,
 };
 use bfffs_core::{
     label::*,
-    mirror::Mirror,
-    vdev_block::*,
+    mirror::{Manager, Mirror},
     vdev::Vdev,
-    vdev_file::*,
 };
-use itertools::Itertools;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 
@@ -32,36 +28,6 @@ fn harness() -> Harness {
     }).collect::<Vec<_>>();
     let mirror = Mirror::create(&paths, None).unwrap();
     (mirror, tempdir, paths)
-}
-
-mod open {
-    use super::*;
-
-    /// Regardless of the order in which the devices are given to
-    /// Mirror::open, it will construct itself in the correct order.
-    #[rstest]
-    #[tokio::test]
-    async fn ordering(harness: Harness) {
-        let (old_mirror, _tempdir, paths) = harness;
-        let uuid = old_mirror.uuid();
-        let label_writer = LabelWriter::new(0);
-        old_mirror.write_label(label_writer).await.unwrap();
-        drop(old_mirror);
-
-        for perm in paths.iter().permutations(paths.len()) {
-            let mut combined = Vec::new();
-            for path in perm.iter() {
-                let (leaf, reader) = VdevFile::open(path).await.unwrap();
-                combined.push((VdevBlock::new(leaf), reader));
-            }
-            let (mirror, _) = Mirror::open(Some(uuid), combined);
-            let status = mirror.status();
-            assert_eq!(status.leaves[0].path, Path::new(&paths[0]));
-            assert_eq!(status.leaves[1].path, Path::new(&paths[1]));
-            assert_eq!(status.leaves[2].path, Path::new(&paths[2]));
-        }
-    }
-
 }
 
 mod persistence {
@@ -93,12 +59,11 @@ mod persistence {
         old_vdev.write_label(label_writer).await.unwrap();
         drop(old_vdev);
 
-        let mut children = Vec::new();
-        for path in paths {
-            let (leaf, reader) = VdevFile::open(path).await.unwrap();
-            children.push((VdevBlock::new(leaf), reader));
+        let mut manager = Manager::default();
+        for path in paths.iter() {
+            manager.taste(path).await.unwrap();
         }
-        let (mirror, _) = Mirror::open(Some(uuid), children);
+        let (mirror, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, mirror.uuid());
     }
 

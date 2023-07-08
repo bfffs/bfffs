@@ -87,7 +87,7 @@ impl Manager {
 
     /// Taste the device identified by `p` for a BFFFS label.
     ///
-    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// If present, retain the device in the `Manager` for use as a spare or
     /// for building Pools.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
         let mut reader = self.vbm.taste(p).await?;
@@ -216,7 +216,7 @@ impl Mirror {
     /// * `uuid`:       Uuid of the desired `Mirror`, if present.  If `None`,
     ///                 then it will not be verified.
     /// * `combined`:   All the children `VdevBlock`s with their label readers
-    pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
+    fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
         -> (Self, LabelReader)
     {
         let mut label_pair = None;
@@ -588,6 +588,7 @@ mod t {
     use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
     use divbuf::DivBufShared;
     use futures::{FutureExt, future};
+    use itertools::Itertools;
     use mockall::predicate::*;
     use super::*;
 
@@ -650,6 +651,56 @@ mod t {
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.finish_zone(3, 31).now_or_never().unwrap().unwrap();
         }
+    }
+
+    mod open {
+        use super::*;
+
+        /// Regardless of the order in which the devices are given to
+        /// Mirror::open, it will construct itself in the correct order.
+        #[test]
+        fn ordering() {
+            let child_uuid0 = Uuid::new_v4();
+            let child_uuid1 = Uuid::new_v4();
+            let child_uuid2 = Uuid::new_v4();
+            fn mock(child_uuid: &Uuid) -> VdevBlock {
+                let mut bd = VdevBlock::default();
+                bd.expect_uuid()
+                    .return_const(*child_uuid);
+                bd.expect_optimum_queue_depth()
+                    .return_const(10u32);
+                bd.expect_size()
+                    .return_const(262_144u64);
+                bd
+            }
+            let label = Label {
+                uuid: Uuid::new_v4(),
+                children: vec![child_uuid0, child_uuid1, child_uuid2]
+            };
+            let mut serialized = Vec::new();
+            let mut lw = LabelWriter::new(0);
+            lw.serialize(&label).unwrap();
+            for buf in lw.into_sglist().into_iter() {
+                serialized.extend(&buf[..]);
+            }
+            let child_uuids = [child_uuid0, child_uuid1, child_uuid2];
+
+            for perm in child_uuids.iter().permutations(child_uuids.len()) {
+                let bd0 = mock(perm[0]);
+                let bd1 = mock(perm[1]);
+                let bd2 = mock(perm[2]);
+                let mut combined = Vec::new();
+                for bd in [bd0, bd1, bd2] {
+                    let lr = LabelReader::new(serialized.clone()).unwrap();
+                    combined.push((bd, lr));
+                }
+                let (mirror, _) = Mirror::open(Some(label.uuid), combined);
+                assert_eq!(mirror.children[0].uuid(), child_uuid0);
+                assert_eq!(mirror.children[1].uuid(), child_uuid1);
+                assert_eq!(mirror.children[2].uuid(), child_uuid2);
+            }
+        }
+
     }
 
     mod open_zone {
