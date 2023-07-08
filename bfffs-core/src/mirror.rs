@@ -17,6 +17,7 @@ use std::{
     }
 };
 
+use cfg_if::cfg_if;
 use divbuf::{DivBufInaccessible, DivBufMut};
 use futures::{
     Future,
@@ -36,13 +37,17 @@ use crate::{
     vdev::*,
     vdev_block,
 };
-#[cfg(not(test))]
-use vdev_block::VdevBlockFut;
-#[cfg(test)] use mockall::mock;
-#[cfg(test)]
-use vdev_block::MockVdevBlock as VdevBlock;
-#[cfg(not(test))]
-use vdev_block::VdevBlock;
+
+cfg_if! {
+    if #[cfg(test)] {
+        use mockall::mock;
+        use BoxVdevFut as VdevBlockFut;
+        use vdev_block::MockVdevBlock as VdevBlock;
+    } else {
+        use vdev_block::VdevBlockFut;
+        use vdev_block::VdevBlock;
+    }
+}
 
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -110,13 +115,102 @@ impl Status {
     }
 }
 
+/// A child of a Mirror.  Probably either a VdevBlock or a missing disk
+struct Child {
+    vdev: Option<VdevBlock>,
+}
+
+impl Child {
+    fn new(vdev: VdevBlock) -> Self {
+        Child {
+            vdev: Some(vdev),
+        }
+    }
+
+    fn erase_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().erase_zone(start, end)
+    }
+
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().finish_zone(start, end)
+    }
+
+    fn open_zone(&self, start: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().open_zone(start)
+    }
+
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().read_at(buf, lba)
+    }
+
+    fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().read_spacemap(buf, smidx)
+    }
+
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().readv_at(bufs, lba)
+    }
+
+    fn status(&self) -> vdev_block::Status {
+        self.vdev.as_ref().unwrap().status()
+    }
+
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().write_at(buf, lba)
+    }
+
+    fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().write_label(labeller)
+    }
+
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        -> VdevBlockFut
+    {
+        self.vdev.as_ref().unwrap().write_spacemap(sglist, idx, block)
+    }
+
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut {
+        self.vdev.as_ref().unwrap().writev_at(bufs, lba)
+    }
+}
+
+impl Vdev for Child {
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
+        self.vdev.as_ref().unwrap().lba2zone(lba)
+    }
+
+    fn optimum_queue_depth(&self) -> u32 {
+        self.vdev.as_ref().unwrap().optimum_queue_depth()
+    }
+
+    fn size(&self) -> LbaT {
+        self.vdev.as_ref().unwrap().size()
+    }
+
+    fn sync_all(&self) -> BoxVdevFut {
+        self.vdev.as_ref().unwrap().sync_all()
+    }
+
+    fn uuid(&self) -> Uuid {
+        self.vdev.as_ref().unwrap().uuid()
+    }
+
+    fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
+        self.vdev.as_ref().unwrap().zone_limits(zone)
+    }
+
+    fn zones(&self) -> ZoneT {
+        self.vdev.as_ref().unwrap().zones()
+    }
+}
+
 /// `Mirror`: Device mirroring, both permanent and temporary
 ///
 /// This Vdev mirrors two or more children.  It is used for both permanent
 /// mirrors and for children which are spared or being replaced.
 pub struct Mirror {
     /// Underlying block devices.
-    blockdevs: Arc<Box<[VdevBlock]>>,
+    children: Arc<Box<[Child]>>,
 
     /// Wrapping index of the next child to read from during read operations
     // To eliminate the need for atomic divisions, the index is allowed to wrap
@@ -147,11 +241,11 @@ impl Mirror {
         where P: AsRef<Path>
     {
         let uuid = Uuid::new_v4();
-        let mut blockdevs = Vec::with_capacity(paths.len());
+        let mut children = Vec::with_capacity(paths.len());
         for path in paths {
-            blockdevs.push(VdevBlock::create(path, lbas_per_zone)?);
+            children.push(Child::new(VdevBlock::create(path, lbas_per_zone)?));
         }
-        Ok(Mirror::new(uuid, blockdevs.into_boxed_slice()))
+        Ok(Mirror::new(uuid, children.into_boxed_slice()))
     }
 
     /// Asynchronously erase a zone on a mirror
@@ -160,7 +254,7 @@ impl Mirror {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.erase_zone(start, end)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -174,7 +268,7 @@ impl Mirror {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.finish_zone(start, end)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -182,21 +276,21 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    fn new(uuid: Uuid, blockdevs: Box<[VdevBlock]>) -> Self
+    fn new(uuid: Uuid, children: Box<[Child]>) -> Self
     {
-        assert!(blockdevs.len() > 0, "Need at least one disk");
+        assert!(children.len() > 0, "Need at least one disk");
 
         let next_read_idx = AtomicU32::new(0);
 
         // NB: the optimum queue depth should actually be greater for healthy
         // reads than for writes.  This calculation computes it for writes.
-        let optimum_queue_depth = blockdevs.iter()
-        .map(VdevBlock::optimum_queue_depth)
+        let optimum_queue_depth = children.iter()
+        .map(Child::optimum_queue_depth)
         .min()
         .unwrap();
 
-        let size = blockdevs.iter()
-        .map(VdevBlock::size)
+        let size = children.iter()
+        .map(Child::size)
         .min()
         .unwrap();
 
@@ -205,7 +299,7 @@ impl Mirror {
             next_read_idx,
             optimum_queue_depth,
             size,
-            blockdevs: Arc::new(blockdevs)
+            children: Arc::new(children)
         }
     }
 
@@ -229,8 +323,8 @@ impl Mirror {
                 if label_pair.is_none() {
                     label_pair = Some((label, label_reader));
                 }
-                (vdev_block.uuid(), vdev_block)
-            }).collect::<BTreeMap<Uuid, VdevBlock>>();
+                (vdev_block.uuid(), Child::new(vdev_block))
+            }).collect::<BTreeMap<Uuid, Child>>();
         let (label, reader) = label_pair.unwrap();
         assert_eq!(leaves.len(), label.children.len(),
             "Opening with missing children is TODO");
@@ -242,7 +336,7 @@ impl Mirror {
     }
 
     pub fn open_zone(&self, start: LbaT) -> BoxVdevFut {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.open_zone(start)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -254,9 +348,9 @@ impl Mirror {
         let idx = self.read_idx();
         // TODO: optimize for null-mirror case; reduce clones
         let dbi = buf.clone_inaccessible();
-        let fut = self.blockdevs[idx].read_at(buf, lba);
+        let fut = self.children[idx].read_at(buf, lba);
         ReadAt {
-            blockdevs: self.blockdevs.clone(),
+            children: self.children.clone(),
             issued: 1,
             initial_idx: idx,
             dbi,
@@ -268,16 +362,16 @@ impl Mirror {
     /// Return the index of the next child to read from
     fn read_idx(&self) -> usize {
         self.next_read_idx.fetch_add(1, Ordering::Relaxed) as usize %
-            self.blockdevs.len()
+            self.children.len()
     }
 
     pub fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> ReadSpacemap
     {
         let ridx = self.read_idx();
         let dbi = buf.clone_inaccessible();
-        let fut = self.blockdevs[ridx].read_spacemap(buf, smidx);
+        let fut = self.children[ridx].read_spacemap(buf, smidx);
         ReadSpacemap {
-            blockdevs: self.blockdevs.clone(),
+            children: self.children.clone(),
             issued: 1,
             initial_idx: ridx,
             dbi,
@@ -293,9 +387,9 @@ impl Mirror {
         let dbis = bufs.iter()
             .map(DivBufMut::clone_inaccessible)
             .collect::<Vec<_>>();
-        let fut = self.blockdevs[idx].readv_at(bufs, lba);
+        let fut = self.children[idx].readv_at(bufs, lba);
         ReadvAt {
-            blockdevs: self.blockdevs.clone(),
+            children: self.children.clone(),
             issued: 1,
             initial_idx: idx,
             dbis,
@@ -306,7 +400,7 @@ impl Mirror {
 
     pub fn status(&self) -> Status {
         Status {
-            leaves: self.blockdevs.iter().map(VdevBlock::status)
+            leaves: self.children.iter().map(Child::status)
                 .collect::<Vec<_>>(),
             uuid: self.uuid()
         }
@@ -314,7 +408,7 @@ impl Mirror {
 
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.write_at(buf.clone(), lba)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -324,14 +418,14 @@ impl Mirror {
 
     pub fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
-        let children_uuids = self.blockdevs.iter().map(|bd| bd.uuid())
+        let children_uuids = self.children.iter().map(Child::uuid)
             .collect::<Vec<_>>();
         let label = Label {
             uuid: self.uuid,
             children: children_uuids
         };
         labeller.serialize(&label).unwrap();
-        let fut = self.blockdevs.iter().map(|bd| {
+        let fut = self.children.iter().map(|bd| {
            bd.write_label(labeller.clone())
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -342,7 +436,7 @@ impl Mirror {
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  BoxVdevFut
     {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.write_spacemap(sglist.clone(), idx, block)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -352,7 +446,7 @@ impl Mirror {
 
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut
     {
-        let fut = self.blockdevs.iter().map(|blockdev| {
+        let fut = self.children.iter().map(|blockdev| {
             blockdev.writev_at(bufs.clone(), lba)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -363,7 +457,7 @@ impl Mirror {
 
 impl Vdev for Mirror {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.blockdevs[0].lba2zone(lba)
+        self.children[0].lba2zone(lba)
     }
 
     fn optimum_queue_depth(&self) -> u32 {
@@ -376,8 +470,8 @@ impl Vdev for Mirror {
 
     fn sync_all(&self) -> BoxVdevFut {
         // TODO: handle errors on some devices
-        let fut = self.blockdevs.iter()
-        .map(VdevBlock::sync_all)
+        let fut = self.children.iter()
+        .map(Child::sync_all)
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -389,37 +483,33 @@ impl Vdev for Mirror {
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.blockdevs[0].zone_limits(zone)
+        self.children[0].zone_limits(zone)
     }
 
     fn zones(&self) -> ZoneT {
-        self.blockdevs[0].zones()
+        self.children[0].zones()
     }
 }
 
 /// Future type of [`Mirror::read_at`]
 #[pin_project]
 pub struct ReadAt {
-    blockdevs: Arc<Box<[VdevBlock]>>,
+    children: Arc<Box<[Child]>>,
     /// Reads already issued so far
     issued: usize,
     /// Index of the first child read from
     initial_idx: usize,
     dbi: DivBufInaccessible,
     lba: LbaT,
-    #[cfg(not(test))]
     #[pin]
     fut: VdevBlockFut,
-    #[cfg(test)]
-    #[pin]
-    fut: BoxVdevFut,
 }
 impl Future for ReadAt {
     type Output = Result<()>;
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        let nchildren = self.blockdevs.len();
+        let nchildren = self.children.len();
         Poll::Ready(loop {
             let pinned = self.as_mut().project();
             let r = futures::ready!(pinned.fut.poll(cx));
@@ -433,9 +523,9 @@ impl Future for ReadAt {
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
             let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
-            let new_fut = pinned.blockdevs[idx].read_at(buf, *pinned.lba);
+            let new_fut = pinned.children[idx].read_at(buf, *pinned.lba);
             self.set(ReadAt {
-                blockdevs: self.blockdevs.clone(),
+                children: self.children.clone(),
                 issued: self.issued + 1,
                 initial_idx: self.initial_idx,
                 dbi: self.dbi.clone(),
@@ -449,7 +539,7 @@ impl Future for ReadAt {
 /// Future type of [`Mirror::read_spacemap`]
 #[pin_project]
 pub struct ReadSpacemap {
-    blockdevs: Arc<Box<[VdevBlock]>>,
+    children: Arc<Box<[Child]>>,
     /// Reads already issued so far
     issued: usize,
     /// Index of the first child read from
@@ -457,19 +547,15 @@ pub struct ReadSpacemap {
     dbi: DivBufInaccessible,
     /// Spacemap index to read
     smidx: u32,
-    #[cfg(not(test))]
     #[pin]
     fut: VdevBlockFut,
-    #[cfg(test)]
-    #[pin]
-    fut: BoxVdevFut,
 }
 impl Future for ReadSpacemap {
     type Output = Result<()>;
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        let nchildren = self.blockdevs.len();
+        let nchildren = self.children.len();
         Poll::Ready(loop {
             let pinned = self.as_mut().project();
             let r = futures::ready!(pinned.fut.poll(cx));
@@ -483,10 +569,10 @@ impl Future for ReadSpacemap {
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
             let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
-            let new_fut = pinned.blockdevs[idx].read_spacemap(buf,
+            let new_fut = pinned.children[idx].read_spacemap(buf,
                 *pinned.smidx);
             self.set(ReadSpacemap {
-                blockdevs: self.blockdevs.clone(),
+                children: self.children.clone(),
                 issued: self.issued + 1,
                 initial_idx: self.initial_idx,
                 dbi: self.dbi.clone(),
@@ -500,7 +586,7 @@ impl Future for ReadSpacemap {
 /// Future type of [`Mirror::readv_at`]
 #[pin_project]
 pub struct ReadvAt {
-    blockdevs: Arc<Box<[VdevBlock]>>,
+    children: Arc<Box<[Child]>>,
     /// Reads already issued so far
     issued: usize,
     /// Index of the first child read from
@@ -508,19 +594,15 @@ pub struct ReadvAt {
     dbis: Vec<DivBufInaccessible>,
     /// Address to read from the lower devices
     lba: LbaT,
-    #[cfg(not(test))]
     #[pin]
     fut: VdevBlockFut,
-    #[cfg(test)]
-    #[pin]
-    fut: BoxVdevFut,
 }
 impl Future for ReadvAt {
     type Output = Result<()>;
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        let nchildren = self.blockdevs.len();
+        let nchildren = self.children.len();
         Poll::Ready(loop {
             let pinned = self.as_mut().project();
             let r = futures::ready!(pinned.fut.poll(cx));
@@ -536,9 +618,9 @@ impl Future for ReadvAt {
                 .map(|dbi| dbi.try_mut().unwrap())
                 .collect::<Vec<_>>();
             let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
-            let new_fut = pinned.blockdevs[idx].readv_at(bufs, *pinned.lba);
+            let new_fut = pinned.children[idx].readv_at(bufs, *pinned.lba);
             self.set(ReadvAt {
-                blockdevs: self.blockdevs.clone(),
+                children: self.children.clone(),
                 issued: self.issued + 1,
                 initial_idx: self.initial_idx,
                 dbis: self.dbis.clone(),
@@ -620,7 +702,7 @@ mod t {
                     .once()
                     .with(eq(3), eq(31))
                     .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -633,7 +715,7 @@ mod t {
 
         #[test]
         fn basic() {
-            fn mock() -> VdevBlock {
+            fn mock() -> Child {
                 let mut bd = mock_vdev_block();
                 bd.expect_open_zone()
                     .once()
@@ -643,7 +725,7 @@ mod t {
                     .once()
                     .with(eq(3), eq(31))
                     .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             }
             let bd0 = mock();
             let bd1 = mock();
@@ -714,7 +796,7 @@ mod t {
                     .once()
                     .with(eq(0))
                     .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -727,7 +809,7 @@ mod t {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> VdevBlock
+            -> Child
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -741,7 +823,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            bd
+            Child::new(bd)
         }
 
         #[test]
@@ -815,7 +897,7 @@ mod t {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> VdevBlock
+            -> Child
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -831,7 +913,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            bd
+            Child::new(bd)
         }
 
         #[test]
@@ -887,7 +969,7 @@ mod t {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> VdevBlock
+            -> Child
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -904,7 +986,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            bd
+            Child::new(bd)
         }
 
         #[test]
@@ -979,7 +1061,7 @@ mod t {
                         buf.len() == 4096
                         && *lba == 3
                 ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1014,7 +1096,7 @@ mod t {
                         && sglist[1].len() == 8192
                         && *lba == 3
                 ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1034,7 +1116,7 @@ mod t {
                 bd.expect_write_label()
                 .once()
                 .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1063,7 +1145,7 @@ mod t {
                         && *idx == 1
                         && *lba == 2
                 ).return_once(|_, _, _| Box::pin(future::ok::<(), Error>(())));
-                bd
+                Child::new(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
