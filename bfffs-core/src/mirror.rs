@@ -8,7 +8,7 @@
 use std::{
     collections::BTreeMap,
     io,
-    num::NonZeroU64,
+    num::{NonZeroU8, NonZeroU64},
     path::Path,
     pin::Pin,
     sync::{
@@ -80,13 +80,20 @@ impl Manager {
             .collect::<Vec<_>>()
             .map(move |v| {
                 let mut pairs = Vec::with_capacity(v.len());
+                let mut error = Error::ENOENT;
                 for r in v.into_iter() {
                     match r {
                         Ok(pair) => pairs.push(pair),
-                        Err(e) => return Err(e)
+                        Err(e) => {
+                            error = e;
+                        }
                     }
+                };
+                if !pairs.is_empty() {
+                    Ok(Mirror::open(Some(uuid), pairs))
+                } else {
+                    Err(error)
                 }
-                Ok(Mirror::open(Some(uuid), pairs))
             }).boxed()
     }
 
@@ -117,91 +124,106 @@ impl Status {
 }
 
 /// A child of a Mirror.  Probably either a VdevBlock or a missing disk
-struct Child {
-    vdev: Option<VdevBlock>,
+// We optimize for the large case (Present) which is both more important and
+// more common than the small case.
+#[allow(clippy::large_enum_variant)]
+enum Child {
+    Present(VdevBlock),
+    Missing(Uuid)
 }
 
 impl Child {
-    fn new(vdev: VdevBlock) -> Self {
-        Child {
-            vdev: Some(vdev),
+    fn present(vdev: VdevBlock) -> Self {
+        Child::Present(vdev)
+    }
+
+    fn missing(uuid: Uuid) -> Self {
+        Child::Missing(uuid)
+    }
+
+    fn as_present(&self) -> Option<&VdevBlock> {
+        if let Child::Present(vb) = self {
+            Some(vb)
+        } else {
+            None
         }
     }
 
     fn erase_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().erase_zone(start, end)
+        self.as_present().unwrap().erase_zone(start, end)
     }
 
     fn finish_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().finish_zone(start, end)
+        self.as_present().unwrap().finish_zone(start, end)
     }
 
     fn open_zone(&self, start: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().open_zone(start)
+        self.as_present().unwrap().open_zone(start)
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().read_at(buf, lba)
+        self.as_present().unwrap().read_at(buf, lba)
     }
 
     fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().read_spacemap(buf, smidx)
+        self.as_present().unwrap().read_spacemap(buf, smidx)
     }
 
     fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().readv_at(bufs, lba)
+        self.as_present().unwrap().readv_at(bufs, lba)
     }
 
-    fn status(&self) -> vdev_block::Status {
-        self.vdev.as_ref().unwrap().status()
+    fn status(&self) -> Option<vdev_block::Status> {
+        self.as_present().map(VdevBlock::status)
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().write_at(buf, lba)
+        self.as_present().unwrap().write_at(buf, lba)
     }
 
     fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().write_label(labeller)
+        self.as_present().unwrap().write_label(labeller)
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> VdevBlockFut
     {
-        self.vdev.as_ref().unwrap().write_spacemap(sglist, idx, block)
+        self.as_present().unwrap().write_spacemap(sglist, idx, block)
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut {
-        self.vdev.as_ref().unwrap().writev_at(bufs, lba)
+        self.as_present().unwrap().writev_at(bufs, lba)
     }
-}
 
-impl Vdev for Child {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.vdev.as_ref().unwrap().lba2zone(lba)
+        self.as_present().unwrap().lba2zone(lba)
     }
 
-    fn optimum_queue_depth(&self) -> u32 {
-        self.vdev.as_ref().unwrap().optimum_queue_depth()
+    fn optimum_queue_depth(&self) -> Option<u32> {
+        self.as_present().map(VdevBlock::optimum_queue_depth)
     }
 
-    fn size(&self) -> LbaT {
-        self.vdev.as_ref().unwrap().size()
+    fn size(&self) -> Option<LbaT> {
+        self.as_present().map(VdevBlock::size)
     }
 
     fn sync_all(&self) -> BoxVdevFut {
-        self.vdev.as_ref().unwrap().sync_all()
+        self.as_present().unwrap().sync_all()
     }
 
     fn uuid(&self) -> Uuid {
-        self.vdev.as_ref().unwrap().uuid()
+        match self {
+            Child::Present(vb) => vb.uuid(),
+            Child::Missing(uuid) => *uuid
+        }
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.vdev.as_ref().unwrap().zone_limits(zone)
+        self.as_present().unwrap().zone_limits(zone)
     }
 
     fn zones(&self) -> ZoneT {
-        self.vdev.as_ref().unwrap().zones()
+        self.as_present().unwrap().zones()
     }
 }
 
@@ -244,7 +266,8 @@ impl Mirror {
         let uuid = Uuid::new_v4();
         let mut children = Vec::with_capacity(paths.len());
         for path in paths {
-            children.push(Child::new(VdevBlock::create(path, lbas_per_zone)?));
+            let vb = VdevBlock::create(path, lbas_per_zone)?;
+            children.push(Child::present(vb));
         }
         Ok(Mirror::new(uuid, children.into_boxed_slice()))
     }
@@ -286,12 +309,16 @@ impl Mirror {
         // NB: the optimum queue depth should actually be greater for healthy
         // reads than for writes.  This calculation computes it for writes.
         let optimum_queue_depth = children.iter()
-        .map(Child::optimum_queue_depth)
+        .filter_map(Child::optimum_queue_depth)
         .min()
         .unwrap();
 
+        // XXX BUG!!! The size should be written to the Label at construction
+        // time.  Otherwise, creating a mirror from dissimilar children and
+        // then removing the smallest could cause the size to increase.
+        // TODO: FIXME.
         let size = children.iter()
-        .map(Child::size)
+        .filter_map(Child::size)
         .min()
         .unwrap();
 
@@ -310,7 +337,8 @@ impl Mirror {
     ///
     /// * `uuid`:       Uuid of the desired `Mirror`, if present.  If `None`,
     ///                 then it will not be verified.
-    /// * `combined`:   All the children `VdevBlock`s with their label readers
+    /// * `combined`:   All the present children `VdevBlock`s with their label
+    ///                 readers.
     fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
         -> (Self, LabelReader)
     {
@@ -319,19 +347,23 @@ impl Mirror {
             .map(|(vdev_block, mut label_reader)| {
                 let label: Label = label_reader.deserialize().unwrap();
                 if let Some(u) = uuid {
-                    assert_eq!(u, label.uuid, "Opening disk from wrong mirror");
+                    assert_eq!(u, label.uuid,
+                               "Opening disk from wrong mirror");
                 }
                 if label_pair.is_none() {
                     label_pair = Some((label, label_reader));
                 }
-                (vdev_block.uuid(), Child::new(vdev_block))
-            }).collect::<BTreeMap<Uuid, Child>>();
+                (vdev_block.uuid(), vdev_block)
+            }).collect::<BTreeMap<Uuid, VdevBlock>>();
         let (label, reader) = label_pair.unwrap();
-        assert_eq!(leaves.len(), label.children.len(),
-            "Opening with missing children is TODO");
-        let mut children = Vec::with_capacity(leaves.len());
-        for i in 0..leaves.len() {
-            children.push(leaves.remove(&label.children[i]).unwrap());
+        assert!(!leaves.is_empty(), "Must have at least one child");
+        let mut children = Vec::with_capacity(label.children.len());
+        for lchild in label.children.iter() {
+            if let Some(vb) = leaves.remove(lchild) {
+                children.push(Child::present(vb));
+            } else {
+                children.push(Child::missing(*lchild));
+            }
         }
         (Mirror::new(label.uuid, children.into_boxed_slice()), reader)
     }
@@ -399,11 +431,26 @@ impl Mirror {
         }
     }
 
+    // XXX TODO: in the case of a missing child, get path from the label
     pub fn status(&self) -> Status {
+        let mut leaves = Vec::with_capacity(self.children.len());
+        for child in self.children.iter() {
+            let cs = child.status().unwrap_or(vdev_block::Status {
+                health: Health::Faulted,
+                uuid: child.uuid(),
+                path: std::path::PathBuf::new()
+            });
+            leaves.push(cs);
+        }
+        let sick_children = leaves.iter()
+            .filter(|l| l.health != Health::Online)
+            .count() as u8;
+        let health = NonZeroU8::new(sick_children)
+            .map(Health::Degraded)
+            .unwrap_or(Health::Online);
         Status {
-            health: Health::Online,
-            leaves: self.children.iter().map(Child::status)
-                .collect::<Vec<_>>(),
+            health,
+            leaves,
             uuid: self.uuid()
         }
     }
@@ -704,7 +751,7 @@ mod t {
                     .once()
                     .with(eq(3), eq(31))
                     .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -727,7 +774,7 @@ mod t {
                     .once()
                     .with(eq(3), eq(31))
                     .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             }
             let bd0 = mock();
             let bd1 = mock();
@@ -798,7 +845,7 @@ mod t {
                     .once()
                     .with(eq(0))
                     .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -825,7 +872,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::new(bd)
+            Child::present(bd)
         }
 
         #[test]
@@ -915,7 +962,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::new(bd)
+            Child::present(bd)
         }
 
         #[test]
@@ -988,7 +1035,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::new(bd)
+            Child::present(bd)
         }
 
         #[test]
@@ -1063,7 +1110,7 @@ mod t {
                         buf.len() == 4096
                         && *lba == 3
                 ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1098,7 +1145,7 @@ mod t {
                         && sglist[1].len() == 8192
                         && *lba == 3
                 ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1118,7 +1165,7 @@ mod t {
                 bd.expect_write_label()
                 .once()
                 .return_once(|_| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
@@ -1147,7 +1194,7 @@ mod t {
                         && *idx == 1
                         && *lba == 2
                 ).return_once(|_, _, _| Box::pin(future::ok::<(), Error>(())));
-                Child::new(bd)
+                Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();

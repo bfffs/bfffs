@@ -1427,6 +1427,74 @@ mod read_at {
 
 }
 
+mod status {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use crate::vdev::Health::*;
+
+    /// When degraded, the VdevRaid's health should be the sum of all missing or
+    /// otherwise degraded disks.
+    #[rstest]
+    #[case(Online, vec![Online, Online, Online])]
+    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+        vec![Online, Online, Faulted])]
+    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+        vec![Online, Rebuilding, Online])]
+    #[case(Degraded(NonZeroU8::new(1).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Online])]
+    #[case(Degraded(NonZeroU8::new(2).unwrap()),
+        vec![Degraded(NonZeroU8::new(2).unwrap()), Online, Online])]
+    #[case(Degraded(NonZeroU8::new(2).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()),
+             Degraded(NonZeroU8::new(1).unwrap()),
+             Online])]
+    #[case(Degraded(NonZeroU8::new(4).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Faulted])]
+    fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
+        let k = children.len() as i16; // doesn't matter for Health calculation
+        let f = 1;
+        const CHUNKSIZE: LbaT = 1;
+        let zl0 = (1, 4096);
+
+        let mut mirrors = Vec::<Mirror>::new();
+        let m = |mirror_health| {
+            let mut m = Mirror::default();
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            let leaves = (0..3).map(|_| {
+                crate::vdev_block::Status {
+                    health: Online,
+                    uuid: Default::default(),
+                    path: PathBuf::default()
+                }
+            }).collect::<Vec<_>>();
+            m.expect_status()
+                .return_const(crate::mirror::Status {
+                    health: mirror_health,
+                    leaves,
+                    uuid: Uuid::new_v4()
+                });
+            m
+        };
+        for c in children.into_iter() {
+            mirrors.push(m(c));
+        }
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        assert_eq!(vdev_raid.status().health, health);
+    }
+}
+
 mod sync_all {
     use super::*;
 

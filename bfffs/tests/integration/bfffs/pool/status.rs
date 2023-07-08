@@ -151,6 +151,37 @@ async fn mirror() {
 }
 
 #[tokio::test]
+async fn mirror_with_missing_child() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create"])
+        .arg(POOLNAME)
+        .arg("mirror")
+        .args(&files.paths[0..2])
+        .assert()
+        .success();
+    fs::remove_file(&files.paths[1]).unwrap();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+            " NAME                                                     HEALTH 
+ StatusPool                                               Degraded(1) 
+   mirror                                                 Degraded(1) 
+     {:51}  Online 
+     {:51}  Faulted 
+",
+            files.paths[0].display(),
+            ""
+        ));
+}
+
+#[tokio::test]
 async fn one_disk() {
     let files = mk_files();
     bfffs()

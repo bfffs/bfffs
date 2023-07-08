@@ -27,6 +27,17 @@ pub enum Health {
     Faulted,
 }
 
+impl Health {
+    /// If this vdev is degraded, how many levels of redundancy is it missing?
+    pub fn as_degraded(self) -> Option<NonZeroU8> {
+        if let Health::Degraded(d) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+}
+
 impl fmt::Display for Health {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {

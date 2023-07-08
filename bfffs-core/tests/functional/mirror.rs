@@ -3,11 +3,12 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
+    num::NonZeroU8
 };
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
-    vdev::Vdev,
+    vdev::{Health, Vdev},
 };
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
@@ -28,6 +29,43 @@ fn harness() -> Harness {
     }).collect::<Vec<_>>();
     let mirror = Mirror::create(&paths, None).unwrap();
     (mirror, tempdir, paths)
+}
+
+mod open {
+    use super::*;
+
+    /// It should be possible to import a mirror when some children are missing
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[tokio::test]
+    async fn missing_children(harness: Harness, #[case] missing: usize) {
+        let (old_vdev, _tempdir, paths) = harness;
+        let uuid = old_vdev.uuid();
+        let label_writer = LabelWriter::new(0);
+        old_vdev.write_label(label_writer).await.unwrap();
+        let old_status = old_vdev.status();
+        drop(old_vdev);
+
+        fs::remove_file(paths[missing].clone()).unwrap();
+        let mut manager = Manager::default();
+        for path in paths.iter() {
+            let _ = manager.taste(path).await;
+        }
+        let (mirror, _) = manager.import(uuid).await.unwrap();
+        assert_eq!(uuid, mirror.uuid());
+        let status = mirror.status();
+        assert_eq!(status.health, Health::Degraded(NonZeroU8::new(1).unwrap()));
+        for i in 0..paths.len() {
+            assert_eq!(old_status.leaves[i].uuid, status.leaves[i].uuid);
+            if i != missing {
+                // BFFFS doesn't yet remember the paths of disks, whether
+                // they're imported or not, missing or present.
+                assert_eq!(old_status.leaves[i].path, status.leaves[i].path);
+            }
+        }
+    }
 }
 
 mod persistence {

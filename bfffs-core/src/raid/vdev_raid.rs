@@ -27,7 +27,7 @@ use std::{
     cmp,
     fmt,
     mem,
-    num::NonZeroU64,
+    num::{NonZeroU8, NonZeroU64},
     pin::Pin,
     ptr,
     sync::{Arc, RwLock}
@@ -1247,12 +1247,23 @@ impl VdevRaidApi for VdevRaid {
         let k = self.codec.stripesize();
         let f = self.codec.protection();
         let codec = format!("{}-{},{},{}", self.layout_algorithm, n, k, f);
-        Status {
-            health: Health::Online,
-            codec,
-            mirrors: self.mirrors.iter()
+        let mirrors = self.mirrors.iter()
                 .map(Mirror::status)
-                .collect::<Vec<_>>(),
+                .collect::<Vec<_>>();
+        let d = mirrors.iter().map(|m| {
+            match m.health {
+                Health::Online => 0,
+                Health::Degraded(n) => u8::from(n),
+                _ => m.leaves.len() as u8
+            }
+        }).sum();
+        let health = NonZeroU8::new(d)
+            .map(Health::Degraded)
+            .unwrap_or(Health::Online);
+        Status {
+            health,
+            codec,
+            mirrors,
         }
     }
 
