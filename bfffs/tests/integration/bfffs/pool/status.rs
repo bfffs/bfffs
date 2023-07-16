@@ -42,7 +42,7 @@ struct Daemon {
 }
 
 /// Start bfffsd and import the pool
-fn start_bfffsd(files: &Files, n: usize) -> Daemon {
+fn start_bfffsd(files: &Files) -> Daemon {
     let sockpath = files.tempdir.path().join("bfffsd.sock");
     let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
         .arg("--sock")
@@ -51,7 +51,7 @@ fn start_bfffsd(files: &Files, n: usize) -> Daemon {
         // The current bfffsd will complain if it tries to taste any disks that
         // aren't formatted, so we have to restrict the number of paths we give
         // it.
-        .args(&files.paths[0..n])
+        .args(&files.paths[..])
         .spawn()
         .unwrap()
         .into();
@@ -79,7 +79,7 @@ async fn all() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -104,7 +104,7 @@ async fn enoent() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -130,7 +130,7 @@ async fn mirror() {
         .args(&files.paths[0..2])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 2);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -159,7 +159,7 @@ async fn one_disk() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -184,7 +184,7 @@ async fn raid5() {
         .args(&files.paths[0..3])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 3);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -216,7 +216,7 @@ async fn raid50() {
         .args(&files.paths[3..6])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 6);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -258,7 +258,7 @@ async fn raid51() {
         .args(&files.paths[6..9])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 9);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")

@@ -187,7 +187,8 @@ impl Bfffsd {
 
         for dev in cli.devices.iter() {
             // TODO: taste devices in parallel
-            manager.taste(dev).await.unwrap();
+            // Ignore errors like "ENOENT".
+            let _ = manager.taste(dev).await;
         }
 
         let uuid = manager
