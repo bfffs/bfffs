@@ -881,12 +881,12 @@ mod tests {
         let f = 2;
 
         let locator = PrimeS::new(n, k, f);
-        let id = Some(ChunkId::Data(0));
+        let id = ChunkId::Data(0);
         // Go for two repetitions
         let end = ChunkId::Data(locator.datachunks() * 2);
         // Create the PrimeSIter directly instead of through Locator::iter so we
         // can get the real return type, not just the Trait object.
-        let mut iter = PrimeSIter::new(&locator, id.unwrap(), end);
+        let mut iter = PrimeSIter::new(&locator, id, end);
         loop {
             // Check that the internal state is identical
             let next_id = iter.peek().map(|(i, _)| i);
@@ -913,12 +913,12 @@ mod tests {
         let f = 2;
 
         let locator = PrimeS::new(n, k, f);
-        let id = Some(ChunkId::Data(0));
+        let id = ChunkId::Data(0);
         // Go for two repetitions
         let end = ChunkId::Data(locator.datachunks() * 2);
         // Create the PrimeSIter directly instead of through Locator::iter so we
         // can get the real return type, not just the Trait object.
-        let mut iter = PrimeSIterData::new(&locator, id.unwrap(), end);
+        let mut iter = PrimeSIterData::new(&locator, id, end);
         loop {
             // Check that the internal state is identical
             let next_id = iter.peek().map(|(i, _)| i);

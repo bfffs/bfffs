@@ -181,7 +181,7 @@ async fn lots() {
     let h = harness(&dsnames);
     dsnames.sort();
     let mut expected = vec![String::from("NAME"), String::from("mypool")];
-    expected.extend(dsnames.into_iter());
+    expected.extend(dsnames);
     let mut expected = expected.join("\n");
     expected.push('\n');
     bfffs()

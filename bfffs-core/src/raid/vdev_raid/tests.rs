@@ -9,9 +9,9 @@ use rstest::rstest;
 fn test_min_max() {
     let empty: Vec<u8> = Vec::with_capacity(0);
     assert_eq!(min_max(empty.iter()), None);
-    assert_eq!(min_max(vec![42u8].iter()), Some((&42, &42)));
-    assert_eq!(min_max(vec![1u32, 2u32, 3u32].iter()), Some((&1, &3)));
-    assert_eq!(min_max(vec![0i8, -9i8, 18i8, 1i8].iter()), Some((&-9, &18)));
+    assert_eq!(min_max([42u8].iter()), Some((&42, &42)));
+    assert_eq!(min_max([1u32, 2u32, 3u32].iter()), Some((&1, &3)));
+    assert_eq!(min_max([0i8, -9i8, 18i8, 1i8].iter()), Some((&-9, &18)));
 }
 
 #[test]
