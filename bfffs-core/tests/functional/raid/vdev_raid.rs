@@ -2,7 +2,7 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    num::NonZeroU64,
+    num::{NonZeroU8, NonZeroU64},
     path::PathBuf,
     sync::Arc
 };
@@ -24,7 +24,7 @@ use bfffs_core::{
     LbaT,
     label::*,
     mirror::Mirror,
-    vdev::Vdev,
+    vdev::{Health, Vdev},
     raid::{Manager, VdevRaid, VdevRaidApi},
 };
 
@@ -822,6 +822,52 @@ mod io {
             vdev_raid.open_zone(zone).await.expect("open_zone");
             write_read(vdev_raid.clone(), vec![wbuf0], vec![rbuf], zone, start).await;
             assert_eq!(wbuf1, dbsr.try_const().unwrap());
+        }
+    }
+}
+
+mod open {
+    use super::*;
+
+    #[fixture]
+    async fn harness() -> Harness {
+        super::harness(3, 3, 1, 2).await
+    }
+
+    /// It should be possible to import a raid when some children are missing
+    #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
+    #[tokio::test]
+    #[awt]
+    async fn missing_children(
+        #[future] harness: Harness,
+        #[case] missing: usize)
+    {
+        let uuid = harness.vdev.uuid();
+        let label_writer = LabelWriter::new(0);
+        harness.vdev.write_label(label_writer).await.unwrap();
+        let old_status = harness.vdev.status();
+        drop(harness.vdev);
+
+        fs::remove_file(harness.paths[missing].clone()).unwrap();
+        let mut manager = Manager::default();
+        for path in harness.paths.iter() {
+            let _ = manager.taste(path).await;
+        }
+        let (vr, _) = manager.import(uuid).await.unwrap();
+        assert_eq!(uuid, vr.uuid());
+        let status = vr.status();
+        assert_eq!(status.health, Health::Degraded(NonZeroU8::new(1).unwrap()));
+        for i in 0..harness.paths.len() {
+            assert_eq!(old_status.mirrors[i].uuid, status.mirrors[i].uuid);
+            if i != missing {
+                // BFFFS doesn't yet remember the paths of disks, whether
+                // they're imported or not, missing or present.
+                assert_eq!(old_status.mirrors[i].leaves[0].path,
+                           status.mirrors[i].leaves[0].path);
+            }
         }
     }
 }

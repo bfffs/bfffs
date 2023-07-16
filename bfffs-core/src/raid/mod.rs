@@ -94,19 +94,25 @@ impl Manager {
         rl.iter_children()
             .map(move |child_uuid| self.mm.import(*child_uuid))
             .collect::<FuturesUnordered<_>>()
-            // XXX Can't use StreamExt::try_collect, because that will drop
-            // incomplete futures on error.  Could use Iterator::try_collect if
-            // it stabilizes.  https://github.com/rust-lang/rust/issues/94047
+            // Could use Iterator::try_collect if it stabilizes.
+            // https://github.com/rust-lang/rust/issues/94047
             .collect::<Vec<_>>()
             .map(move |v| {
                 let mut pairs = Vec::with_capacity(rl.nchildren());
+                let mut error = Error::ENOENT;
                 for r in v.into_iter() {
                     match r {
                         Ok(pair) => pairs.push(pair),
-                        Err(e) => return Err(e)
+                        Err(e) => {
+                            error = e;
+                        }
                     }
+                };
+                if pairs.is_empty() {
+                    Err(error)
+                } else {
+                    Ok(open(Some(uuid), pairs))
                 }
-                Ok(open(Some(uuid), pairs))
             }).boxed()
     }
 
