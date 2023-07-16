@@ -101,14 +101,14 @@ mod persistence {
 
     #[fixture]
     fn objects() -> (Arc<IDML>, TempDir, Vec<PathBuf>) {
-        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .chunksize(1)
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
-        (idml, tempdir, paths)
+        (idml, ph.tempdir, ph.paths)
     }
 
     // Testing IDML::open with golden labels is too hard, because we need to
@@ -188,15 +188,15 @@ mod t {
 
     #[fixture]
     fn objects() -> (IDML, TempDir) {
-        let (tempdir, _paths, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .chunksize(1)
             .zone_size(LBA_PER_ZONE)
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(pool, cache.clone()));
+        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
-        (idml, tempdir)
+        (idml, ph.tempdir)
     }
 
     // When moving the last record from a zone, the allocator should not reopen

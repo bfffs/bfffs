@@ -125,9 +125,7 @@ pub struct Label {
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
 #[derive(Default)]
 pub struct Manager {
-    // NB: these labels may be out-of-date because we don't open devices
-    // exclusively until import time.
-    devices: BTreeMap<Uuid, PathBuf>,
+    devices: BTreeMap<Uuid, VdevFile>,
 }
 
 impl Manager {
@@ -136,7 +134,12 @@ impl Manager {
         -> impl Future<Output=Result<(VdevFile, LabelReader)>>
     {
         future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
-            .and_then(VdevFile::open)
+            .and_then(move |vf| async move {
+                let mut lr = VdevFile::read_label(&vf.file).await?;
+                let label: Label = lr.deserialize().unwrap();
+                assert_eq!(uuid, label.uuid);
+                Ok((vf, lr))
+            })
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
@@ -145,9 +148,8 @@ impl Manager {
     /// for building Pools.
     // TODO: add a method for tasting disks in parallel.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let pathbuf = p.as_ref().to_owned();
         let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(vdev_file.uuid(), pathbuf);
+        self.devices.insert(vdev_file.uuid(), vdev_file);
         Ok(reader)
     }
 }
@@ -253,10 +255,14 @@ impl VdevFile {
         where P: AsRef<Path>
     {
         let pb = path.as_ref().to_path_buf();
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
         let f = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_DIRECT)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
             .open(path)
             .map(File::new)?;
         let lpz = match lbas_per_zone {
@@ -367,23 +373,20 @@ impl VdevFile {
         -> Result<(Self, LabelReader)>
     {
         let pb = path.as_ref().to_path_buf();
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
         let file = OpenOptions::new()
             .read(true)
             .write(true)
-            .custom_flags(libc::O_DIRECT)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
             .open(path)
             .map(File::new)
             .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
         match file {
             Ok(f) => {
-                let r = match VdevFile::read_label(&f, 0).await {
-                    Err(_e) => {
-                        // Try the second label
-                        VdevFile::read_label(&f, 1).await
-                    },
-                    Ok(r) => Ok(r)
-                };
-                match r {
+                match VdevFile::read_label(&f).await {
                     Err(e) => Err(e),
                     Ok(mut label_reader) => {
                         let erase_method = EraseMethod::get(f.as_raw_fd())?;
@@ -445,22 +448,34 @@ impl VdevFile {
     }
 
     /// Read just one of a vdev's labels
-    async fn read_label(f: &File, label: u32) -> Result<LabelReader>
+    async fn read_label(f: &File) -> Result<LabelReader>
     {
-        let lba = LabelReader::lba(label);
-        let offset = lba * BYTES_PER_LBA as u64;
-        // TODO: figure out how to use mem::MaybeUninit with File::read_at
-        let mut rbuf = vec![0; LABEL_SIZE];
-        let r = f.read_at(&mut rbuf[..], offset).unwrap().await;
-        match r {
-            Ok(_aio_result) => {
-                match LabelReader::new(rbuf) {
-                    Ok(lr) => Ok(lr),
-                    Err(e) => Err(e)
+        let mut r = Err(Error::EDOOFUS);    // Will get overridden
+
+        for label in 0..2 {
+            let lba = LabelReader::lba(label);
+            let offset = lba * BYTES_PER_LBA as u64;
+            // TODO: figure out how to use mem::MaybeUninit with File::read_at
+            let mut rbuf = vec![0; LABEL_SIZE];
+            match f.read_at(&mut rbuf[..], offset).unwrap().await {
+                Ok(_aio_result) => {
+                    match LabelReader::new(rbuf) {
+                        Ok(lr) => {
+                            r = Ok(lr);
+                            break
+                        }
+                        Err(e) => {
+                            // If this is the first label, try the second.
+                            r = Err(e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    r = Err(Error::from(e));
                 }
-            },
-            Err(e) => Err(Error::from(e))
+            }
         }
+        r
     }
 
     /// Read one of the spacemaps from disk.

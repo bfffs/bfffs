@@ -26,7 +26,7 @@ use futures::{
     task::{Context, Poll}
 };
 #[cfg(not(test))]
-use futures::{FutureExt, future};
+use futures::{FutureExt, StreamExt, future};
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 
@@ -71,9 +71,17 @@ impl Manager {
         ml.children.into_iter()
             .map(move |child_uuid| self.vbm.import(child_uuid))
             .collect::<FuturesUnordered<_>>()
-            .try_collect::<Vec<_>>()
-        .map_ok(move |pairs| Mirror::open(Some(uuid), pairs))
-        .boxed()
+            .collect::<Vec<_>>()
+            .map(move |v| {
+                let mut pairs = Vec::with_capacity(v.len());
+                for r in v.into_iter() {
+                    match r {
+                        Ok(pair) => pairs.push(pair),
+                        Err(e) => return Err(e)
+                    }
+                }
+                Ok(Mirror::open(Some(uuid), pairs))
+            }).boxed()
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
@@ -92,7 +100,14 @@ impl Manager {
 #[derive(Clone, Debug)]
 pub struct Status {
     /// Paths to each leaf
-    pub leaves: Vec<(PathBuf, Uuid)>
+    pub leaves: Vec<(PathBuf, Uuid)>,
+    pub uuid: Uuid
+}
+
+impl Status {
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
 }
 
 /// `Mirror`: Device mirroring, both permanent and temporary
@@ -294,6 +309,7 @@ impl Mirror {
             leaves: self.blockdevs.iter()
                 .map(|vb| (vb.path(), vb.uuid()))
                 .collect::<Vec<_>>(),
+            uuid: self.uuid()
         }
     }
 

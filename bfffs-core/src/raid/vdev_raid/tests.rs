@@ -71,11 +71,11 @@ fn stripe_buffer_one_iovec() {
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 1);
-        assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
+        assert_eq!(&sglist[0][..], &[0; 4096][..]);
     }
     let sglist = sb.pop();
     assert_eq!(sglist.len(), 1);
-    assert_eq!(&sglist[0][..], &vec![0; 4096][..]);
+    assert_eq!(&sglist[0][..], &[0; 4096][..]);
 }
 
 // Pad a StripeBuffer that is larger than the ZERO_REGION
@@ -129,13 +129,13 @@ fn stripe_buffer_two_iovecs() {
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 2);
-        assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
-        assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
+        assert_eq!(&sglist[0][..], &[0; 8192][..]);
+        assert_eq!(&sglist[1][..], &[1; 4096][..]);
     }
     let sglist = sb.pop();
     assert_eq!(sglist.len(), 2);
-    assert_eq!(&sglist[0][..], &vec![0; 8192][..]);
-    assert_eq!(&sglist[1][..], &vec![1; 4096][..]);
+    assert_eq!(&sglist[0][..], &[0; 8192][..]);
+    assert_eq!(&sglist[1][..], &[1; 4096][..]);
 }
 
 #[test]
@@ -155,13 +155,13 @@ fn stripe_buffer_two_iovecs_overflow() {
     {
         let sglist = sb.peek();
         assert_eq!(sglist.len(), 2);
-        assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
-        assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+        assert_eq!(&sglist[0][..], &[0; 16384][..]);
+        assert_eq!(&sglist[1][..], &[1; 8192][..]);
     }
     let sglist = sb.pop();
     assert_eq!(sglist.len(), 2);
-    assert_eq!(&sglist[0][..], &vec![0; 16384][..]);
-    assert_eq!(&sglist[1][..], &vec![1; 8192][..]);
+    assert_eq!(&sglist[0][..], &[0; 16384][..]);
+    assert_eq!(&sglist[1][..], &[1; 8192][..]);
 }
 
 // pet kcov

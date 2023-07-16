@@ -128,11 +128,20 @@ pub struct PoolBuilder {
     /// Pool name
     name: &'static str,
     /// LBAs per zone
-    zone_size: Option<NonZeroU64>
+    zone_size: Option<NonZeroU64>,
+    /// Use gnop devices instead of files
+    gnop: bool
+}
+
+pub struct PoolHarness {
+    pub tempdir: TempDir,
+    pub paths: Vec<PathBuf>,
+    pub pool: Pool,
+    pub gnops: Vec<Gnop>
 }
 
 impl PoolBuilder {
-    pub fn build(&self) -> (TempDir, Vec<PathBuf>, Pool) {
+    pub fn build(&self) -> PoolHarness {
         let mirrors_per_cluster = (self.n / self.m) / self.nclusters;
         assert_eq!(self.n % self.m, 0);
         assert!(mirrors_per_cluster >= self.k as usize);
@@ -143,12 +152,22 @@ impl PoolBuilder {
             .prefix("bfffs_functional_test")
             .tempdir()
             .unwrap();
-        let paths = (0..self.n).map(|i| {
-            let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
-            let file = std::fs::File::create(&fname).unwrap();
-            file.set_len(self.fsize).unwrap();
-            PathBuf::from(fname)
-        }).collect::<Vec<_>>();
+        let mut gnops = Vec::new();
+        let mut paths = Vec::new();
+        if self.gnop {
+            for _ in 0..self.n {
+                let gnop = Gnop::new().unwrap();
+                paths.push(gnop.as_path().to_owned());
+                gnops.push(gnop);
+            }
+        } else {
+            for i in 0..self.n {
+                let fname = format!("{}/vdev.{}", tempdir.path().display(), i);
+                let file = std::fs::File::create(&fname).unwrap();
+                file.set_len(self.fsize).unwrap();
+                paths.push(PathBuf::from(fname));
+            }
+        }
         let clusters = paths.chunks(self.m)
             .map(|mpaths| {
                 Mirror::create(mpaths, self.zone_size).unwrap()
@@ -163,7 +182,7 @@ impl PoolBuilder {
                 Cluster::create(raid)
             }).collect::<Vec<_>>();
         let pool = Pool::create(String::from(self.name), clusters);
-        (tempdir, paths, pool)
+        PoolHarness{tempdir, paths, pool, gnops}
     }
 
     pub fn chunksize(&mut self, cs: u64) -> &mut Self {
@@ -196,6 +215,11 @@ impl PoolBuilder {
         self
     }
 
+    pub fn gnop(&mut self, gnop: bool) -> &mut Self {
+        self.gnop = gnop;
+        self
+    }
+
     pub fn new() -> Self {
         Self {
             n: 1,
@@ -206,7 +230,8 @@ impl PoolBuilder {
             fsize: 1 << 30,  // 1GB
             cs: None,
             name: "functional_test_pool",
-            zone_size: None
+            zone_size: None,
+            gnop: false
         }
     }
 

@@ -14,9 +14,7 @@ use divbuf::DivBufShared;
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    path::PathBuf
 };
-use tempfile::TempDir;
 
 mod persistence {
     use futures::{TryFutureExt, future};
@@ -43,31 +41,28 @@ mod persistence {
         0xab, 0x9d, 0xa5, 0x1a, 0x9d, 0x11, 0x5f, 0xfb,
     ];
 
-    type Harness = (Pool, TempDir, Vec<PathBuf>);
     #[fixture]
-    fn harness() -> Harness {
-        let (tempdir, paths, pool) = crate::PoolBuilder::new()
+    fn harness() -> crate::PoolHarness {
+        crate::PoolBuilder::new()
             .disks(2)
             .nclusters(2)
             .name("TestPool")
             .chunksize(1)
             .zone_size(16)
-            .build();
-        (pool, tempdir, paths)
+            .build()
     }
 
     // Test open-after-write for Pool
     #[rstest]
     #[tokio::test]
-    async fn open(harness: Harness) {
-        let (old_pool, _tempdir, paths) = harness;
-        let name = old_pool.name().to_string();
-        let uuid = old_pool.uuid();
+    async fn open(harness: crate::PoolHarness) {
+        let name = harness.pool.name().to_string();
+        let uuid = harness.pool.uuid();
         let label_writer = LabelWriter::new(0);
-        future::try_join(old_pool.flush(0), old_pool.write_label(label_writer))
+        future::try_join(harness.pool.flush(0), harness.pool.write_label(label_writer))
             .await.unwrap();
-        drop(old_pool);
-        let c0_fut = VdevFile::open(paths[0].clone())
+        drop(harness.pool);
+        let c0_fut = VdevFile::open(harness.paths[0].clone())
             .and_then(|(leaf, reader)| {
                 let block = VdevBlock::new(leaf);
                 let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
@@ -75,7 +70,7 @@ mod persistence {
                 Cluster::open(vr)
                 .map_ok(move |cluster| (cluster, lr))
         });
-        let c1_fut = VdevFile::open(paths[1].clone())
+        let c1_fut = VdevFile::open(harness.paths[1].clone())
             .and_then(|(leaf, reader)| {
                 let block = VdevBlock::new(leaf);
                 let (mirror, lr) = Mirror::open(None, vec![(block, reader)]);
@@ -92,11 +87,11 @@ mod persistence {
 
     #[rstest]
     #[tokio::test]
-    async fn write_label(harness: Harness) {
-        let (old_pool, _tempdir, paths) = harness;
+    async fn write_label(harness: crate::PoolHarness) {
+        let ph = harness;
         let label_writer = LabelWriter::new(0);
-        old_pool.write_label(label_writer).await.unwrap();
-        for path in paths {
+        ph.pool.write_label(label_writer).await.unwrap();
+        for path in ph.paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, raid, and cluster labels
@@ -124,7 +119,7 @@ mod t {
 
     #[tokio::test]
     async fn enospc() {
-        let (_, _, pool) = crate::PoolBuilder::new()
+        let ph = crate::PoolBuilder::new()
             .fsize(1 << 16)     // 64 kB
             .zone_size(16)
             .build();
@@ -135,11 +130,11 @@ mod t {
         // blocks.
         for _ in 0..6 {
             let db0 = dbs.try_const().unwrap();
-            pool.write(db0, txg).await.unwrap();
+            ph.pool.write(db0, txg).await.unwrap();
         }
-        assert_eq!(pool.used(), 6);
+        assert_eq!(ph.pool.used(), 6);
         let db0 = dbs.try_const().unwrap();
-        assert_eq!(Err(Error::ENOSPC), pool.write(db0, txg).await);
-        assert_eq!(pool.used(), 6);
+        assert_eq!(Err(Error::ENOSPC), ph.pool.write(db0, txg).await);
+        assert_eq!(ph.pool.used(), 6);
     }
 }
