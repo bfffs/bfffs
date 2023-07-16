@@ -523,7 +523,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         .map(|c| Ok(*c.ptr.as_addr()))
         .collect::<Vec<std::result::Result<A, _>>>();
         async move {
-            tx.send_all(&mut stream::iter(child_addresses.into_iter()))
+            tx.send_all(&mut stream::iter(child_addresses))
             .map_err(|_| Error::EPIPE)
             .await?;
             if height > 1 {
@@ -1750,7 +1750,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         {
             credit.extend(rcredit);
             let mut deleted_on_left = 0;
-            lmap.extend(rmap.into_iter());
+            lmap.extend(rmap);
             if let Some(elem) = lelem {
                 guard.as_int_mut().children[left_in_cut.unwrap()] = elem;
             }
@@ -2377,7 +2377,7 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                                 echelon)
             .try_collect::<Vec<_>>()
             .and_then(move |nodes| {
-                stream::iter(nodes.into_iter())
+                stream::iter(nodes)
                 .map(Ok)
                 .try_for_each_concurrent(None, move |node| {
                     // TODO: consider attempting to rewrite multiple nodes

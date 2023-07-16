@@ -19,9 +19,12 @@ task:
         CARGO_ARGS: --all-features
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
+        # The latest FreeBSD 14 images in google cloud are broken, so use 13.2
+        # https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=272354
+        image: freebsd-13-2-release-amd64
         # Using image_family doesn't seem to work in conjunction with
         # compute_engine_instance.  So specify a 14.0 snapshot explicitly.
-        image: freebsd-14-0-current-amd64-v20230413
+        #image: freebsd-14-0-current-amd64-v20230413
         platform: freebsd
         cpu: 4
         disk: 40

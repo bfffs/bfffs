@@ -195,7 +195,7 @@ fn test_div_roundup() {
 #[cfg(test)]
 macro_rules! checksum_sglist_helper {
     ( $klass:ident) => {
-        let together = vec![0u8, 1, 2, 3, 4, 5];
+        let together = [0u8, 1, 2, 3, 4, 5];
         let apart = vec![vec![0u8, 1], vec![2u8, 3], vec![4u8, 5]];
         let mut together_hasher = $klass::new();
         let mut apart_hasher = $klass::new();

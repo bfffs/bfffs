@@ -1320,7 +1320,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
                 let cutoff_idx = other_children.len() - keys_to_share;
                 let other_right_half =
                     other_children.split_off(cutoff_idx);
-                int.children.splice(0..0, other_right_half.into_iter());
+                int.children.splice(0..0, other_right_half);
             },
             NodeData::Leaf(leaf) => {
                 let other_ld = other.as_leaf_mut();
@@ -1685,7 +1685,7 @@ fn intelem_typical_size() {
 
 #[test]
 fn serialize_int() {
-    let expected = vec![1u8, 0, 0, 0, // enum variant 0 for IntNode
+    let expected = [1u8, 0, 0, 0, // enum variant 0 for IntNode
         2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
            0, 0, 0, 0,              // K=0
            1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
@@ -1723,7 +1723,7 @@ fn serialize_int() {
 
 #[test]
 fn serialize_leaf() {
-    let expected = vec![0u8, 0, 0, 0, // enum variant 0 for LeafNode
+    let expected = [0u8, 0, 0, 0, // enum variant 0 for LeafNode
         3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
         0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
         1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
