@@ -1031,6 +1031,54 @@ mod open_zone {
         vdev_raid.write_at(wbuf, 1, 4196).now_or_never().unwrap().unwrap();
     }
 
+    // Reopening a zone with wasted chunks should _not_ rewrite the zero-fill
+    // area.
+    #[test]
+    fn reopen_wasted_chunks() {
+        let k = 5;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 5;
+        let zl0 = (1, 32);
+        let zl1 = (32, 64);
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let m = || {
+            let mut m = Mirror::default();
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_lba2zone()
+                .with(eq(1))
+                .return_const(Some(0));
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            m.expect_zone_limits()
+                .with(eq(1))
+                .return_const(zl1);
+            m.expect_open_zone()
+                .once()
+                .with(eq(32))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            m.expect_writev_at()
+                .never();
+            Child::present(m)
+        };
+
+        for _ in 0..k {
+            mirrors.push(m());
+        }
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.reopen_zone(1, 20).now_or_never().unwrap().unwrap();
+
+    }
+
     // Open a zone that has wasted leading space due to a chunksize misaligned
     // with the zone size.  Use highly unrealistic disks with 32 LBAs per zone
     #[test]

@@ -449,7 +449,8 @@ impl VdevRaid {
                 }
             }
             futs.push(Box::pin(mirrordev.open_zone(first_disk_lba)));
-            if first_usable_disk_lba > first_disk_lba {
+            if first_usable_disk_lba > first_disk_lba && already_allocated == 0
+            {
                 // Zero-fill leading wasted space so as not to cause a
                 // write pointer violation on SMR disks.
                 let zero_lbas = first_usable_disk_lba - first_disk_lba;
