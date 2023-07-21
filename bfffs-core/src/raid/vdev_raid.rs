@@ -6,7 +6,9 @@ use crate::{
     types::*,
     util::*,
     vdev::*,
+    mirror
 };
+use cfg_if::cfg_if;
 use divbuf::{DivBuf, DivBufInaccessible, DivBufMut, DivBufShared};
 use fixedbitset::FixedBitSet;
 use futures::{
@@ -27,7 +29,7 @@ use std::{
     cmp,
     fmt,
     mem,
-    num::NonZeroU64,
+    num::{NonZeroU8, NonZeroU64},
     pin::Pin,
     ptr,
     sync::{Arc, RwLock}
@@ -177,6 +179,118 @@ impl StripeBuffer {
     }
 }
 
+/// A child of a VdevRaid.  Probably either a Mirror or a missing disk.
+// We optimize for the large case (Present) which is both more important and
+// more common than the small case.
+#[allow(clippy::large_enum_variant)]
+enum Child {
+    Present(Mirror),
+    Missing(Uuid)
+}
+
+cfg_if! {
+    if #[cfg(test)] {
+        type ChildReadSpacemap = BoxVdevFut;
+        type ChildReadAt = BoxVdevFut;
+        type ChildReadvAt = BoxVdevFut;
+    } else {
+        type ChildReadSpacemap = mirror::ReadSpacemap;
+        type ChildReadAt = mirror::ReadAt;
+        type ChildReadvAt = mirror::ReadvAt;
+    }
+}
+
+impl Child {
+    fn present(vdev: Mirror) -> Self {
+        Child::Present(vdev)
+    }
+
+    fn missing(uuid: Uuid) -> Self {
+        Child::Missing(uuid)
+    }
+
+    fn as_present(&self) -> Option<&Mirror> {
+        if let Child::Present(vb) = self {
+            Some(vb)
+        } else {
+            None
+        }
+    }
+
+    fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
+        self.as_present().unwrap().erase_zone(start, end)
+    }
+
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
+        self.as_present().unwrap().finish_zone(start, end)
+    }
+
+    fn open_zone(&self, start: LbaT) -> BoxVdevFut {
+        if let Child::Present(m) = self {
+            m.open_zone(start)
+        } else {
+            Box::pin(future::ok(())) as BoxVdevFut
+        }
+    }
+
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> ChildReadAt {
+        self.as_present().unwrap().read_at(buf, lba)
+    }
+
+    fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> ChildReadSpacemap {
+        self.as_present().unwrap().read_spacemap(buf, smidx)
+    }
+
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> ChildReadvAt {
+        self.as_present().unwrap().readv_at(bufs, lba)
+    }
+
+    fn status(&self) -> Option<mirror::Status> {
+        self.as_present().map(Mirror::status)
+    }
+
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
+        self.as_present().unwrap().write_at(buf, lba)
+    }
+
+    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut {
+        self.as_present().unwrap().write_label(labeller)
+    }
+
+    fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+        ->  BoxVdevFut
+    {
+        self.as_present().unwrap().write_spacemap(sglist, idx, block)
+    }
+
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut {
+        self.as_present().unwrap().writev_at(bufs, lba)
+    }
+
+    fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
+        self.as_present().unwrap().lba2zone(lba)
+    }
+
+    fn optimum_queue_depth(&self) -> Option<u32> {
+        self.as_present().map(Mirror::optimum_queue_depth)
+    }
+
+    fn size(&self) -> Option<LbaT> {
+        self.as_present().map(Mirror::size)
+    }
+
+    fn sync_all(&self) -> BoxVdevFut {
+        self.as_present().unwrap().sync_all()
+    }
+
+    fn uuid(&self) -> Uuid {
+        match self {
+            Child::Present(vb) => vb.uuid(),
+            Child::Missing(uuid) => *uuid
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
@@ -211,7 +325,7 @@ impl Future for ReadSpacemap {
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        let nchildren = self.vdev.mirrors.len();
+        let nchildren = self.vdev.children.len();
         Poll::Ready(loop {
             let pinned = self.as_mut().project();
             let r = futures::ready!(pinned.fut.poll(cx));
@@ -225,7 +339,7 @@ impl Future for ReadSpacemap {
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
             let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
-            let new_fut = pinned.vdev.mirrors[idx].read_spacemap(buf,
+            let new_fut = pinned.vdev.children[idx].read_spacemap(buf,
                 *pinned.smidx);
             self.set(ReadSpacemap {
                 vdev: self.vdev.clone(),
@@ -259,13 +373,16 @@ pub struct VdevRaid {
     locator: Box<dyn Locator>,
 
     /// Underlying mirror devices.  Order is important!
-    mirrors: Box<[Mirror]>,
+    children: Box<[Child]>,
 
     /// RAID placement algorithm.
     layout_algorithm: LayoutAlgorithm,
 
     /// Best number of queued commands for the whole `VdevRaid`
     optimum_queue_depth: u32,
+
+    /// Usable size of the vdev.
+    size: LbaT,
 
     /// In memory cache of data that has not yet been flushed to the mirror
     /// devices.
@@ -310,7 +427,7 @@ macro_rules! issue_1stripe_ops {
                 } else {
                     loc.offset * $self.chunksize
                 };
-                $self.mirrors[loc.disk as usize].$func(d, disk_lba)
+                $self.children[loc.disk as usize].$func(d, disk_lba)
             }).collect::<FuturesOrdered<_>>()
             .collect::<Vec<Result<()>>>()
         }
@@ -355,8 +472,21 @@ impl VdevRaid {
         let (layout, chunksize) = VdevRaid::choose_layout(num_disks,
             disks_per_stripe, redundancy, chunksize);
         let uuid = Uuid::new_v4();
+        let children = mirrors.into_iter()
+            .map(Child::present)
+            .collect();
         VdevRaid::new(chunksize, disks_per_stripe, redundancy, uuid,
-                      layout, mirrors.into_boxed_slice())
+                      layout, children)
+    }
+
+    /// Return a reference to the first child that isn't missing
+    fn first_healthy_child(&self) -> &Mirror {
+        for c in self.children.iter() {
+            if let Some(m) = c.as_present() {
+                return m;
+            }
+        }
+        panic!("No children at all?");
     }
 
     fn new(chunksize: LbaT,
@@ -364,33 +494,53 @@ impl VdevRaid {
            redundancy: i16,
            uuid: Uuid,
            layout_algorithm: LayoutAlgorithm,
-           mirrors: Box<[Mirror]>) -> Self
+           children: Box<[Child]>) -> Self
     {
-        let num_disks = mirrors.len() as i16;
+        let num_disks = children.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
         let locator: Box<dyn Locator> = match layout_algorithm {
             LayoutAlgorithm::PrimeS => Box::new(
                 PrimeS::new(num_disks, disks_per_stripe, redundancy))
         };
-        for i in 1..mirrors.len() {
-            // All mirrors must be the same size
-            assert_eq!(mirrors[0].size(), mirrors[i].size());
 
-            // All mirrors must have the same zone boundaries
-            // XXX this check assumes fixed-size zones
-            assert_eq!(mirrors[0].zone_limits(0),
-                       mirrors[i].zone_limits(0));
+        // XXX The vdev size or child size should be recorded in the label.
+        // Otherwise it could change when a pool is imported with missing
+        // devices.
+        let child_size = children.iter()
+            .filter_map(Child::size)
+            .min()
+            .unwrap();
+        let zl0 = children.iter()
+            .filter_map(Child::as_present)
+            .map(|m| m.zone_limits(0))
+            .next()
+            .unwrap();
+
+        for child in children.iter() {
+            if let Some(m) = child.as_present() {
+                // All children must be the same size
+                assert_eq!(child_size, m.size());
+
+                // All children must have the same zone boundaries
+                // XXX this check assumes fixed-size zones
+                assert_eq!(zl0, m.zone_limits(0));
+            }
         }
 
         // NB: the optimum queue depth should actually be a little higher for
         // healthy reads than for writes or degraded reads.  This calculation
         // computes the optimum for writes and degraded reads.
-        let optimum_queue_depth = mirrors.iter()
-        .map(Mirror::optimum_queue_depth)
+        let optimum_queue_depth = children.iter()
+        .filter_map(Child::optimum_queue_depth)
         .sum::<u32>() / (codec.stripesize() as u32);
 
-        VdevRaid { chunksize, codec, locator, mirrors, layout_algorithm,
+        let disk_size_in_chunks = child_size / chunksize;
+        let size = disk_size_in_chunks * locator.datachunks() *
+            chunksize / LbaT::from(locator.depth());
+
+        VdevRaid { chunksize, codec, locator, children, layout_algorithm,
                    optimum_queue_depth,
+                   size,
                    stripe_buffers: RwLock::new(BTreeMap::new()),
                    uuid}
     }
@@ -400,15 +550,20 @@ impl VdevRaid {
     /// # Parameters
     ///
     /// * `label`:      The `VdevRaid`'s label, taken from any child.
-    /// * `mirrors`:    A map of all the children `Mirror`s, indexed by UUID.
+    /// * `mirrors`:    A map of all the present children `Mirror`s, indexed by
+    ///                 UUID.
     pub(super) fn open(label: Label, mut mirrors: BTreeMap<Uuid, Mirror>)
         -> Self
     {
-        assert_eq!(mirrors.len(), label.children.len(),
-            "Missing mirror devices");
         let children = label.children.iter().map(|uuid| {
-            mirrors.remove(uuid).unwrap()
+            if let Some(m) = mirrors.remove(uuid) {
+                Child::present(m)
+            } else {
+                Child::missing(*uuid)
+            }
         }).collect::<Vec<_>>();
+        assert!(children.len() as i16 >= label.disks_per_stripe - label.redundancy,
+            "Insufficient RAID members");
         VdevRaid::new(label.chunksize,
                       label.disks_per_stripe,
                       label.redundancy,
@@ -433,10 +588,10 @@ impl VdevRaid {
         let sb = StripeBuffer::new(start_lba + already_allocated, stripe_lbas);
         assert!(self.stripe_buffers.write().unwrap().insert(zone, sb).is_none());
 
-        let (first_disk_lba, _) = self.mirrors[0].zone_limits(zone);
+        let (first_disk_lba, _) = self.first_healthy_child().zone_limits(zone);
         let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
         let futs = FuturesUnordered::<BoxVdevFut>::new();
-        for (idx, mirrordev) in self.mirrors.iter().enumerate() {
+        for (idx, mirrordev) in self.children.iter().enumerate() {
             // Find the first LBA of this disk that's within our zone
             let mut first_usable_disk_lba = 0;
             for chunk in start_disk_chunk.. {
@@ -449,7 +604,8 @@ impl VdevRaid {
                 }
             }
             futs.push(Box::pin(mirrordev.open_zone(first_disk_lba)));
-            if first_usable_disk_lba > first_disk_lba {
+            if first_usable_disk_lba > first_disk_lba && already_allocated == 0
+            {
                 // Zero-fill leading wasted space so as not to cause a
                 // write pointer violation on SMR disks.
                 let zero_lbas = first_usable_disk_lba - first_disk_lba;
@@ -479,7 +635,7 @@ impl VdevRaid {
         const SENTINEL : LbaT = LbaT::max_value();
 
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let n = self.mirrors.len();
+        let n = self.children.len();
         let f = self.codec.protection();
         let k = self.codec.stripesize();
         let m = k - f;
@@ -551,7 +707,7 @@ impl VdevRaid {
             }
         }
 
-        multizip((self.mirrors.iter(),
+        multizip((self.children.iter(),
                               sglists.into_iter(),
                               start_lbas.into_iter()))
         .map(|(mirrordev, sglist, lba)| {
@@ -680,7 +836,7 @@ impl VdevRaid {
                 } else {
                     // Read extra data or parity chunks for reconstruction
                     let buf = exmuts.next().unwrap();
-                    Box::pin(self.mirrors[loc.disk as usize].read_at(buf, loc.offset * self.chunksize))
+                    Box::pin(self.children[loc.disk as usize].read_at(buf, loc.offset * self.chunksize))
                 };
                 recovery_lba += self.chunksize;
                 fut
@@ -746,7 +902,7 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
         let m = k - f;
-        let n = self.mirrors.len();
+        let n = self.children.len();
         let chunks = buf.len() / col_len;
         let stripes = chunks / m;
 
@@ -815,7 +971,7 @@ impl VdevRaid {
             sglists[loc.disk as usize].push(col);
         }
 
-        let bi = self.mirrors.iter();
+        let bi = self.children.iter();
         let sgi = sglists.into_iter();
         let li = start_lbas.into_iter();
         let fut = multizip((bi, sgi, li))
@@ -957,7 +1113,7 @@ impl Vdev for VdevRaid {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
-        let tentative = self.mirrors[loc.disk as usize].lba2zone(disk_lba);
+        let tentative = self.children[loc.disk as usize].lba2zone(disk_lba);
         tentative?;
         // NB: this call to zone_limits is slow, but unfortunately necessary.
         let limits = self.zone_limits(tentative.unwrap());
@@ -973,9 +1129,7 @@ impl Vdev for VdevRaid {
     }
 
     fn size(&self) -> LbaT {
-        let disk_size_in_chunks = self.mirrors[0].size() / self.chunksize;
-        disk_size_in_chunks * self.locator.datachunks() *
-            self.chunksize / LbaT::from(self.locator.depth())
+        self.size
     }
 
     fn sync_all(&self) -> BoxVdevFut {
@@ -988,7 +1142,7 @@ impl Vdev for VdevRaid {
             "Must call flush_zone before sync_all"
         );
         // TODO: handle errors on some devices
-        let fut = self.mirrors.iter()
+        let fut = self.children.iter()
         .map(|bd| bd.sync_all())
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -1023,15 +1177,15 @@ impl Vdev for VdevRaid {
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         let m = (self.codec.stripesize() - self.codec.protection()) as LbaT;
 
-        // 1) All mirrors must have the same zone map, so we only need to do
+        // 1) All children must have the same zone map, so we only need to do
         //    the zone_limits call once.
-        let (disk_lba_b, disk_lba_e) = self.mirrors[0].zone_limits(zone);
+        let (disk_lba_b, disk_lba_e) = self.first_healthy_child().zone_limits(zone);
         let disk_chunk_b = div_roundup(disk_lba_b, self.chunksize);
         let disk_chunk_e = disk_lba_e / self.chunksize - 1; //inclusive endpoint
 
         let endpoint_lba = |boundary_chunk, is_highend| {
             // 2) Find the lowest and highest stripe
-            let stripes = (0..self.mirrors.len()).map(|i| {
+            let stripes = (0..self.children.len()).map(|i| {
                 let cid = self.locator.loc2id(Chunkloc::new(i as i16,
                                                             boundary_chunk));
                 cid.address() / m
@@ -1076,7 +1230,7 @@ impl Vdev for VdevRaid {
     // The RAID transform does not increase the number of zones; it just makes
     // them bigger
     fn zones(&self) -> ZoneT {
-        self.mirrors[0].zones()
+        self.first_healthy_child().zones()
     }
 }
 
@@ -1085,8 +1239,8 @@ impl VdevRaidApi for VdevRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");
-        let (start, end) = self.mirrors[0].zone_limits(zone);
-        let fut = self.mirrors.iter().map(|mirrordev| {
+        let (start, end) = self.first_healthy_child().zone_limits(zone);
+        let fut = self.children.iter().map(|mirrordev| {
             mirrordev.erase_zone(start, end - 1)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -1097,7 +1251,7 @@ impl VdevRaidApi for VdevRaid {
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
     // StripeBuffer.
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
-        let (start, end) = self.mirrors[0].zone_limits(zone);
+        let (start, end) = self.first_healthy_child().zone_limits(zone);
         let mut futs = FuturesUnordered::new();
         let mut sbs = self.stripe_buffers.write().unwrap();
         let sb = sbs.get_mut(&zone).expect("Can't finish a closed zone");
@@ -1108,7 +1262,7 @@ impl VdevRaidApi for VdevRaid {
             futs.push(self.writev_at_one(&sgl, lba))
         }
         futs.extend(
-            self.mirrors.iter()
+            self.children.iter()
             .map(|mirrordev|
                  Box::pin(mirrordev.finish_zone(start, end - 1)) as BoxVdevFut
             )
@@ -1224,7 +1378,7 @@ impl VdevRaidApi for VdevRaid {
     fn read_spacemap(self: Arc<Self>, buf: IoVecMut, smidx: u32) -> BoxVdevFut
     {
         let dbi = buf.clone_inaccessible();
-        let fut = self.mirrors[0].read_spacemap(buf, smidx);
+        let fut = self.first_healthy_child().read_spacemap(buf, smidx);
         let fut = ReadSpacemap {
             vdev: self,
             issued: 1,
@@ -1242,15 +1396,42 @@ impl VdevRaidApi for VdevRaid {
     }
 
     fn status(&self) -> Status {
-        let n = self.mirrors.len();
+        let n = self.children.len();
         let k = self.codec.stripesize();
         let f = self.codec.protection();
         let codec = format!("{}-{},{},{}", self.layout_algorithm, n, k, f);
+        let mut mirrors = Vec::with_capacity(self.children.len());
+        for child in self.children.iter() {
+            let cs = child.status().unwrap_or(mirror::Status {
+                health: Health::Faulted,
+                uuid: child.uuid(),
+                leaves: Vec::new()
+            });
+            mirrors.push(cs);
+        }
+        let d = mirrors.iter().map(|m| {
+            match m.health {
+                Health::Online => 0,
+                Health::Degraded(n) => u8::from(n),
+                _ => {
+                    if m.leaves.is_empty() {
+                        // XXX in the case of a missing mirror child, we don't
+                        // know how many children it's supposed to have.  TODO:
+                        // store the target size of a mirror in its label.
+                        1
+                    } else {
+                        m.leaves.len() as u8
+                    }
+                }
+            }
+        }).sum();
+        let health = NonZeroU8::new(d)
+            .map(Health::Degraded)
+            .unwrap_or(Health::Online);
         Status {
+            health,
             codec,
-            mirrors: self.mirrors.iter()
-                .map(Mirror::status)
-                .collect::<Vec<_>>(),
+            mirrors,
         }
     }
 
@@ -1316,7 +1497,7 @@ impl VdevRaidApi for VdevRaid {
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
-        let children_uuids = self.mirrors.iter().map(|bd| bd.uuid())
+        let children_uuids = self.children.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
         let raid_label = Label {
             uuid: self.uuid,
@@ -1328,7 +1509,7 @@ impl VdevRaidApi for VdevRaid {
         };
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
-        let fut = self.mirrors.iter().map(|bd| {
+        let fut = self.children.iter().map(|bd| {
            bd.write_label(labeller.clone())
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -1339,7 +1520,7 @@ impl VdevRaidApi for VdevRaid {
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> BoxVdevFut
     {
-        let fut = self.mirrors.iter().map(|bd| {
+        let fut = self.children.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()

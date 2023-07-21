@@ -4,10 +4,8 @@ mod persistence {
     use bfffs_core::{
         label::*,
         mirror::Mirror,
-        vdev_block::*,
         vdev::Vdev,
-        vdev_file::*,
-        raid::{self, NullRaid, VdevRaidApi},
+        raid::{Manager, NullRaid, VdevRaidApi},
     };
     use pretty_assertions::assert_eq;
     use rstest::{fixture, rstest};
@@ -54,10 +52,9 @@ mod persistence {
         old_vdev.write_label(label_writer).await.unwrap();
         drop(old_vdev);
 
-        let (leaf, reader) = VdevFile::open(path).await.unwrap();
-        let mirror_children = vec![(VdevBlock::new(leaf), reader)];
-        let (mirror, reader) = Mirror::open(None, mirror_children);
-        let (vdev, _) = raid::open(Some(uuid), vec![(mirror, reader)]);
+        let mut manager = Manager::default();
+        manager.taste(path).await.unwrap();
+        let (vdev, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, vdev.uuid());
     }
 

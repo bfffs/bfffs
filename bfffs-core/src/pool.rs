@@ -152,6 +152,8 @@ impl Stats {
 /// Return value of [`Pool::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
+    /// Overall health of the Pool
+    pub health: Health,
     pub name: String,
     pub clusters: Vec<cluster::Status>
 }
@@ -377,11 +379,17 @@ impl Pool {
     }
 
     pub fn status(&self) -> Status {
+        let clusters = self.clusters.iter()
+            .map(Cluster::status)
+            .collect::<Vec<_>>();
+        let health = clusters.iter()
+            .map(|c| c.health)
+            .max()
+            .unwrap();
         Status {
+            health,
             name: self.name().to_string(),
-            clusters: self.clusters.iter()
-                .map(Cluster::status)
-                .collect::<Vec<_>>()
+            clusters
         }
     }
 
@@ -805,6 +813,58 @@ mod pool {
         let drp =  pool.write(db0, TxgT::from(42)).await.unwrap();
          pool.free(drp, 1).await.unwrap();
         assert_eq!(pool.used(), 0);
+    }
+
+    mod status {
+        use super::*;
+
+        use std::{
+            num::NonZeroU8,
+            path::PathBuf
+        };
+        use pretty_assertions::assert_eq;
+        use rstest::rstest;
+
+        use crate::vdev::Health::*;
+
+        /// When degraded, the pool's health should be the worse of all degraded
+        /// clusters.
+        #[rstest]
+        #[case(Online, vec![Online, Online])]
+        #[case(Rebuilding, vec![Online, Rebuilding])]
+        #[case(Faulted, vec![Rebuilding, Faulted])]
+        #[case(Degraded(NonZeroU8::new(1).unwrap()),
+            vec![Online, Degraded(NonZeroU8::new(1).unwrap())])]
+        #[case(Degraded(NonZeroU8::new(3).unwrap()),
+            vec![Degraded(NonZeroU8::new(3).unwrap()),
+                 Degraded(NonZeroU8::new(1).unwrap())])]
+        fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
+            let mut clusters = Vec::<Cluster>::new();
+            let c = |cluster_health| {
+                let mut c = mock_cluster( 0, 1000, 0);
+                c.expect_status()
+                    .return_const(crate::cluster::Status {
+                        health: cluster_health,
+                        codec: String::from("NonRedundant"),
+                        mirrors: vec![crate::mirror::Status {
+                            health: Online,
+                            leaves: vec![crate::vdev_block::Status {
+                                health: Online,
+                                uuid: Default::default(),
+                                path: PathBuf::default()
+                            }],
+                            uuid: Uuid::new_v4()
+                        }]
+                    });
+                c
+            };
+            for child in children.into_iter() {
+                clusters.push(c(child));
+            }
+
+            let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
+            assert_eq!(pool.status().health, health);
+        }
     }
 }
 }

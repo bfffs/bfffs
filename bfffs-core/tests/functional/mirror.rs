@@ -3,16 +3,13 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    path::Path,
+    num::NonZeroU8
 };
 use bfffs_core::{
     label::*,
-    mirror::Mirror,
-    vdev_block::*,
-    vdev::Vdev,
-    vdev_file::*,
+    mirror::{Manager, Mirror},
+    vdev::{Health, Vdev},
 };
-use itertools::Itertools;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 
@@ -37,31 +34,38 @@ fn harness() -> Harness {
 mod open {
     use super::*;
 
-    /// Regardless of the order in which the devices are given to
-    /// Mirror::open, it will construct itself in the correct order.
+    /// It should be possible to import a mirror when some children are missing
     #[rstest]
+    #[case(0)]
+    #[case(1)]
+    #[case(2)]
     #[tokio::test]
-    async fn ordering(harness: Harness) {
-        let (old_mirror, _tempdir, paths) = harness;
-        let uuid = old_mirror.uuid();
+    async fn missing_children(harness: Harness, #[case] missing: usize) {
+        let (old_vdev, _tempdir, paths) = harness;
+        let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_mirror.write_label(label_writer).await.unwrap();
-        drop(old_mirror);
+        old_vdev.write_label(label_writer).await.unwrap();
+        let old_status = old_vdev.status();
+        drop(old_vdev);
 
-        for perm in paths.iter().permutations(paths.len()) {
-            let mut combined = Vec::new();
-            for path in perm.iter() {
-                let (leaf, reader) = VdevFile::open(path).await.unwrap();
-                combined.push((VdevBlock::new(leaf), reader));
+        fs::remove_file(paths[missing].clone()).unwrap();
+        let mut manager = Manager::default();
+        for path in paths.iter() {
+            let _ = manager.taste(path).await;
+        }
+        let (mirror, _) = manager.import(uuid).await.unwrap();
+        assert_eq!(uuid, mirror.uuid());
+        let status = mirror.status();
+        assert_eq!(status.health, Health::Degraded(NonZeroU8::new(1).unwrap()));
+        for i in 0..paths.len() {
+            assert_eq!(old_status.leaves[i].uuid, status.leaves[i].uuid);
+            if i != missing {
+                // BFFFS doesn't yet remember the paths of disks, whether
+                // they're imported or not, missing or present.
+                assert_eq!(old_status.leaves[i].path, status.leaves[i].path);
             }
-            let (mirror, _) = Mirror::open(Some(uuid), combined);
-            let status = mirror.status();
-            assert_eq!(status.leaves[0].0, Path::new(&paths[0]));
-            assert_eq!(status.leaves[1].0, Path::new(&paths[1]));
-            assert_eq!(status.leaves[2].0, Path::new(&paths[2]));
         }
     }
-
 }
 
 mod persistence {
@@ -93,12 +97,11 @@ mod persistence {
         old_vdev.write_label(label_writer).await.unwrap();
         drop(old_vdev);
 
-        let mut children = Vec::new();
-        for path in paths {
-            let (leaf, reader) = VdevFile::open(path).await.unwrap();
-            children.push((VdevBlock::new(leaf), reader));
+        let mut manager = Manager::default();
+        for path in paths.iter() {
+            manager.taste(path).await.unwrap();
         }
-        let (mirror, _) = Mirror::open(Some(uuid), children);
+        let (mirror, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, mirror.uuid());
     }
 

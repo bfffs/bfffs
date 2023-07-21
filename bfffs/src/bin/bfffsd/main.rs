@@ -187,7 +187,8 @@ impl Bfffsd {
 
         for dev in cli.devices.iter() {
             // TODO: taste devices in parallel
-            manager.taste(dev).await.unwrap();
+            // Ignore errors like "ENOENT".
+            let _ = manager.taste(dev).await;
         }
 
         let uuid = manager
@@ -414,22 +415,26 @@ impl Bfffsd {
                 let r =
                     self.controller.get_pool_status(&req.pool).map(|stat| {
                         rpc::pool::PoolStatus {
+                            health:   stat.health,
                             name:     stat.name,
                             clusters: stat
                                 .clusters
                                 .into_iter()
                                 .map(|cl| {
                                     rpc::pool::ClusterStatus {
+                                        health:  cl.health,
                                         codec:   cl.codec,
                                         mirrors: cl
                                             .mirrors
                                             .into_iter()
                                             .map(|m| {
                                                 rpc::pool::MirrorStatus {
+                                                    health: m.health,
                                         leaves: m.leaves.into_iter().map(|l|
                                             rpc::pool::LeafStatus {
-                                                path: l.0,
-                                                uuid: l.1
+                                                health: l.health,
+                                                path: l.path,
+                                                uuid: l.uuid
                                             }
                                         ).collect()
                                     }

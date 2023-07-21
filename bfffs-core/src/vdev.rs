@@ -1,7 +1,53 @@
 // vim: tw=80
 
+use std::{
+    fmt,
+    num::NonZeroU8,
+    pin::Pin
+};
+use serde_derive::{Deserialize, Serialize};
 use crate::types::*;
-use std::pin::Pin;
+
+/// Represents the health of a vdev or pool
+///
+/// The ordering reflects which Health is "sicker".  That is, a degraded vdev is
+/// sicker than an online one, a doubly-degraded vdev is sicker than a
+/// singly-degraded one, etc.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
+pub enum Health {
+    /// Perfectly healthy
+    Online,
+    /// Operating with reduced redundancy
+    Degraded(NonZeroU8),
+    /// Rebuild in progress.  Not all data is present.  Reads may not be
+    /// possible.
+    Rebuilding,
+    /// Faulted.  No I/O is possible
+    // TODO: add reasons, like "offline" or "removed"
+    Faulted,
+}
+
+impl Health {
+    /// If this vdev is degraded, how many levels of redundancy is it missing?
+    pub fn as_degraded(self) -> Option<NonZeroU8> {
+        if let Health::Degraded(d) = self {
+            Some(d)
+        } else {
+            None
+        }
+    }
+}
+
+impl fmt::Display for Health {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            Self::Online => "Online".fmt(f),
+            Self::Degraded(n) => write!(f, "Degraded({})", n),
+            Self::Rebuilding => "Rebuilding".fmt(f),
+            Self::Faulted => "Faulted".fmt(f),
+        }
+    }
+}
 
 /// Future representing an operation on a vdev.
 pub type VdevFut = dyn futures::Future<Output = Result<()>> + Send + Sync;
@@ -57,4 +103,19 @@ pub trait Vdev {
 
     /// Return the number of zones in the Vdev
     fn zones(&self) -> ZoneT;
+}
+
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    #[test]
+    fn health_order() {
+        assert!(Health::Online < Health::Degraded(NonZeroU8::new(1).unwrap()));
+        assert!(Health::Degraded(NonZeroU8::new(1).unwrap()) <
+                Health::Degraded(NonZeroU8::new(2).unwrap()));
+        assert!(Health::Degraded(NonZeroU8::new(2).unwrap()) <
+                Health::Rebuilding);
+        assert!(Health::Rebuilding < Health::Faulted);
+    }
 }

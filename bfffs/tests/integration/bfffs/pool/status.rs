@@ -42,7 +42,7 @@ struct Daemon {
 }
 
 /// Start bfffsd and import the pool
-fn start_bfffsd(files: &Files, n: usize) -> Daemon {
+fn start_bfffsd(files: &Files) -> Daemon {
     let sockpath = files.tempdir.path().join("bfffsd.sock");
     let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
         .arg("--sock")
@@ -51,7 +51,7 @@ fn start_bfffsd(files: &Files, n: usize) -> Daemon {
         // The current bfffsd will complain if it tries to taste any disks that
         // aren't formatted, so we have to restrict the number of paths we give
         // it.
-        .args(&files.paths[0..n])
+        .args(&files.paths[..])
         .spawn()
         .unwrap()
         .into();
@@ -79,7 +79,7 @@ async fn all() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -87,12 +87,12 @@ async fn all() {
         .args(["pool", "status"])
         .assert()
         .success()
-        .stdout(format!(
-            "NAME
-StatusPool
-  {}\n",
+        .stdout(predicates::str::diff(format!(
+            " NAME                                                   HEALTH 
+ StatusPool                                             Online 
+   {:51}  Online \n",
             files.paths[0].display()
-        ));
+        )));
 }
 
 #[tokio::test]
@@ -104,7 +104,7 @@ async fn enoent() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -130,7 +130,7 @@ async fn mirror() {
         .args(&files.paths[0..2])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 2);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -139,14 +139,45 @@ async fn mirror() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  mirror
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   mirror                                                 Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display()
+        ));
+}
+
+#[tokio::test]
+async fn mirror_with_missing_child() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create"])
+        .arg(POOLNAME)
+        .arg("mirror")
+        .args(&files.paths[0..2])
+        .assert()
+        .success();
+    fs::remove_file(&files.paths[1]).unwrap();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+            " NAME                                                     HEALTH 
+ StatusPool                                               Degraded(1) 
+   mirror                                                 Degraded(1) 
+     {:51}  Online 
+     {:51}  Faulted 
+",
+            files.paths[0].display(),
+            ""
         ));
 }
 
@@ -159,7 +190,7 @@ async fn one_disk() {
         .arg(&files.paths[0])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 1);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -168,11 +199,41 @@ async fn one_disk() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  {}
-",
+            " NAME                                                   HEALTH 
+ StatusPool                                             Online 
+   {:51}  Online \n",
             files.paths[0].display()
+        ));
+}
+
+#[tokio::test]
+async fn raid_with_missing_child() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create", POOLNAME, "raid", "3", "1"])
+        .args(&files.paths[0..3])
+        .assert()
+        .success();
+    fs::remove_file(&files.paths[1]).unwrap();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+            " NAME                                                     HEALTH 
+ StatusPool                                               Degraded(1) 
+   PrimeS-3,3,1                                           Degraded(1) 
+     {:51}  Online 
+     {:51}  Faulted 
+     {:51}  Online 
+",
+            files.paths[0].display(),
+            "mirror",
+            files.paths[2].display(),
         ));
 }
 
@@ -184,7 +245,7 @@ async fn raid5() {
         .args(&files.paths[0..3])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 3);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -193,12 +254,12 @@ async fn raid5() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),
@@ -216,7 +277,7 @@ async fn raid50() {
         .args(&files.paths[3..6])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 6);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -225,16 +286,16 @@ async fn raid50() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
-  PrimeS-3,3,1
-    {}
-    {}
-    {}
+            " NAME                                                     HEALTH 
+ StatusPool                                               Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
+   PrimeS-3,3,1                                           Online 
+     {:51}  Online 
+     {:51}  Online 
+     {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),
@@ -258,7 +319,7 @@ async fn raid51() {
         .args(&files.paths[6..9])
         .assert()
         .success();
-    let daemon = start_bfffsd(&files, 9);
+    let daemon = start_bfffsd(&files);
 
     bfffs()
         .arg("--sock")
@@ -267,21 +328,21 @@ async fn raid51() {
         .assert()
         .success()
         .stdout(format!(
-            "NAME
-StatusPool
-  PrimeS-3,3,1
-    mirror
-      {}
-      {}
-      {}
-    mirror
-      {}
-      {}
-      {}
-    mirror
-      {}
-      {}
-      {}
+" NAME                                                       HEALTH 
+ StatusPool                                                 Online 
+   PrimeS-3,3,1                                             Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+       {:51}  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),

@@ -63,7 +63,7 @@ pub unsafe fn ec_encode_data(
         f as c_int,
         gftbls.as_ptr() as *mut c_uchar,
         data.as_ptr() as *mut *mut c_uchar,
-        parity.as_ptr() as *mut *mut c_uchar,
+        parity.as_mut_ptr(),
     );
 }
 
@@ -116,7 +116,7 @@ pub unsafe fn ec_encode_data_update(
         vec_i as c_int,
         gftbls.as_ptr() as *mut c_uchar,
         data.as_ptr() as *mut c_uchar,
-        parity.as_ptr() as *mut *mut c_uchar,
+        parity.as_mut_ptr(),
     );
 }
 

@@ -698,7 +698,7 @@ mod erase_zone {
         let zl0 = (1, 60_000);
         let zl1 = (60_000, 120_000);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -719,7 +719,7 @@ mod erase_zone {
                 .return_once(|_, _| Box::pin(future::ok(())));
             bd.expect_optimum_queue_depth()
                 .return_const(10u32);
-            bd
+            Child::present(bd)
         };
 
         let bd0 = bd();
@@ -748,7 +748,7 @@ mod flush_zone {
         const CHUNKSIZE: LbaT = 2;
         let zl0 = (1, 60_000);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -768,9 +768,9 @@ mod flush_zone {
         let bd0 = bd();
         let bd1 = bd();
         let bd2 = bd();
-        mirrors.push(bd0);
-        mirrors.push(bd1);
-        mirrors.push(bd2);
+        mirrors.push(Child::present(bd0));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
@@ -788,7 +788,7 @@ mod flush_zone {
         let zl0 = (1, 60_000);
         let zl1 = (60_000, 120_000);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -815,9 +815,9 @@ mod flush_zone {
         let bd0 = bd();
         let bd1 = bd();
         let bd2 = bd();
-        mirrors.push(bd0);
-        mirrors.push(bd1);
-        mirrors.push(bd2);
+        mirrors.push(Child::present(bd0));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
@@ -835,7 +835,7 @@ mod layout {
     use pretty_assertions::assert_eq;
 
     fn vr(n: i16, k: i16, f:i16, chunksize: LbaT) -> VdevRaid {
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
         for _ in 0..n {
             let mut mock = Mirror::default();
             mock.expect_size()
@@ -859,7 +859,7 @@ mod layout {
                 // 64k LBAs/zone
                 .return_const((65536, 131_072));
 
-            mirrors.push(mock);
+            mirrors.push(Child::present(mock));
         }
 
         VdevRaid::new(chunksize, k, f, Uuid::new_v4(),
@@ -974,6 +974,74 @@ mod layout {
     }
 }
 
+mod open {
+    use super::*;
+    use itertools::Itertools;
+    use crate::{
+        mirror,
+        raid::{self, vdev_raid}
+    };
+
+    /// Regardless of the order in which the devices are given to
+    /// raid::open, it will construct itself in the correct order.
+    #[test]
+    fn ordering() {
+        let child_uuid0 = Uuid::new_v4();
+        let child_uuid1 = Uuid::new_v4();
+        let child_uuid2 = Uuid::new_v4();
+        fn mock(child_uuid: &Uuid) -> Mirror {
+            let mut m = Mirror::default();
+            m.expect_uuid()
+                .return_const(*child_uuid);
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const((1, 4096));
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            m.expect_status()
+                .return_const(mirror::Status {
+                    health: Health::Online,
+                    leaves: Vec::new(),
+                    uuid: *child_uuid
+                });
+            m
+        }
+        let label = raid::Label::Raid(vdev_raid::Label {
+            uuid: Uuid::new_v4(),
+            chunksize: 1,
+            disks_per_stripe: 3,
+            redundancy: 1,
+            layout_algorithm: LayoutAlgorithm::PrimeS,
+            children: vec![child_uuid0, child_uuid1, child_uuid2]
+        });
+        let mut serialized = Vec::new();
+        let mut lw = LabelWriter::new(0);
+        lw.serialize(&label).unwrap();
+        for buf in lw.into_sglist().into_iter() {
+            serialized.extend(&buf[..]);
+        }
+        let child_uuids = [child_uuid0, child_uuid1, child_uuid2];
+
+        for perm in child_uuids.iter().permutations(child_uuids.len()) {
+            let m0 = mock(perm[0]);
+            let m1 = mock(perm[1]);
+            let m2 = mock(perm[2]);
+            let mut combined = Vec::new();
+            for m in [m0, m1, m2] {
+                let lr = LabelReader::new(serialized.clone()).unwrap();
+                combined.push((m, lr));
+            }
+            let (vdev_raid, _) = raid::open(Some(label.uuid()), combined);
+            let status = vdev_raid.status();
+            assert_eq!(status.mirrors[0].uuid(), child_uuid0);
+            assert_eq!(status.mirrors[1].uuid(), child_uuid1);
+            assert_eq!(status.mirrors[2].uuid(), child_uuid2);
+        }
+    }
+}
+
 mod open_zone {
     use super::*;
 
@@ -989,7 +1057,7 @@ mod open_zone {
         let zl0 = (1, 4096);
         let zl1 = (4096, 8192);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
         let bd = || {
             let mut bd = Mirror::default();
             bd.expect_size()
@@ -1016,7 +1084,7 @@ mod open_zone {
                 .with(always(), eq(4196))
                 .once()
                 .return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
-            bd
+            Child::present(bd)
         };
         mirrors.push(bd());    //disk 0
         mirrors.push(bd());    //disk 1
@@ -1031,6 +1099,54 @@ mod open_zone {
         vdev_raid.write_at(wbuf, 1, 4196).now_or_never().unwrap().unwrap();
     }
 
+    // Reopening a zone with wasted chunks should _not_ rewrite the zero-fill
+    // area.
+    #[test]
+    fn reopen_wasted_chunks() {
+        let k = 5;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 5;
+        let zl0 = (1, 32);
+        let zl1 = (32, 64);
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let m = || {
+            let mut m = Mirror::default();
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_lba2zone()
+                .with(eq(1))
+                .return_const(Some(0));
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            m.expect_zone_limits()
+                .with(eq(1))
+                .return_const(zl1);
+            m.expect_open_zone()
+                .once()
+                .with(eq(32))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            m.expect_writev_at()
+                .never();
+            Child::present(m)
+        };
+
+        for _ in 0..k {
+            mirrors.push(m());
+        }
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.reopen_zone(1, 20).now_or_never().unwrap().unwrap();
+
+    }
+
     // Open a zone that has wasted leading space due to a chunksize misaligned
     // with the zone size.  Use highly unrealistic disks with 32 LBAs per zone
     #[test]
@@ -1041,7 +1157,7 @@ mod open_zone {
         let zl0 = (1, 32);
         let zl1 = (32, 64);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -1068,7 +1184,7 @@ mod open_zone {
                     let len = sglist.iter().map(|b| b.len()).sum::<usize>();
                     len == 3 * BYTES_PER_LBA && *lba == 32
                 }).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
-            bd
+            Child::present(bd)
         };
 
         mirrors.push(bd());    //disk 0
@@ -1095,7 +1211,7 @@ mod open_zone {
         let zl0 = (1, 32);
         let zl1 = (32, 64);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = |gap_chunks: LbaT| {
             let mut bd = Mirror::default();
@@ -1125,7 +1241,7 @@ mod open_zone {
                         len == gap_lbas as usize * BYTES_PER_LBA && *lba == 32
                     }).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
             }
-            bd
+            Child::present(bd)
         };
 
         // On this layout, zone 1 begins at the third row in the repetition.
@@ -1159,7 +1275,7 @@ mod read_at {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let mut m0 = Mirror::default();
         m0.expect_size()
@@ -1176,7 +1292,7 @@ mod read_at {
         m0.expect_zone_limits()
             .with(eq(1))
             .return_const((65536, 131_072));
-        mirrors.push(m0);
+        mirrors.push(Child::present(m0));
 
         let mut m1 = Mirror::default();
         m1.expect_size()
@@ -1199,7 +1315,7 @@ mod read_at {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
             }).return_once(|_, _|  Box::pin(future::ok::<(), Error>(())));
-        mirrors.push(m1);
+        mirrors.push(Child::present(m1));
 
         let mut m2 = Mirror::default();
         m2.expect_size()
@@ -1222,7 +1338,7 @@ mod read_at {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                     && *lba == 65536
             }).return_once(|_, _|  Box::pin( future::ok::<(), Error>(())));
-        mirrors.push(m2);
+        mirrors.push(Child::present(m2));
 
         let vdev_raid = Arc::new(
             VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
@@ -1242,7 +1358,7 @@ mod read_at {
         let f = 1;
         const CHUNKSIZE : LbaT = 1;
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let mock = || {
             let mut m = Mirror::default();
@@ -1268,35 +1384,35 @@ mod read_at {
             .once()
             .with(always(), eq(32768))
             .return_once(|_, _|  Box::pin(future::err(Error::EIO)));
-        mirrors.push(m0);
+        mirrors.push(Child::present(m0));
 
         let mut m1 = mock();
         m1.expect_read_at()
             .once()
             .with(always(), eq(32768))
             .return_once(|_, _|  Box::pin(future::err(Error::EIO)));
-        mirrors.push(m1);
+        mirrors.push(Child::present(m1));
 
         let mut m2 = mock();
         // No read here, because this is the parity disk for this stripe, and we
         // won't attempt recovery.
         m2.expect_read_at()
             .never();
-        mirrors.push(m2);
+        mirrors.push(Child::present(m2));
 
         let mut m3 = mock();
         m3.expect_read_at()
             .once()
             .with(always(), eq(32768))
             .return_once(|_, _|  Box::pin(future::ok(())));
-        mirrors.push(m3);
+        mirrors.push(Child::present(m3));
 
         let mut m4 = mock();
         m4.expect_read_at()
             .once()
             .with(always(), eq(32768))
             .return_once(|_, _|  Box::pin(future::ok(())));
-        mirrors.push(m4);
+        mirrors.push(Child::present(m4));
 
         let vdev_raid = Arc::new(
             VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
@@ -1311,6 +1427,77 @@ mod read_at {
 
 }
 
+mod status {
+    use super::*;
+
+    use std::path::PathBuf;
+
+    use crate::vdev::Health::*;
+
+    /// When degraded, the VdevRaid's health should be the sum of all missing or
+    /// otherwise degraded disks.
+    #[rstest]
+    #[case(Online, vec![Online, Online, Online])]
+    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+        vec![Online, Online, Faulted])]
+    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+        vec![Online, Rebuilding, Online])]
+    #[case(Degraded(NonZeroU8::new(1).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Online])]
+    #[case(Degraded(NonZeroU8::new(2).unwrap()),
+        vec![Degraded(NonZeroU8::new(2).unwrap()), Online, Online])]
+    #[case(Degraded(NonZeroU8::new(2).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()),
+             Degraded(NonZeroU8::new(1).unwrap()),
+             Online])]
+    #[case(Degraded(NonZeroU8::new(4).unwrap()),
+        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Faulted])]
+    fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
+        let k = children.len() as i16; // doesn't matter for Health calculation
+        let f = 1;
+        const CHUNKSIZE: LbaT = 1;
+        let zl0 = (1, 4096);
+
+        let mut mirrors = Vec::<Child>::new();
+        let m = |mirror_health| {
+            let muuid = Uuid::new_v4();
+            let mut m = Mirror::default();
+            m.expect_size()
+                .return_const(262_144u64);
+            m.expect_zone_limits()
+                .with(eq(0))
+                .return_const(zl0);
+            m.expect_optimum_queue_depth()
+                .return_const(10u32);
+            m.expect_uuid()
+                .return_const(muuid);
+            let leaves = (0..3).map(|_| {
+                crate::vdev_block::Status {
+                    health: Online,
+                    uuid: Default::default(),
+                    path: PathBuf::default()
+                }
+            }).collect::<Vec<_>>();
+            m.expect_status()
+                .return_const(crate::mirror::Status {
+                    health: mirror_health,
+                    leaves,
+                    uuid: muuid
+                });
+            Child::present(m)
+        };
+        for c in children.into_iter() {
+            mirrors.push(m(c));
+        }
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        assert_eq!(vdev_raid.status().health, health);
+    }
+}
+
 mod sync_all {
     use super::*;
 
@@ -1321,7 +1508,7 @@ mod sync_all {
         const CHUNKSIZE: LbaT = 2;
         let zl0 = (1, 60_000);
 
-        let mut mirrors = Vec::<Mirror>::default();
+        let mut mirrors = Vec::<Child>::default();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -1340,9 +1527,9 @@ mod sync_all {
         let bd1 = bd();
         let bd2 = bd();
 
-        mirrors.push(bd0);
-        mirrors.push(bd1);
-        mirrors.push(bd2);
+        mirrors.push(Child::present(bd0));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
@@ -1362,7 +1549,7 @@ mod sync_all {
         let zl0 = (1, 60_000);
         let zl1 = (60_000, 120_000);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -1393,9 +1580,9 @@ mod sync_all {
         let bd1 = bd();
         let bd2 = bd();
 
-        mirrors.push(bd0);
-        mirrors.push(bd1);
-        mirrors.push(bd2);
+        mirrors.push(Child::present(bd0));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
@@ -1423,7 +1610,7 @@ mod write_at {
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
         let mut m0 = Mirror::default();
         m0.expect_size()
             .return_const(262_144u64);
@@ -1449,7 +1636,7 @@ mod write_at {
                    && *lba == 65536
             ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
-        mirrors.push(m0);
+        mirrors.push(Child::present(m0));
         let mut m1 = Mirror::default();
         m1.expect_size()
             .return_const(262_144u64);
@@ -1475,7 +1662,7 @@ mod write_at {
                 && *lba == 65536
             ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
-        mirrors.push(m1);
+        mirrors.push(Child::present(m1));
         let mut m2 = Mirror::default();
         m2.expect_size()
             .return_const(262_144u64);
@@ -1500,7 +1687,7 @@ mod write_at {
                 buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
                 && *lba == 65536
             ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
-        mirrors.push(m2);
+        mirrors.push(Child::present(m2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),
@@ -1521,7 +1708,7 @@ mod write_at {
         let zl0 = (1, 60_000);
         let zl1 = (60_000, 120_000);
 
-        let mut mirrors = Vec::<Mirror>::new();
+        let mut mirrors = Vec::<Child>::new();
 
         let bd = || {
             let mut bd = Mirror::default();
@@ -1577,9 +1764,9 @@ mod write_at {
                 *lba == 60_000
         ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
 
-        mirrors.push(bd0);
-        mirrors.push(bd1);
-        mirrors.push(bd2);
+        mirrors.push(Child::present(bd0));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
                                       Uuid::new_v4(),

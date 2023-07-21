@@ -94,19 +94,25 @@ impl Manager {
         rl.iter_children()
             .map(move |child_uuid| self.mm.import(*child_uuid))
             .collect::<FuturesUnordered<_>>()
-            // XXX Can't use StreamExt::try_collect, because that will drop
-            // incomplete futures on error.  Could use Iterator::try_collect if
-            // it stabilizes.  https://github.com/rust-lang/rust/issues/94047
+            // Could use Iterator::try_collect if it stabilizes.
+            // https://github.com/rust-lang/rust/issues/94047
             .collect::<Vec<_>>()
             .map(move |v| {
                 let mut pairs = Vec::with_capacity(rl.nchildren());
+                let mut error = Error::ENOENT;
                 for r in v.into_iter() {
                     match r {
                         Ok(pair) => pairs.push(pair),
-                        Err(e) => return Err(e)
+                        Err(e) => {
+                            error = e;
+                        }
                     }
+                };
+                if pairs.is_empty() {
+                    Err(error)
+                } else {
+                    Ok(open(Some(uuid), pairs))
                 }
-                Ok(open(Some(uuid), pairs))
             }).boxed()
     }
 
@@ -125,6 +131,7 @@ impl Manager {
 /// Return value of [`VdevRaidApi::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
+    pub health: Health,
     pub codec: String,
     pub mirrors: Vec<mirror::Status>
 }
@@ -165,7 +172,7 @@ pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 /// * `combined`:   An array of pairs of `Mirror`s and their
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
-pub fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
+fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
     -> (Arc<dyn VdevRaidApi>, LabelReader)
 {
     let mut label_pair = None;
