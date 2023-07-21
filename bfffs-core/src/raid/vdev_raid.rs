@@ -226,7 +226,11 @@ impl Child {
     }
 
     fn open_zone(&self, start: LbaT) -> BoxVdevFut {
-        self.as_present().unwrap().open_zone(start)
+        if let Child::Present(m) = self {
+            m.open_zone(start)
+        } else {
+            Box::pin(future::ok(())) as BoxVdevFut
+        }
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> ChildReadAt {

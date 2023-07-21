@@ -207,6 +207,37 @@ async fn one_disk() {
 }
 
 #[tokio::test]
+async fn raid_with_missing_child() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create", POOLNAME, "raid", "3", "1"])
+        .args(&files.paths[0..3])
+        .assert()
+        .success();
+    fs::remove_file(&files.paths[1]).unwrap();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+            " NAME                                                     HEALTH 
+ StatusPool                                               Degraded(1) 
+   PrimeS-3,3,1                                           Degraded(1) 
+     {:51}  Online 
+     {:51}  Faulted 
+     {:51}  Online 
+",
+            files.paths[0].display(),
+            "mirror",
+            files.paths[2].display(),
+        ));
+}
+
+#[tokio::test]
 async fn raid5() {
     let files = mk_files();
     bfffs()
