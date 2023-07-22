@@ -191,12 +191,8 @@ enum Child {
 cfg_if! {
     if #[cfg(test)] {
         type ChildReadSpacemap = BoxVdevFut;
-        type ChildReadAt = BoxVdevFut;
-        type ChildReadvAt = BoxVdevFut;
     } else {
         type ChildReadSpacemap = mirror::ReadSpacemap;
-        type ChildReadAt = mirror::ReadAt;
-        type ChildReadvAt = mirror::ReadvAt;
     }
 }
 
@@ -217,32 +213,40 @@ impl Child {
         }
     }
 
-    fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        self.as_present().unwrap().erase_zone(start, end)
+    fn erase_zone(&self, start: LbaT, end: LbaT) -> Option<BoxVdevFut> {
+        self.as_present().map(|m| m.erase_zone(start, end))
     }
 
-    fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        self.as_present().unwrap().finish_zone(start, end)
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> Option<BoxVdevFut> {
+        self.as_present().map(|m| m.finish_zone(start, end))
+    }
+
+    fn is_present(&self) -> bool {
+        matches!(self, Child::Present(_))
     }
 
     fn open_zone(&self, start: LbaT) -> BoxVdevFut {
-        if let Child::Present(m) = self {
-            m.open_zone(start)
-        } else {
-            Box::pin(future::ok(())) as BoxVdevFut
-        }
+        self.as_present().unwrap().open_zone(start)
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> ChildReadAt {
-        self.as_present().unwrap().read_at(buf, lba)
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+        if let Child::Present(c) = self {
+            Box::pin(c.read_at(buf, lba)) as BoxVdevFut
+        } else {
+            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+        }
     }
 
     fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> ChildReadSpacemap {
         self.as_present().unwrap().read_spacemap(buf, smidx)
     }
 
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> ChildReadvAt {
-        self.as_present().unwrap().readv_at(bufs, lba)
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut {
+        if let Child::Present(c) = self {
+            Box::pin(c.readv_at(bufs, lba)) as BoxVdevFut
+        } else {
+            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+        }
     }
 
     fn status(&self) -> Option<mirror::Status> {
@@ -250,7 +254,11 @@ impl Child {
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
-        self.as_present().unwrap().write_at(buf, lba)
+        if let Child::Present(c) = self {
+            Box::pin(c.write_at(buf, lba)) as BoxVdevFut
+        } else {
+            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+        }
     }
 
     fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut {
@@ -264,7 +272,11 @@ impl Child {
     }
 
     fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut {
-        self.as_present().unwrap().writev_at(bufs, lba)
+        if let Child::Present(c) = self {
+            Box::pin(c.writev_at(bufs, lba)) as BoxVdevFut
+        } else {
+            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+        }
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
@@ -279,8 +291,8 @@ impl Child {
         self.as_present().map(Mirror::size)
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
-        self.as_present().unwrap().sync_all()
+    fn sync_all(&self) -> Option<BoxVdevFut> {
+        self.as_present().map(Mirror::sync_all)
     }
 
     fn uuid(&self) -> Uuid {
@@ -592,6 +604,10 @@ impl VdevRaid {
         let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
         let futs = FuturesUnordered::<BoxVdevFut>::new();
         for (idx, mirrordev) in self.children.iter().enumerate() {
+            if !mirrordev.is_present() {
+                continue;
+            }
+
             // Find the first LBA of this disk that's within our zone
             let mut first_usable_disk_lba = 0;
             for chunk in start_disk_chunk.. {
@@ -747,8 +763,8 @@ impl VdevRaid {
                     let slba = lba.max(s * lbas_per_stripe);
                     let elba = past_lba.min((s + 1) * lbas_per_stripe);
                     let sbytes = (elba - slba) as usize * BYTES_PER_LBA;
-                    let start = ChunkId::Data(slba);
-                    let end = ChunkId::Data(elba);
+                    let start = ChunkId::Data(slba / self.chunksize);
+                    let end = ChunkId::Data(elba / self.chunksize);
                     let lociter = self.locator.iter_data(start, end);
                     let dvs = lociter
                         .map(|(_cid, loc)| Some(dv[loc.disk as usize]))
@@ -1026,8 +1042,21 @@ impl VdevRaid {
         .filter(|&(_, _, lba)| lba != SENTINEL)
         .map(|(mirrordev, sglist, lba)| mirrordev.writev_at(sglist, lba))
         .collect::<FuturesUnordered<_>>()
-        .try_collect::<Vec<_>>()
-        .map_ok(drop);
+        .collect::<Vec<_>>()
+        .map(move |dv| {
+            let mut r = Ok(());
+            let mut nerrs = 0;
+            for e in dv.into_iter().filter(Result::is_err) {
+                // As long as we wrote enough disks to make the data
+                // recoverable, consider it successful.
+                nerrs += 1;
+                if nerrs > f {
+                    r = e;
+                    break
+                }
+            }
+            r
+        });
         Box::pin(fut)
         // TODO: on error, record error statistics, possibly fault a drive,
         // request the faulty drive's zone to be rebuilt, and read parity to
@@ -1073,13 +1102,21 @@ impl VdevRaid {
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::pin(
             future::join(data_fut, parity_fut)
-            .map(|(dv, pv)|
-                 dv.iter()
-                 .chain(pv.iter())
-                 .find(|r| r.is_err())
-                 .cloned()
-                 .unwrap_or(Ok(()))
-            )
+            .map(move |(dv, pv)| {
+                let mut r = Ok(());
+                let mut nerrs = 0;
+                let dpvi = dv.into_iter().chain(pv);
+                for e in dpvi.filter(Result::is_err) {
+                    // As long as we wrote enough disks to make the data
+                    // recoverable, consider it successful.
+                    nerrs += 1;
+                    if nerrs > f {
+                        r = e;
+                        break
+                    }
+                }
+                r
+            })
         )
     }
 
@@ -1133,13 +1170,21 @@ impl VdevRaid {
         // TODO: on error, record error statistics, and possibly fault a drive.
         Box::pin(
             future::join(data_fut, parity_fut)
-            .map(|(dv, pv)|
-                 dv.iter()
-                 .chain(pv.iter())
-                 .find(|r| r.is_err())
-                 .cloned()
-                 .unwrap_or(Ok(()))
-            )
+            .map(move |(dv, pv)| {
+                let mut r = Ok(());
+                let mut nerrs = 0;
+                let dpvi = dv.into_iter().chain(pv);
+                for e in dpvi.filter(Result::is_err) {
+                    // As long as we wrote enough disks to make the data
+                    // recoverable, consider it successful.
+                    nerrs += 1;
+                    if nerrs > f {
+                        r = e;
+                        break
+                    }
+                }
+                r
+            })
         )
     }
 }
@@ -1161,7 +1206,11 @@ impl Vdev for VdevRaid {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
-        let tentative = self.children[loc.disk as usize].lba2zone(disk_lba);
+        let child_idx = (0..self.children.len())
+            .map(|i| (loc.disk as usize + i) % self.children.len())
+            .find(|child_idx| self.children[*child_idx].is_present())
+            .unwrap();
+        let tentative = self.children[child_idx].lba2zone(disk_lba);
         tentative?;
         // NB: this call to zone_limits is slow, but unfortunately necessary.
         let limits = self.zone_limits(tentative.unwrap());
@@ -1191,7 +1240,7 @@ impl Vdev for VdevRaid {
         );
         // TODO: handle errors on some devices
         let fut = self.children.iter()
-        .map(|bd| bd.sync_all())
+        .filter_map(|bd| bd.sync_all())
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -1288,7 +1337,7 @@ impl VdevRaidApi for VdevRaid {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.first_healthy_child().zone_limits(zone);
-        let fut = self.children.iter().map(|mirrordev| {
+        let fut = self.children.iter().filter_map(|mirrordev| {
             mirrordev.erase_zone(start, end - 1)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -1311,8 +1360,9 @@ impl VdevRaidApi for VdevRaid {
         }
         futs.extend(
             self.children.iter()
-            .map(|mirrordev|
-                 Box::pin(mirrordev.finish_zone(start, end - 1)) as BoxVdevFut
+            .filter_map(|mirrordev|
+                 mirrordev.finish_zone(start, end - 1)
+                 .map(|fut| Box::pin(fut) as BoxVdevFut)
             )
         );
 

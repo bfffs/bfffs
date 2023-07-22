@@ -538,7 +538,7 @@ mod errors {
             #[values(1, 2, 3)]
             stripes: usize)
         {
-            let mut h = harness(c, 1).await;
+            let mut h = harness(c, 2).await;
             let mut started = false;
             for defective_diskids in (0..c.n as usize).combinations(c.nfailures)
             {
@@ -587,7 +587,9 @@ mod errors {
             #[values(1, 2)]
             stripes: usize)
         {
-            let mut h = harness(c, 1).await;
+            const CHUNKSIZE: LbaT = 2;
+
+            let mut h = harness(c, CHUNKSIZE).await;
             let mut started = false;
             for defective_diskids in (0..c.n as usize).combinations(c.nfailures)
             {
@@ -595,7 +597,7 @@ mod errors {
                     h.reset().await;
                 }
                 started = true;
-                let (dbsw, dbsr) = make_bufs(1, c.k, c.f, stripes);
+                let (dbsw, dbsr) = make_bufs(CHUNKSIZE, c.k, c.f, stripes);
                 let wbuf0 = dbsw.try_const().unwrap();
                 let rbuf = dbsr.try_mut().unwrap();
 
@@ -752,10 +754,78 @@ mod erase_zone {
                                       mirrors.into_boxed_slice());
         vdev_raid.erase_zone(0).now_or_never().unwrap().unwrap();
     }
+
+    /// erase_zone operations should not be sent to a missing device
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let bd = || {
+            let mut bd = mock_mirror();
+            bd.expect_erase_zone()
+                .with(eq(1), eq(59_999))
+                .once()
+                .return_once(|_, _| Box::pin(future::ok(())));
+            Child::present(bd)
+        };
+
+        let bd0 = bd();
+        let bd1 = bd();
+        let bd2 = Child::missing(Uuid::new_v4());
+        mirrors.push(bd0);
+        mirrors.push(bd1);
+        mirrors.push(bd2);
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.erase_zone(0).now_or_never().unwrap().unwrap();
+    }
 }
 
 mod finish_zone {
     use super::*;
+
+    /// finish_zone operations should not be sent to a missing device
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let bd = || {
+            let mut bd = mock_mirror();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(60_000))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd.expect_finish_zone()
+                .with(eq(60_000), eq(119_999))
+                .once()
+                .return_once(|_, _| Box::pin(future::ok(())));
+            Child::present(bd)
+        };
+
+        let bd0 = bd();
+        let bd1 = bd();
+        mirrors.push(bd0);
+        mirrors.push(bd1);
+        mirrors.push(Child::missing(Uuid::new_v4()));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+        vdev_raid.finish_zone(1).now_or_never().unwrap().unwrap();
+    }
 
     /// A zone with an empty stripe buffer requires no flushing
     #[test]
@@ -889,6 +959,50 @@ mod flush_zone {
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
         vdev_raid.flush_zone(0).1.now_or_never().unwrap().unwrap();
+    }
+
+    /// Flushing a zone with missing device should not attempt to write to the
+    /// missing device.
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let bd = || {
+            let mut bd = mock_mirror();
+            bd.expect_open_zone()
+                .with(eq(60_000))
+                .once()
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd
+        };
+
+        let mut bd1 = bd();
+        bd1.expect_writev_at()
+            .once()
+            .return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
+
+        let mut bd2 = bd();
+        bd2.expect_write_at()
+            .once()
+            .return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
+
+        mirrors.push(Child::missing(Uuid::new_v4()));
+        mirrors.push(Child::present(bd1));
+        mirrors.push(Child::present(bd2));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        let dbs = DivBufShared::from(vec![1u8; 4096]);
+        let wbuf = dbs.try_const().unwrap();
+        vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+        vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
+        vdev_raid.flush_zone(1).1.now_or_never().unwrap().unwrap();
     }
 
     // Flushing an open zone is a no-op if the stripe buffer is empty
@@ -1200,6 +1314,35 @@ mod open {
 mod open_zone {
     use super::*;
 
+    /// open_zone should attempt to do nothing for missing children
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let bd = || {
+            let mut bd = mock_mirror();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(60_000))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            Child::present(bd)
+        };
+
+        mirrors.push(bd());    //disk 0
+        mirrors.push(bd());    //disk 1
+        mirrors.push(Child::missing(Uuid::new_v4())); //disk 2
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    }
+
     // Reopen a zone that was previously used and unmounted without being
     // closed.  There will be some already-allocated space.  After opening, the
     // raid device should accept a write at the true write pointer, not the
@@ -1376,6 +1519,47 @@ mod open_zone {
 mod read_at {
     use super::*;
 
+    // Reads should skip missing children
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut m1 = mock_mirror();
+        m1.expect_read_at()
+            .times(2)
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+        m1.expect_readv_at()
+            .once()
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+
+        let mut m2 = mock_mirror();
+        m2.expect_read_at()
+            .once()
+            .returning(|_, _|  Box::pin(future::ok::<(), Error>(())));
+        m2.expect_readv_at()
+            .once()
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+
+        let mirrors = vec![
+            Child::missing(Uuid::new_v4()),
+            Child::present(m1),
+            Child::present(m2)
+        ];
+
+        let vdev_raid = Arc::new(
+            VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
+                          LayoutAlgorithm::PrimeS, mirrors.into_boxed_slice())
+        );
+        // Read two stripes to ensure that the missing device should be included
+        // in one.
+        let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * 8;
+        let dbs = DivBufShared::from(vec![0u8; rlen]);
+        let rbuf = dbs.try_mut().unwrap();
+        vdev_raid.read_at(rbuf, 120_000).now_or_never().unwrap().unwrap();
+    }
+
     // Use mock Mirror objects to test that RAID reads hit the right LBAs from
     // the individual disks.  Ignore the actual data values, since we don't have
     // real Mirrors.  Functional testing will verify the data.
@@ -1540,6 +1724,37 @@ mod status {
 mod sync_all {
     use super::*;
 
+    // Skip missing children
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::default();
+
+        let bd = || {
+            let mut bd = mock_mirror();
+            bd.expect_sync_all()
+                .return_once(|| Box::pin(future::ok::<(), Error>(())));
+            Child::present(bd)
+        };
+
+        let bd0 = bd();
+        let bd1 = bd();
+        let bd2 = Child::missing(Uuid::new_v4());
+
+        mirrors.push(bd0);
+        mirrors.push(bd1);
+        mirrors.push(bd2);
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.sync_all().now_or_never().unwrap().unwrap();
+    }
+
     #[test]
     fn ok() {
         let k = 3;
@@ -1617,6 +1832,52 @@ mod sync_all {
 
 mod write_at {
     use super::*;
+
+    // Writes should skip missing children
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+        let mut m0 = mock_mirror();
+        m0.expect_open_zone()
+            .with(eq(60_000))
+            .once()
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+        m0.expect_write_at()
+            .once()
+            .withf(|buf, lba|
+                   buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                   && *lba == 60_000
+            ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
+
+        mirrors.push(Child::present(m0));
+        let mut m1 = mock_mirror();
+        m1.expect_open_zone()
+            .with(eq(60_000))
+            .once()
+            .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+        m1.expect_write_at()
+            .once()
+            .withf(|buf, lba|
+                buf.len() == CHUNKSIZE as usize * BYTES_PER_LBA
+                && *lba == 60_000
+            ).return_once(|_, _| Box::pin( future::ok::<(), Error>(())));
+
+        mirrors.push(Child::present(m1));
+        mirrors.push(Child::missing(Uuid::new_v4()));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        let dbs = DivBufShared::from(vec![0u8; 16384]);
+        let wbuf = dbs.try_const().unwrap();
+        vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+        vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
+    }
 
     // Use mock Mirror objects to test that RAID writes hit the right LBAs from
     // the individual disks.  Ignore the actual data values, since we don't have
