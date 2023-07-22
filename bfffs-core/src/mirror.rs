@@ -758,6 +758,21 @@ mod t {
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
             mirror.erase_zone(3, 31).now_or_never().unwrap().unwrap();
         }
+
+        #[test]
+        fn degraded() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_erase_zone()
+                .once()
+                .with(eq(3), eq(31))
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.erase_zone(3, 31).now_or_never().unwrap().unwrap();
+        }
     }
     mod finish_zone {
         use super::*;
@@ -779,6 +794,26 @@ mod t {
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            mirror.finish_zone(3, 31).now_or_never().unwrap().unwrap();
+        }
+
+        #[test]
+        fn degraded() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd0.expect_finish_zone()
+                .once()
+                .with(eq(3), eq(31))
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.finish_zone(3, 31).now_or_never().unwrap().unwrap();
         }
@@ -852,13 +887,28 @@ mod t {
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
         }
+
+        #[test]
+        fn degraded() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+        }
     }
 
     mod read_at {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> Child
+            -> VdevBlock
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -872,7 +922,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::present(bd)
+            bd
         }
 
         #[test]
@@ -883,10 +933,34 @@ mod t {
 
             let bd0 = mock(1, Ok(()), total_reads.clone());
             let bd1 = mock(0, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.read_at(buf, 3).now_or_never().unwrap().unwrap();
             assert_eq!(total_reads.load(Ordering::Relaxed), 1);
+        }
+
+        /// No read should be attempted on missing children
+        #[test]
+        fn degraded() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(2, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            for i in 3..5 {
+                let buf = dbs.try_mut().unwrap();
+                mirror.read_at(buf, i).now_or_never().unwrap().unwrap();
+            }
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
         }
 
         /// Multiple reads should be distributed across all children
@@ -898,8 +972,13 @@ mod t {
             let bd0 = mock(3, Ok(()), total_reads.clone());
             let bd1 = mock(3, Ok(()), total_reads.clone());
             let bd2 = mock(3, Ok(()), total_reads);
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1),
+                Child::present(bd2),
+            ];
             let uuid = Uuid::new_v4();
-            let mirror = Mirror::new(uuid, vec![bd0, bd1, bd2].into());
+            let mirror = Mirror::new(uuid, children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             for i in 3..12 {
                 let buf = dbs.try_mut().unwrap();
@@ -916,7 +995,11 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
                 "Need to swap the disks' return values to fix the test");
@@ -934,7 +1017,11 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             let r = mirror.read_at(buf, 3).now_or_never().unwrap();
             assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
@@ -946,7 +1033,7 @@ mod t {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> Child
+            -> VdevBlock
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -962,7 +1049,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::present(bd)
+            bd
         }
 
         #[test]
@@ -973,7 +1060,28 @@ mod t {
 
             let bd0 = mock(1, Ok(()), total_reads.clone());
             let bd1 = mock(0, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            mirror.read_spacemap(buf, 1).now_or_never().unwrap().unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn degraded() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let buf = dbs.try_mut().unwrap();
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.read_spacemap(buf, 1).now_or_never().unwrap().unwrap();
             assert_eq!(total_reads.load(Ordering::Relaxed), 1);
@@ -988,7 +1096,11 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
                 "Need to swap the disks' return values to fix the test");
@@ -1006,7 +1118,11 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             let r = mirror.read_spacemap(buf, 1).now_or_never().unwrap();
             assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
@@ -1018,7 +1134,7 @@ mod t {
         use super::*;
 
         fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
-            -> Child
+            -> VdevBlock
         {
             let mut bd = mock_vdev_block();
             bd.expect_open_zone()
@@ -1035,7 +1151,7 @@ mod t {
                     total_reads.fetch_add(1, Ordering::Relaxed);
                     Box::pin(future::ready(r))
                 });
-            Child::present(bd)
+            bd
         }
 
         #[test]
@@ -1047,7 +1163,29 @@ mod t {
 
             let bd0 = mock(1, Ok(()), total_reads.clone());
             let bd1 = mock(0, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            mirror.readv_at(sglist, 3).now_or_never().unwrap().unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 1);
+        }
+
+        #[test]
+        fn degraded() {
+            let dbs = DivBufShared::from(vec![0u8; 4096]);
+            let buf = dbs.try_mut().unwrap();
+            let sglist = vec![buf];
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.readv_at(sglist, 3).now_or_never().unwrap().unwrap();
             assert_eq!(total_reads.load(Ordering::Relaxed), 1);
@@ -1063,7 +1201,11 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Ok(()), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             assert_eq!(mirror.next_read_idx.load(Ordering::Relaxed), 0,
                 "Need to swap the disks' return values to fix the test");
@@ -1082,11 +1224,48 @@ mod t {
 
             let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
             let bd1 = mock(1, Err(Error::ENXIO), total_reads.clone());
-            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             let r = mirror.readv_at(sglist, 3).now_or_never().unwrap();
             assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
             assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+    }
+
+    mod sync_all {
+        use super::*;
+
+        #[test]
+        fn basic() {
+            fn mock() -> Child {
+                let mut bd = mock_vdev_block();
+                bd.expect_sync_all()
+                    .once()
+                    .return_once(|| Box::pin(future::ok::<(), Error>(())));
+                Child::present(bd)
+            }
+            let bd0 = mock();
+            let bd1 = mock();
+            let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.sync_all().now_or_never().unwrap().unwrap();
+        }
+
+        #[test]
+        fn degraded() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_sync_all()
+                .once()
+                .return_once(|| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.sync_all().now_or_never().unwrap().unwrap();
         }
     }
 
@@ -1115,6 +1294,31 @@ mod t {
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            mirror.write_at(buf, 3).now_or_never().unwrap().unwrap();
+        }
+
+        #[test]
+        fn degraded() {
+            let dbs = DivBufShared::from(vec![1u8; 4096]);
+            let buf = dbs.try_const().unwrap();
+
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 4096
+                    && *lba == 3
+            ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.write_at(buf, 3).now_or_never().unwrap().unwrap();
         }
@@ -1153,6 +1357,36 @@ mod t {
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
             mirror.writev_at(sglist, 3).now_or_never().unwrap().unwrap();
         }
+
+        #[test]
+        fn degraded() {
+            let dbs0 = DivBufShared::from(vec![1u8; 4096]);
+            let dbs1 = DivBufShared::from(vec![2u8; 8192]);
+            let buf0 = dbs0.try_const().unwrap();
+            let buf1 = dbs1.try_const().unwrap();
+            let sglist = vec![buf0, buf1];
+
+            let mut bd1 = mock_vdev_block();
+            bd1.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd1.expect_writev_at()
+                .once()
+                .withf(|sglist, lba|
+                    sglist.len() == 2
+                    && sglist[0].len() == 4096
+                    && sglist[1].len() == 8192
+                    && *lba == 3
+            ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::missing(Uuid::new_v4()),
+                Child::present(bd1),
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            mirror.writev_at(sglist, 3).now_or_never().unwrap().unwrap();
+        }
     }
 
     mod write_label {
@@ -1170,6 +1404,21 @@ mod t {
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            let labeller = LabelWriter::new(0);
+            mirror.write_label(labeller).now_or_never().unwrap().unwrap();
+        }
+
+        #[test]
+        fn degraded() {
+            let mut bd1 = mock_vdev_block();
+            bd1.expect_write_label()
+                .once()
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::missing(Uuid::new_v4()),
+                Child::present(bd1),
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             let labeller = LabelWriter::new(0);
             mirror.write_label(labeller).now_or_never().unwrap().unwrap();
         }
@@ -1199,6 +1448,29 @@ mod t {
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1].into());
+            mirror.write_spacemap(sgl, 1, 2).now_or_never().unwrap().unwrap();
+        }
+
+        #[test]
+        fn degraded() {
+            let dbs = DivBufShared::from(vec![1u8; 4096]);
+            let buf = dbs.try_const().unwrap();
+            let sgl = vec![buf];
+
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_write_spacemap()
+                .once()
+                .withf(|sglist, idx, lba|
+                    sglist.len() == 1
+                    && sglist[0].len() == 4096
+                    && *idx == 1
+                    && *lba == 2
+            ).return_once(|_, _, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.write_spacemap(sgl, 1, 2).now_or_never().unwrap().unwrap();
         }
     }
