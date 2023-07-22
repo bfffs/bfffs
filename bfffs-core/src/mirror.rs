@@ -149,16 +149,16 @@ impl Child {
         }
     }
 
-    fn erase_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
-        self.as_present().unwrap().erase_zone(start, end)
+    fn erase_zone(&self, start: LbaT, end: LbaT) -> Option<VdevBlockFut> {
+        self.as_present().map(|bd| bd.erase_zone(start, end))
     }
 
-    fn finish_zone(&self, start: LbaT, end: LbaT) -> VdevBlockFut {
-        self.as_present().unwrap().finish_zone(start, end)
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> Option<VdevBlockFut> {
+        self.as_present().map(|bd| bd.finish_zone(start, end))
     }
 
-    fn open_zone(&self, start: LbaT) -> VdevBlockFut {
-        self.as_present().unwrap().open_zone(start)
+    fn open_zone(&self, start: LbaT) -> Option<VdevBlockFut> {
+        self.as_present().map(|bd| bd.open_zone(start))
     }
 
     fn read_at(&self, buf: IoVecMut, lba: LbaT) -> VdevBlockFut {
@@ -177,22 +177,22 @@ impl Child {
         self.as_present().map(VdevBlock::status)
     }
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> VdevBlockFut {
-        self.as_present().unwrap().write_at(buf, lba)
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> Option<VdevBlockFut> {
+        self.as_present().map(|bd| bd.write_at(buf, lba))
     }
 
-    fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut {
-        self.as_present().unwrap().write_label(labeller)
+    fn write_label(&self, labeller: LabelWriter) -> Option<VdevBlockFut> {
+        self.as_present().map(|vb| vb.write_label(labeller))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        -> VdevBlockFut
+        -> Option<VdevBlockFut>
     {
-        self.as_present().unwrap().write_spacemap(sglist, idx, block)
+        self.as_present().map(|vb| vb.write_spacemap(sglist, idx, block))
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> VdevBlockFut {
-        self.as_present().unwrap().writev_at(bufs, lba)
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> Option<VdevBlockFut> {
+        self.as_present().map(|vb| vb.writev_at(bufs, lba))
     }
 
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
@@ -207,8 +207,8 @@ impl Child {
         self.as_present().map(VdevBlock::size)
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
-        self.as_present().unwrap().sync_all()
+    fn sync_all(&self) -> Option<BoxVdevFut> {
+        self.as_present().map(VdevBlock::sync_all)
     }
 
     fn uuid(&self) -> Uuid {
@@ -278,7 +278,7 @@ impl Mirror {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.erase_zone(start, end)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -292,7 +292,7 @@ impl Mirror {
     /// - `start`:  The first LBA within the target zone
     /// - `end`:    The last LBA within the target zone
     pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.finish_zone(start, end)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -369,7 +369,7 @@ impl Mirror {
     }
 
     pub fn open_zone(&self, start: LbaT) -> BoxVdevFut {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.open_zone(start)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -457,7 +457,7 @@ impl Mirror {
 
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.write_at(buf.clone(), lba)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -474,7 +474,7 @@ impl Mirror {
             children: children_uuids
         };
         labeller.serialize(&label).unwrap();
-        let fut = self.children.iter().map(|bd| {
+        let fut = self.children.iter().filter_map(|bd| {
            bd.write_label(labeller.clone())
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -485,7 +485,7 @@ impl Mirror {
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  BoxVdevFut
     {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.write_spacemap(sglist.clone(), idx, block)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -495,7 +495,7 @@ impl Mirror {
 
     pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut
     {
-        let fut = self.children.iter().map(|blockdev| {
+        let fut = self.children.iter().filter_map(|blockdev| {
             blockdev.writev_at(bufs.clone(), lba)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -520,7 +520,7 @@ impl Vdev for Mirror {
     fn sync_all(&self) -> BoxVdevFut {
         // TODO: handle errors on some devices
         let fut = self.children.iter()
-        .map(Child::sync_all)
+        .filter_map(Child::sync_all)
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -1176,19 +1176,21 @@ mod t {
         #[test]
         fn degraded() {
             let dbs = DivBufShared::from(vec![0u8; 4096]);
-            let buf = dbs.try_mut().unwrap();
-            let sglist = vec![buf];
             let total_reads = Arc::new(AtomicU32::new(0));
 
-            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd0 = mock(2, Ok(()), total_reads.clone());
             let children = vec![
                 Child::present(bd0),
                 Child::missing(Uuid::new_v4())
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children.into());
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
-            mirror.readv_at(sglist, 3).now_or_never().unwrap().unwrap();
-            assert_eq!(total_reads.load(Ordering::Relaxed), 1);
+            for i in 3..5 {
+                let buf = dbs.try_mut().unwrap();
+                let sglist = vec![buf];
+                mirror.readv_at(sglist, i).now_or_never().unwrap().unwrap();
+            }
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
         }
 
         /// If a read returns EIO, Mirror should retry it on another child.
