@@ -839,7 +839,7 @@ impl VdevRaid {
             let fut = (0..k).map(|_| {
                 let (_, loc) = lociter.next().unwrap();
                 let fut = if lba <= recovery_lba && recovery_lba <= end_lba {
-                    // Already have this data.  No need to read.
+                    // Already attempted to read this chunk.  No need to reread.
                     did += 1;
                     Box::pin(future::ready(dv[did - 1])) as BoxVdevFut
                 } else {
