@@ -751,7 +751,7 @@ impl VdevRaid {
                     let end = ChunkId::Data(elba);
                     let lociter = self.locator.iter_data(start, end);
                     let dvs = lociter
-                        .map(|(_cid, loc)| dv[loc.disk as usize])
+                        .map(|(_cid, loc)| Some(dv[loc.disk as usize]))
                         .collect::<Vec<_>>();
                     // TODO: make use of any parity chunks that we
                     // opportunistically read.
@@ -789,8 +789,9 @@ impl VdevRaid {
             if dv.iter().all(Result::is_ok) {
                 Box::pin(future::ok(())) as BoxVdevFut
             } else {
+                let dvs = dv.into_iter().map(Some).collect::<Vec<_>>();
                 let data = dbi.try_mut().unwrap();
-                Box::pin(self.read_at_recovery(data, lba, dv))
+                Box::pin(self.read_at_recovery(data, lba, dvs))
             }
         })
         // TODO: on error, record error statistics, possibly fault a drive,
@@ -805,13 +806,19 @@ impl VdevRaid {
         data: DivBufMut,
         // LBA where the original operation began
         lba: LbaT,
-        // Results of the original read attempts
-        dv: Vec<Result<()>>) -> BoxVdevFut
+        // Results of the original read attempts, if any.
+        dv: Vec<Option<Result<()>>>) -> BoxVdevFut
     {
         let f = self.codec.protection() as usize;
-        if dv.iter().filter(|r| r.is_err()).count() > f {
+        if dv.iter()
+            .filter(|r| r.as_ref().map(Result::is_err).unwrap_or(false))
+            .count() > f
+        {
             // Too many errors.  No point in attempting recovery. :(
-            let r = dv.iter().find(|r| r.is_err()).unwrap();
+            let r = dv.iter()
+                .find(|r| matches!(r, Some(Err(_))))
+                .unwrap()
+                .unwrap();
             Box::pin(future::err(r.unwrap_err())) as BoxVdevFut
         } else {
             let k = self.codec.stripesize() as usize;
@@ -839,9 +846,17 @@ impl VdevRaid {
             let fut = (0..k).map(|_| {
                 let (_, loc) = lociter.next().unwrap();
                 let fut = if lba <= recovery_lba && recovery_lba <= end_lba {
-                    // Already attempted to read this chunk.  No need to reread.
                     did += 1;
-                    Box::pin(future::ready(dv[did - 1])) as BoxVdevFut
+                    let or = dv[did - 1];
+                    if let Some(r) = or {
+                        // Already attempted to read this chunk.  No need to
+                        // reread.
+                        Box::pin(future::ready(r)) as BoxVdevFut
+                    } else {
+                        // TODO: at this point, issue reads to data that we
+                        // don't have, when doing a degraded mode read.
+                        todo!()
+                    }
                 } else {
                     // Read extra data or parity chunks for reconstruction
                     let buf = exmuts.next().unwrap();
@@ -894,7 +909,10 @@ impl VdevRaid {
                     Ok(())
                     // TODO: re-write the offending sector for READ UNRECOVERABLE
                 } else {
-                    let r = dv.iter().find(|r| r.is_err()).unwrap();
+                    let r = dv.iter()
+                        .find(|r| matches!(r, Some(Err(_))))
+                        .unwrap()
+                        .unwrap();
                     Err(r.unwrap_err())
                 }
                 // TODO: record error statistics
