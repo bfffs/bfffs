@@ -69,6 +69,7 @@ rand_xorshift = "0.3"
 rstest = "0.17.0"
 rstest_reuse = "0.2.0"
 tempfile = "3.4"
+test-log = { version = "0.2.12", default-features = false, features = ["trace"] }
 tokio = { version = "1.24.2", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies.tracing-subscriber]
