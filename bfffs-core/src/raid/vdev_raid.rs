@@ -639,6 +639,7 @@ impl VdevRaid {
         let f = self.codec.protection();
         let k = self.codec.stripesize();
         let m = k - f;
+        let lbas_per_stripe = self.chunksize * m as LbaT;
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         let lbas = (buf.len() / BYTES_PER_LBA) as LbaT;
         let chunks = div_roundup(buf.len(), col_len);
@@ -668,7 +669,15 @@ impl VdevRaid {
         }
         // Build the SGLists, one chunk at a time
         let start = ChunkId::Data(lba / self.chunksize);
-        let end = ChunkId::Data(div_roundup(lba + lbas, self.chunksize));
+        let end_lba = lba + lbas;   // First LBA past end of the operation
+        let at_end_of_stripe = end_lba % lbas_per_stripe >
+            lbas_per_stripe - self.chunksize;
+        let end = if at_end_of_stripe {
+            let end_chunk = end_lba / self.chunksize;
+            ChunkId::Parity(end_chunk - end_chunk % m as LbaT, 0)
+        } else {
+            ChunkId::Data(div_roundup(lba + lbas, self.chunksize))
+        };
         let mut starting = true;
         for (cid, loc) in self.locator.iter(start, end) {
             let mut disk_lba = loc.offset * self.chunksize;

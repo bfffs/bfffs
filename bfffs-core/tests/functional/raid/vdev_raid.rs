@@ -432,7 +432,7 @@ mod io {
             write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf_b, rbuf_m, rbuf_e]).await;
         }
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -482,6 +482,27 @@ mod io {
     #[awt]
     async fn write_read_one_stripe(#[future] h: Harness) {
         write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, 1).await;
+    }
+
+    // Read exactly one stripe's worth of data that isn't stripe-aligned, with
+    // the end of the read falling somewhere on the last chunk of a stripe.
+    #[rstest]
+    #[case(1)]
+    #[case(2)]
+    #[case(3)]
+    #[case(4)]
+    #[tokio::test]
+    async fn read_one_stripe_unaligned(#[case] x: LbaT) {
+        let h = harness(3,3,1,4).await;
+        let zl = h.vdev.zone_limits(0);
+        let stripe_lbas = h.chunksize * (h.k - h.f) as LbaT;
+        let (dbsw, dbsr) = make_bufs(h.chunksize, h.k, h.f, 2);
+        let wbufs = vec![dbsw.try_const().unwrap()];
+        let mut rbuf = dbsr.try_mut().unwrap();
+        let rbuf0 = rbuf.split_to((stripe_lbas - x) as usize * BYTES_PER_LBA);
+        let rbuf1 = rbuf.split_to(stripe_lbas as usize * BYTES_PER_LBA);
+        let rbufs = vec![rbuf0, rbuf1];
+        write_read(h.vdev, wbufs, rbufs, 0, zl.0).await;
     }
 
     // read_at_one/write_at_one with a large configuration
