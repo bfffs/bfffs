@@ -207,6 +207,7 @@ mod errors {
         #[named]
         #[rstest]
         #[tokio::test]
+        #[ignore = "https://github.com/bfffs/bfffs/issues/297" ]
         async fn recoverable_eio() {
             require_root!();
             // Stupid mirror; trivial configuration

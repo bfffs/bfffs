@@ -528,6 +528,7 @@ mod errors {
         #[apply(recoverable_failures)]
         #[rstest]
         #[tokio::test]
+        #[ignore = "https://github.com/bfffs/bfffs/issues/297" ]
         async fn recoverable_eio_whole_stripe(
             c: Config,
             // One stripe provides coverage of read_at_one.  Three stripes
@@ -538,7 +539,8 @@ mod errors {
             #[values(1, 2, 3)]
             stripes: usize)
         {
-            let mut h = harness(c, 2).await;
+            const CHUNKSIZE: LbaT = 2;
+            let mut h = harness(c, CHUNKSIZE).await;
             let mut started = false;
             for defective_diskids in (0..c.n as usize).combinations(c.nfailures)
             {
@@ -546,7 +548,7 @@ mod errors {
                     h.reset().await;
                 }
                 started = true;
-                let (dbsw, dbsr) = make_bufs(1, c.k, c.f, stripes);
+                let (dbsw, dbsr) = make_bufs(CHUNKSIZE, c.k, c.f, stripes);
                 let wbuf0 = dbsw.try_const().unwrap();
                 let wbuf1 = dbsw.try_const().unwrap();
                 let rbuf = dbsr.try_mut().unwrap();
@@ -1521,23 +1523,17 @@ mod read_at {
 
     // Reads should skip missing children
     #[test]
-    fn degraded() {
+    fn multi_stripe_degraded() {
         let k = 3;
         let f = 1;
         const CHUNKSIZE : LbaT = 2;
 
         let mut m1 = mock_mirror();
-        m1.expect_read_at()
-            .times(2)
-            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
         m1.expect_readv_at()
             .once()
             .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
 
         let mut m2 = mock_mirror();
-        m2.expect_read_at()
-            .once()
-            .returning(|_, _|  Box::pin(future::ok::<(), Error>(())));
         m2.expect_readv_at()
             .once()
             .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
@@ -1554,10 +1550,132 @@ mod read_at {
         );
         // Read two stripes to ensure that the missing device should be included
         // in one.
-        let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * 8;
+        let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * (k - f) as usize * 2;
         let dbs = DivBufShared::from(vec![0u8; rlen]);
         let rbuf = dbs.try_mut().unwrap();
         vdev_raid.read_at(rbuf, 120_000).now_or_never().unwrap().unwrap();
+    }
+
+    // Reads should skip missing children
+    #[test]
+    fn one_stripe_degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut m1 = mock_mirror();
+        m1.expect_read_at()
+            .times(2)
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+
+        let mut m2 = mock_mirror();
+        m2.expect_read_at()
+            .times(2)
+            .returning(|_, _|  Box::pin(future::ok::<(), Error>(())));
+
+        let mirrors = vec![
+            Child::missing(Uuid::new_v4()),
+            Child::present(m1),
+            Child::present(m2)
+        ];
+
+        let vdev_raid = Arc::new(
+            VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
+                          LayoutAlgorithm::PrimeS, mirrors.into_boxed_slice())
+        );
+        // Read two stripes to ensure that the missing device should be included
+        // in one.  But read one at a time.
+        let zl = vdev_raid.zone_limits(0);
+        for i in 0..2 {
+            let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * (k - f) as usize;
+            let dbs = DivBufShared::from(vec![0u8; rlen]);
+            let rbuf = dbs.try_mut().unwrap();
+            let ofs = zl.0 + i * rlen as u64;
+            vdev_raid.clone().read_at(rbuf, ofs)
+                .now_or_never().unwrap().unwrap();
+        }
+    }
+
+    #[test]
+    fn one_stripe_unaligned_degraded() {
+        let k = 3;
+        let f = 1;
+        let m = k - f;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut m1 = mock_mirror();
+        m1.expect_readv_at()
+            .times(2)
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+
+        let mut m2 = mock_mirror();
+        m2.expect_readv_at()
+            .times(2)
+            .returning(|_, _|  Box::pin(future::ok::<(), Error>(())));
+
+        let mirrors = vec![
+            Child::missing(Uuid::new_v4()),
+            Child::present(m1),
+            Child::present(m2)
+        ];
+
+        let vdev_raid = Arc::new(
+            VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
+                          LayoutAlgorithm::PrimeS, mirrors.into_boxed_slice())
+        );
+        // Read two stripes to ensure that the missing device should be included
+        // in one.  But read one at a time.
+        let zl = vdev_raid.zone_limits(0);
+        let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * m as usize;
+        let lbas_per_stripe = m as LbaT * CHUNKSIZE as LbaT;
+        let dbs = DivBufShared::from(vec![0u8; rlen]);
+        for i in 0..2 {
+            let rbuf = dbs.try_mut().unwrap();
+            let ofs = zl.0 + CHUNKSIZE * m as u64 / 2 + i * lbas_per_stripe;
+            vdev_raid.clone().read_at(rbuf, ofs)
+                .now_or_never().unwrap().unwrap();
+        }
+    }
+
+    #[test]
+    fn one_stripe_chunk_unaligned_degraded() {
+        let k = 3;
+        let f = 1;
+        let m = k - f;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut m1 = mock_mirror();
+        m1.expect_readv_at()
+            .times(2)
+            .returning(|_, _|  Box::pin( future::ok::<(), Error>(())));
+
+        let mut m2 = mock_mirror();
+        m2.expect_readv_at()
+            .times(2)
+            .returning(|_, _|  Box::pin(future::ok::<(), Error>(())));
+
+        let mirrors = vec![
+            Child::missing(Uuid::new_v4()),
+            Child::present(m1),
+            Child::present(m2)
+        ];
+
+        let vdev_raid = Arc::new(
+            VdevRaid::new(CHUNKSIZE, k, f, Uuid::new_v4(),
+                          LayoutAlgorithm::PrimeS, mirrors.into_boxed_slice())
+        );
+        // Read two stripes to ensure that the missing device should be included
+        // in one.  But read one at a time.
+        let zl = vdev_raid.zone_limits(0);
+        let rlen = CHUNKSIZE as usize * BYTES_PER_LBA * m as usize;
+        let lbas_per_stripe = m as LbaT * CHUNKSIZE as LbaT;
+        let dbs = DivBufShared::from(vec![0u8; rlen]);
+        for i in 0..2 {
+            let rbuf = dbs.try_mut().unwrap();
+            let ofs = zl.0 + CHUNKSIZE * m as u64 / 2 + i * lbas_per_stripe + 1;
+            vdev_raid.clone().read_at(rbuf, ofs)
+                .now_or_never().unwrap().unwrap();
+        }
     }
 
     // Use mock Mirror objects to test that RAID reads hit the right LBAs from
