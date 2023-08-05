@@ -52,8 +52,9 @@ mod basic {
         assert_eq!(e.kind(), std::io::ErrorKind::NotFound);
     }
 
-    /// erase_zone should succeed and do nothing if the underlying file does not
-    /// support it.
+    /// erase_zone on a plain file should succeed.  If fspacectl is supported,
+    /// that region of the file should be zeroed.  Otherwise, nothing should
+    /// happen.
     #[rstest]
     #[tokio::test]
     async fn erase_zone(harness: Harness) {
@@ -84,6 +85,43 @@ mod basic {
         }
     }
 
+    /// Erasing a zone twice in the life of a vdev_file takes a different code
+    /// path.  Exercise it, too.
+    #[cfg(have_fspacectl)]
+    #[rstest]
+    #[tokio::test]
+    async fn erase_zone_twice(harness: Harness) {
+        let (mut vd, pb, _tempdir) = harness;
+        let mut f = fs::File::open(pb).unwrap();
+        let mut rbuf = vec![0u8; 4096];
+
+        // First, write some data to two zones.
+        {
+            let dbs = DivBufShared::from(vec![42u8; 4096]);
+            for zone in 0..2 {
+                let zl = vd.zone_limits(zone);
+                let wbuf = dbs.try_const().unwrap();
+                vd.write_at(wbuf.clone(), zl.0).await
+                .unwrap();
+            }
+        }
+
+        // Now erase both zones.
+        vd.erase_zone(0).await.unwrap();
+        vd.erase_zone(1).await.unwrap();
+
+        // verify that they got erased.
+        let expected = vec![0u8; 4096];
+        for zone in 0..2 {
+            let zl = vd.zone_limits(zone);
+            f.seek(SeekFrom::Start(zl.0 * BYTES_PER_LBA as u64)).unwrap();
+            f.read_exact(&mut rbuf).unwrap();
+            assert_eq!(rbuf, expected);
+        }
+    }
+
+
+
     #[rstest]
     fn lba2zone(harness: Harness) {
         assert_eq!(harness.0.lba2zone(0), None);
@@ -91,6 +129,11 @@ mod basic {
         assert_eq!(harness.0.lba2zone(10), Some(0));
         assert_eq!(harness.0.lba2zone((1 << 16) - 1), Some(0));
         assert_eq!(harness.0.lba2zone(1 << 16), Some(1));
+    }
+
+    #[rstest]
+    fn path(harness: Harness) {
+        assert_eq!(harness.0.path(), harness.1.as_path());
     }
 
     #[rstest]
