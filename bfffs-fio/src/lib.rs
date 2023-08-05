@@ -1,7 +1,6 @@
 // vim: tw=80
 
 use std::{
-    borrow::Borrow,
     collections::hash_map::HashMap,
     ffi::{CStr, OsStr},
     mem,
@@ -311,8 +310,7 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
             }
             rt.block_on(async {
                 for vdev in vdevs.split_whitespace() {
-                    let borrowed_vdev: &str = vdev.borrow();
-                    manager.taste(borrowed_vdev).await.unwrap();
+                    manager.taste(vdev).await.unwrap();
                 }
                 let r = manager.import_by_name(pool).await;
                 if let Ok(db) = r {

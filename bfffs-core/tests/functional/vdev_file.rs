@@ -70,7 +70,7 @@ mod basic {
             .unwrap();
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
             f.read_exact(&mut rbuf).unwrap();
-            assert_eq!(rbuf, wbuf.deref().deref());
+            assert_eq!(rbuf, wbuf.deref());
         }
 
         vd.erase_zone(0).await.unwrap();
@@ -226,7 +226,7 @@ mod basic {
         let mut f = t!(fs::File::open(harness.1));
         f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf.deref().deref());
+        assert_eq!(rbuf, wbuf.deref());
     }
 
     #[should_panic(expected = "Don't overwrite the labels!")]
@@ -257,7 +257,7 @@ mod basic {
         let mut f = t!(fs::File::open(harness.1));
         t!(f.seek(SeekFrom::Start(11 * 4096)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(rbuf, wbuf.deref().deref());
+        assert_eq!(rbuf, wbuf.deref());
     }
 
     #[rstest]
@@ -273,8 +273,8 @@ mod basic {
         let mut f = t!(fs::File::open(harness.1));
         t!(f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)));
         t!(f.read_exact(&mut rbuf));
-        assert_eq!(&rbuf[0..4096], wbuf0.deref().deref());
-        assert_eq!(&rbuf[4096..8192], wbuf1.deref().deref());
+        assert_eq!(&rbuf[0..4096], wbuf0.deref());
+        assert_eq!(&rbuf[4096..8192], wbuf1.deref());
     }
 
     #[rstest]
@@ -329,7 +329,7 @@ mod dev {
             vd.write_at(wbuf.clone(), 10).await.unwrap();
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
             t!(f.read_exact(&mut rbuf));
-            assert_eq!(rbuf, wbuf.deref().deref());
+            assert_eq!(rbuf, wbuf.deref());
         }
 
         // Actually erase the zone
