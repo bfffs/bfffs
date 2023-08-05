@@ -1,7 +1,8 @@
 #! /bin/sh
 
 # fio doesn't install the necessary headers, so we have to reference its source
-# directory
+# directory.
+# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=272960
 FIOPATH="/wrkdirs/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.35/"
 
 cat > src/ffi.rs << HERE
