@@ -3098,13 +3098,13 @@ fn bindgen_test_layout_thread_stat() {
 #[repr(C)]
 #[repr(align(8))]
 pub struct thread_options {
-    pub _bindgen_opaque_blob: [u64; 371usize],
+    pub _bindgen_opaque_blob: [u64; 407usize],
 }
 #[test]
 fn bindgen_test_layout_thread_options() {
     assert_eq!(
         ::std::mem::size_of::<thread_options>(),
-        2968usize,
+        3256usize,
         concat!("Size of: ", stringify!(thread_options))
     );
     assert_eq!(
@@ -3324,7 +3324,7 @@ pub struct thread_data {
     pub bytes_verified: u64,
     pub thinktime_blocks_counter: *mut u64,
     pub last_thinktime: timespec,
-    pub last_thinktime_blocks: u64,
+    pub last_thinktime_blocks: i64,
     pub random_state: frand_state,
     pub start: timespec,
     pub epoch: timespec,
@@ -3538,7 +3538,7 @@ fn bindgen_test_layout_thread_data() {
     let ptr = UNINIT.as_ptr();
     assert_eq!(
         ::std::mem::size_of::<thread_data>(),
-        190560usize,
+        190848usize,
         concat!("Size of: ", stringify!(thread_data))
     );
     assert_eq!(
@@ -3580,7 +3580,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).eo) as usize - ptr as usize },
-        2992usize,
+        3280usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3590,7 +3590,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).thread) as usize - ptr as usize },
-        3000usize,
+        3288usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3602,7 +3602,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).thread_number) as usize - ptr as usize
         },
-        3008usize,
+        3296usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3614,7 +3614,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).subjob_number) as usize - ptr as usize
         },
-        3012usize,
+        3300usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3624,7 +3624,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).groupid) as usize - ptr as usize },
-        3016usize,
+        3304usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3634,7 +3634,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).ts) as usize - ptr as usize },
-        3024usize,
+        3312usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3646,7 +3646,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).client_type) as usize - ptr as usize
         },
-        186912usize,
+        187200usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3658,7 +3658,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).slat_log) as usize - ptr as usize
         },
-        186920usize,
+        187208usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3670,7 +3670,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).clat_log) as usize - ptr as usize
         },
-        186928usize,
+        187216usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3682,7 +3682,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).clat_hist_log) as usize - ptr as usize
         },
-        186936usize,
+        187224usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3692,7 +3692,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).lat_log) as usize - ptr as usize },
-        186944usize,
+        187232usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3702,7 +3702,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).bw_log) as usize - ptr as usize },
-        186952usize,
+        187240usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3714,7 +3714,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).iops_log) as usize - ptr as usize
         },
-        186960usize,
+        187248usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3726,7 +3726,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).log_compress_wq) as usize - ptr as usize
         },
-        186968usize,
+        187256usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3736,7 +3736,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).parent) as usize - ptr as usize },
-        187112usize,
+        187400usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3748,7 +3748,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).stat_io_bytes) as usize - ptr as usize
         },
-        187120usize,
+        187408usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3760,7 +3760,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).bw_sample_time) as usize - ptr as usize
         },
-        187144usize,
+        187432usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3772,7 +3772,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).stat_io_blocks) as usize - ptr as usize
         },
-        187160usize,
+        187448usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3785,7 +3785,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).iops_sample_time) as usize -
                 ptr as usize
         },
-        187184usize,
+        187472usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3797,7 +3797,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).update_rusage) as usize - ptr as usize
         },
-        187200usize,
+        187488usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3809,7 +3809,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rusage_sem) as usize - ptr as usize
         },
-        187208usize,
+        187496usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3821,7 +3821,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ru_start) as usize - ptr as usize
         },
-        187216usize,
+        187504usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3831,7 +3831,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).ru_end) as usize - ptr as usize },
-        187360usize,
+        187648usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3841,7 +3841,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).files) as usize - ptr as usize },
-        187504usize,
+        187792usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3853,7 +3853,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).file_locks) as usize - ptr as usize
         },
-        187512usize,
+        187800usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3865,7 +3865,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).files_size) as usize - ptr as usize
         },
-        187520usize,
+        187808usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3877,7 +3877,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).files_index) as usize - ptr as usize
         },
-        187524usize,
+        187812usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3889,7 +3889,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).nr_open_files) as usize - ptr as usize
         },
-        187528usize,
+        187816usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3901,7 +3901,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).nr_done_files) as usize - ptr as usize
         },
-        187532usize,
+        187820usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3913,7 +3913,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).random_center) as usize - ptr as usize
         },
-        187696usize,
+        187984usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3923,7 +3923,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).error) as usize - ptr as usize },
-        187704usize,
+        187992usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3933,7 +3933,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).sig) as usize - ptr as usize },
-        187708usize,
+        187996usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3943,7 +3943,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).done) as usize - ptr as usize },
-        187712usize,
+        188000usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3953,7 +3953,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).stop_io) as usize - ptr as usize },
-        187716usize,
+        188004usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3963,7 +3963,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).pid) as usize - ptr as usize },
-        187720usize,
+        188008usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3975,7 +3975,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).orig_buffer) as usize - ptr as usize
         },
-        187728usize,
+        188016usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -3988,7 +3988,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).orig_buffer_size) as usize -
                 ptr as usize
         },
-        187736usize,
+        188024usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4000,7 +4000,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).runstate) as usize - ptr as usize
         },
-        187744usize,
+        188032usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4012,7 +4012,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).terminate) as usize - ptr as usize
         },
-        187748usize,
+        188036usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4024,7 +4024,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).last_was_sync) as usize - ptr as usize
         },
-        187749usize,
+        188037usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4036,7 +4036,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).last_ddir) as usize - ptr as usize
         },
-        187752usize,
+        188040usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4046,7 +4046,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).mmapfd) as usize - ptr as usize },
-        187756usize,
+        188044usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4058,7 +4058,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).iolog_buf) as usize - ptr as usize
         },
-        187760usize,
+        188048usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4068,7 +4068,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).iolog_f) as usize - ptr as usize },
-        187768usize,
+        188056usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4080,7 +4080,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rand_seeds) as usize - ptr as usize
         },
-        187776usize,
+        188064usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4092,7 +4092,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).bsrange_state) as usize - ptr as usize
         },
-        187944usize,
+        188232usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4104,7 +4104,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).verify_state) as usize - ptr as usize
         },
-        188088usize,
+        188376usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4117,7 +4117,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).verify_state_last_do_io) as usize -
                 ptr as usize
         },
-        188136usize,
+        188424usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4129,7 +4129,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).trim_state) as usize - ptr as usize
         },
-        188184usize,
+        188472usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4141,7 +4141,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).delay_state) as usize - ptr as usize
         },
-        188232usize,
+        188520usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4153,7 +4153,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).buf_state) as usize - ptr as usize
         },
-        188280usize,
+        188568usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4165,7 +4165,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).buf_state_prev) as usize - ptr as usize
         },
-        188328usize,
+        188616usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4177,7 +4177,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).buf_state_ret) as usize - ptr as usize
         },
-        188376usize,
+        188664usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4189,7 +4189,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).dedupe_state) as usize - ptr as usize
         },
-        188424usize,
+        188712usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4201,7 +4201,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).zone_state) as usize - ptr as usize
         },
-        188472usize,
+        188760usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4213,7 +4213,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).prio_state) as usize - ptr as usize
         },
-        188520usize,
+        188808usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4226,7 +4226,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).dedupe_working_set_index_state) as usize -
                 ptr as usize
         },
-        188568usize,
+        188856usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4239,7 +4239,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).dedupe_working_set_states) as usize -
                 ptr as usize
         },
-        188616usize,
+        188904usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4252,7 +4252,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).num_unique_pages) as usize -
                 ptr as usize
         },
-        188624usize,
+        188912usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4265,7 +4265,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).zone_state_index) as usize -
                 ptr as usize
         },
-        188632usize,
+        188920usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4277,7 +4277,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).num_open_zones) as usize - ptr as usize
         },
-        188640usize,
+        188928usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4289,7 +4289,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).verify_batch) as usize - ptr as usize
         },
-        188644usize,
+        188932usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4301,7 +4301,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).trim_batch) as usize - ptr as usize
         },
-        188648usize,
+        188936usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4311,7 +4311,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).vstate) as usize - ptr as usize },
-        188656usize,
+        188944usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4321,7 +4321,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).shm_id) as usize - ptr as usize },
-        188664usize,
+        188952usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4331,7 +4331,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).ioprio) as usize - ptr as usize },
-        188668usize,
+        188956usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4341,7 +4341,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).io_ops) as usize - ptr as usize },
-        188672usize,
+        188960usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4353,7 +4353,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_ops_init) as usize - ptr as usize
         },
-        188680usize,
+        188968usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4365,7 +4365,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_ops_data) as usize - ptr as usize
         },
-        188688usize,
+        188976usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4377,7 +4377,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).cur_depth) as usize - ptr as usize
         },
-        188696usize,
+        188984usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4389,7 +4389,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_queued) as usize - ptr as usize
         },
-        188700usize,
+        188988usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4401,7 +4401,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_in_flight) as usize - ptr as usize
         },
-        188704usize,
+        188992usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4413,7 +4413,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_requeues) as usize - ptr as usize
         },
-        188712usize,
+        189000usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4425,7 +4425,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_freelist) as usize - ptr as usize
         },
-        188736usize,
+        189024usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4437,7 +4437,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_all) as usize - ptr as usize
         },
-        188752usize,
+        189040usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4449,7 +4449,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_u_lock) as usize - ptr as usize
         },
-        188768usize,
+        189056usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4461,7 +4461,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).free_cond) as usize - ptr as usize
         },
-        188776usize,
+        189064usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4473,7 +4473,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).verify_list) as usize - ptr as usize
         },
-        188784usize,
+        189072usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4485,7 +4485,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).verify_threads) as usize - ptr as usize
         },
-        188800usize,
+        189088usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4498,7 +4498,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).nr_verify_threads) as usize -
                 ptr as usize
         },
-        188808usize,
+        189096usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4510,7 +4510,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).verify_cond) as usize - ptr as usize
         },
-        188816usize,
+        189104usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4523,7 +4523,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).verify_thread_exit) as usize -
                 ptr as usize
         },
-        188824usize,
+        189112usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4535,7 +4535,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rate_bps) as usize - ptr as usize
         },
-        188832usize,
+        189120usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4548,7 +4548,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).rate_next_io_time) as usize -
                 ptr as usize
         },
-        188856usize,
+        189144usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4561,7 +4561,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).last_rate_check_bytes) as usize -
                 ptr as usize
         },
-        188880usize,
+        189168usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4574,7 +4574,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).last_rate_check_blocks) as usize -
                 ptr as usize
         },
-        188904usize,
+        189192usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4587,7 +4587,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).rate_io_issue_bytes) as usize -
                 ptr as usize
         },
-        188928usize,
+        189216usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4600,7 +4600,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).last_rate_check_time) as usize -
                 ptr as usize
         },
-        188952usize,
+        189240usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4612,7 +4612,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).last_usec) as usize - ptr as usize
         },
-        189000usize,
+        189288usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4624,7 +4624,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).poisson_state) as usize - ptr as usize
         },
-        189024usize,
+        189312usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4634,7 +4634,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).io_wq) as usize - ptr as usize },
-        189168usize,
+        189456usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4646,7 +4646,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).total_io_size) as usize - ptr as usize
         },
-        189312usize,
+        189600usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4659,7 +4659,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).fill_device_size) as usize -
                 ptr as usize
         },
-        189320usize,
+        189608usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4671,7 +4671,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_issues) as usize - ptr as usize
         },
-        189328usize,
+        189616usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4684,7 +4684,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).verify_read_issues) as usize -
                 ptr as usize
         },
-        189352usize,
+        189640usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4696,7 +4696,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_issue_bytes) as usize - ptr as usize
         },
-        189360usize,
+        189648usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4706,7 +4706,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).loops) as usize - ptr as usize },
-        189384usize,
+        189672usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4718,7 +4718,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_blocks) as usize - ptr as usize
         },
-        189392usize,
+        189680usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4730,7 +4730,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).this_io_blocks) as usize - ptr as usize
         },
-        189416usize,
+        189704usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4742,7 +4742,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_bytes) as usize - ptr as usize
         },
-        189440usize,
+        189728usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4754,7 +4754,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).this_io_bytes) as usize - ptr as usize
         },
-        189464usize,
+        189752usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4766,7 +4766,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_skip_bytes) as usize - ptr as usize
         },
-        189488usize,
+        189776usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4778,7 +4778,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).zone_bytes) as usize - ptr as usize
         },
-        189496usize,
+        189784usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4788,7 +4788,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).sem) as usize - ptr as usize },
-        189504usize,
+        189792usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4800,7 +4800,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).bytes_done) as usize - ptr as usize
         },
-        189512usize,
+        189800usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4812,7 +4812,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).bytes_verified) as usize - ptr as usize
         },
-        189536usize,
+        189824usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4825,7 +4825,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).thinktime_blocks_counter) as usize -
                 ptr as usize
         },
-        189544usize,
+        189832usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4837,7 +4837,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).last_thinktime) as usize - ptr as usize
         },
-        189552usize,
+        189840usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4850,7 +4850,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).last_thinktime_blocks) as usize -
                 ptr as usize
         },
-        189568usize,
+        189856usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4862,7 +4862,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).random_state) as usize - ptr as usize
         },
-        189576usize,
+        189864usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4872,7 +4872,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).start) as usize - ptr as usize },
-        189624usize,
+        189912usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4882,7 +4882,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).epoch) as usize - ptr as usize },
-        189640usize,
+        189928usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4894,7 +4894,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).alternate_epoch) as usize - ptr as usize
         },
-        189656usize,
+        189944usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4906,7 +4906,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).last_issue) as usize - ptr as usize
         },
-        189664usize,
+        189952usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4918,7 +4918,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).time_offset) as usize - ptr as usize
         },
-        189680usize,
+        189968usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4930,7 +4930,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ts_cache) as usize - ptr as usize
         },
-        189688usize,
+        189976usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4942,7 +4942,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).terminate_time) as usize - ptr as usize
         },
-        189704usize,
+        189992usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4954,7 +4954,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ts_cache_nr) as usize - ptr as usize
         },
-        189720usize,
+        190008usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4966,7 +4966,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ts_cache_mask) as usize - ptr as usize
         },
-        189724usize,
+        190012usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4978,7 +4978,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ramp_time_over) as usize - ptr as usize
         },
-        189728usize,
+        190016usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -4990,7 +4990,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_ts) as usize - ptr as usize
         },
-        189736usize,
+        190024usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5002,7 +5002,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_qd) as usize - ptr as usize
         },
-        189752usize,
+        190040usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5014,7 +5014,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_qd_high) as usize - ptr as usize
         },
-        189756usize,
+        190044usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5026,7 +5026,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_qd_low) as usize - ptr as usize
         },
-        189760usize,
+        190048usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5038,7 +5038,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_failed) as usize - ptr as usize
         },
-        189764usize,
+        190052usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5051,7 +5051,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).latency_stable_count) as usize -
                 ptr as usize
         },
-        189768usize,
+        190056usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5063,7 +5063,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_ios) as usize - ptr as usize
         },
-        189776usize,
+        190064usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5075,7 +5075,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).latency_end_run) as usize - ptr as usize
         },
-        189784usize,
+        190072usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5087,7 +5087,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rwmix_state) as usize - ptr as usize
         },
-        189792usize,
+        190080usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5099,7 +5099,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rwmix_issues) as usize - ptr as usize
         },
-        189840usize,
+        190128usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5111,7 +5111,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).rwmix_ddir) as usize - ptr as usize
         },
-        189848usize,
+        190136usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5123,7 +5123,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).ddir_seq_nr) as usize - ptr as usize
         },
-        189852usize,
+        190140usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5135,7 +5135,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).seq_rand_state) as usize - ptr as usize
         },
-        189856usize,
+        190144usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5147,7 +5147,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_hist_tree) as usize - ptr as usize
         },
-        190000usize,
+        190288usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5159,7 +5159,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_hist_list) as usize - ptr as usize
         },
-        190008usize,
+        190296usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5171,7 +5171,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_hist_len) as usize - ptr as usize
         },
-        190024usize,
+        190312usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5183,7 +5183,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_list) as usize - ptr as usize
         },
-        190032usize,
+        190320usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5195,7 +5195,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_rfile) as usize - ptr as usize
         },
-        190048usize,
+        190336usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5207,7 +5207,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_blktrace) as usize - ptr as usize
         },
-        190056usize,
+        190344usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5220,7 +5220,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).io_log_blktrace_swap) as usize -
                 ptr as usize
         },
-        190060usize,
+        190348usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5233,7 +5233,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).io_log_last_ttime) as usize -
                 ptr as usize
         },
-        190064usize,
+        190352usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5246,7 +5246,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).io_log_start_time) as usize -
                 ptr as usize
         },
-        190072usize,
+        190360usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5258,7 +5258,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_current) as usize - ptr as usize
         },
-        190088usize,
+        190376usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5271,7 +5271,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).io_log_checkmark) as usize -
                 ptr as usize
         },
-        190092usize,
+        190380usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5283,7 +5283,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_highmark) as usize - ptr as usize
         },
-        190096usize,
+        190384usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5295,7 +5295,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).io_log_version) as usize - ptr as usize
         },
-        190100usize,
+        190388usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5308,7 +5308,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).io_log_highmark_time) as usize -
                 ptr as usize
         },
-        190104usize,
+        190392usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5320,7 +5320,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).trim_list) as usize - ptr as usize
         },
-        190120usize,
+        190408usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5332,7 +5332,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).trim_entries) as usize - ptr as usize
         },
-        190136usize,
+        190424usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5344,7 +5344,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).file_service_nr) as usize - ptr as usize
         },
-        190144usize,
+        190432usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5357,7 +5357,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).file_service_left) as usize -
                 ptr as usize
         },
-        190148usize,
+        190436usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5370,7 +5370,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).file_service_file) as usize -
                 ptr as usize
         },
-        190152usize,
+        190440usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5383,7 +5383,7 @@ fn bindgen_test_layout_thread_data() {
             ::std::ptr::addr_of!((*ptr).sync_file_range_nr) as usize -
                 ptr as usize
         },
-        190160usize,
+        190448usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5395,7 +5395,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).file_size_state) as usize - ptr as usize
         },
-        190168usize,
+        190456usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5407,7 +5407,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).total_err_count) as usize - ptr as usize
         },
-        190216usize,
+        190504usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5419,7 +5419,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).first_error) as usize - ptr as usize
         },
-        190220usize,
+        190508usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5429,7 +5429,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).flow) as usize - ptr as usize },
-        190224usize,
+        190512usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5441,7 +5441,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).flow_counter) as usize - ptr as usize
         },
-        190232usize,
+        190520usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5453,7 +5453,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).prof_io_ops) as usize - ptr as usize
         },
-        190240usize,
+        190528usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5465,7 +5465,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).prof_data) as usize - ptr as usize
         },
-        190264usize,
+        190552usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5477,7 +5477,7 @@ fn bindgen_test_layout_thread_data() {
         unsafe {
             ::std::ptr::addr_of!((*ptr).pinned_mem) as usize - ptr as usize
         },
-        190272usize,
+        190560usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5487,7 +5487,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).ss) as usize - ptr as usize },
-        190280usize,
+        190568usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
@@ -5497,7 +5497,7 @@ fn bindgen_test_layout_thread_data() {
     );
     assert_eq!(
         unsafe { ::std::ptr::addr_of!((*ptr).verror) as usize - ptr as usize },
-        190432usize,
+        190720usize,
         concat!(
             "Offset of field: ",
             stringify!(thread_data),
