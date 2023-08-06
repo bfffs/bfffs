@@ -11,12 +11,8 @@
 # tools/coverage.sh
 
 export LLVM_PROFILE_FILE="bfffs-%p-%m.profraw"
-export RUSTFLAGS="-Zinstrument-coverage"
-# Lock toolchain due to https://github.com/rust-lang/rust/issues/94616
-# Also, grcov must be run on FreeBSD 13.1 or earlier, because the version of
-# LLVM in FreeBSD 14 isn't compatible with the .profraw files produced by this
-# rustc version.
-TOOLCHAIN=nightly-2021-11-14-unknown-freebsd
+export RUSTFLAGS="-Cinstrument-coverage"
+TOOLCHAIN=nightly
 cargo +$TOOLCHAIN build --all-features
 cargo +$TOOLCHAIN test --all-features
 
