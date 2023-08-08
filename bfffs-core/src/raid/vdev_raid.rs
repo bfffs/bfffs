@@ -798,6 +798,74 @@ impl VdevRaid {
         // and request the faulty drive's zone to be rebuilt.
     }
 
+    /// Reconstruct a stripe of data, given surviving columns and parity
+    fn read_at_reconstruction(
+        &self,
+        // Handle to the original buffer
+        data: DivBufMut,
+        // LBA where the original operation began
+        lba: LbaT,
+        exbufs: Vec<DivBufShared>,
+        // The results of the read attempts for each disk in the stripe.
+        v: Vec<Result<()>>
+    ) -> Result<()>
+    {
+        let f = self.codec.protection() as usize;
+        let k = self.codec.stripesize() as usize;
+        let m = k - f;
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
+        let end_lba = lba + ((data.len() - 1) / BYTES_PER_LBA) as LbaT;
+
+        let mut surviving = Vec::with_capacity(k);
+        let mut missing = Vec::with_capacity(f);
+        let mut erasures = FixedBitSet::with_capacity(k);
+        let mut container = Vec::with_capacity(k);
+        let mut excols = exbufs.into_iter()
+            .map(|dbs| dbs.try_mut().unwrap());
+        let mut dcols = data.into_chunks(col_len);
+        for (i, r) in v.iter().enumerate().take(k) {
+            let stripe_offset = lba % (m as LbaT * self.chunksize);
+            let recovery_lba = lba - stripe_offset + i as LbaT * self.chunksize;
+            let mut col = if lba <= recovery_lba && recovery_lba <= end_lba
+            {
+                dcols.next().unwrap()
+            } else {
+                excols.next().unwrap()
+            };
+            if r.is_ok() {
+                surviving.push(col.as_ptr());
+            } else if i < m {
+                missing.push(col.as_mut_ptr());
+                erasures.set(i, true);
+            } else {
+                // Don't try to reconstruct missing parity columns
+                erasures.set(i, true);
+            }
+            container.push(col);
+            if surviving.len() >= m {
+                break;
+            }
+        }
+        if missing.is_empty() {
+            // Nothing to do!
+            Ok(())
+        } else if surviving.len() >= m {
+            // Safe because all columns are held in `container` and
+            // they all have the same length.
+            unsafe {
+                self.codec.decode(col_len, &surviving, &mut missing,
+                                  &erasures);
+            }
+            Ok(())
+            // TODO: re-write the offending sector for READ UNRECOVERABLE
+        } else {
+            let r = v.iter()
+                .find(|r| matches!(r, Err(_)))
+                .unwrap();
+            Err(r.unwrap_err())
+        }
+    }
+
     /// Error-recovery path for [`read_at`], for at most one RAID stripe at a
     /// time.
     fn read_at_recovery(
@@ -867,54 +935,7 @@ impl VdevRaid {
             }).collect::<FuturesOrdered<_>>()
             .collect::<Vec<Result<()>>>()
             .map(move |v| {
-                let mut surviving = Vec::with_capacity(k);
-                let mut missing = Vec::with_capacity(f);
-                let mut erasures = FixedBitSet::with_capacity(k);
-                let mut container = Vec::with_capacity(k);
-                let mut excols = exbufs.into_iter()
-                    .map(|dbs| dbs.try_mut().unwrap());
-                let mut dcols = data.into_chunks(col_len);
-                for (i, r) in v.iter().enumerate().take(k) {
-                    let recovery_lba = lba - (lba % (m as LbaT * self.chunksize)) + i as LbaT * self.chunksize;
-                    let mut col = if lba <= recovery_lba && recovery_lba <= end_lba
-                    {
-                        dcols.next().unwrap()
-                    } else {
-                        excols.next().unwrap()
-                    };
-                    if r.is_ok() {
-                        surviving.push(col.as_ptr());
-                    } else if i < m {
-                        missing.push(col.as_mut_ptr());
-                        erasures.set(i, true);
-                    } else {
-                        // Don't try to reconstruct missing parity columns
-                        erasures.set(i, true);
-                    }
-                    container.push(col);
-                    if surviving.len() >= m {
-                        break;
-                    }
-                }
-                if missing.is_empty() {
-                    // Nothing to do!
-                    Ok(())
-                } else if surviving.len() >= m {
-                    // Safe because all columns are held in `container` and
-                    // they all have the same length.
-                    unsafe {
-                        self.codec.decode(col_len, &surviving, &mut missing,
-                                          &erasures);
-                    }
-                    Ok(())
-                    // TODO: re-write the offending sector for READ UNRECOVERABLE
-                } else {
-                    let r = dv.iter()
-                        .find(|r| matches!(r, Some(Err(_))))
-                        .unwrap()
-                        .unwrap();
-                    Err(r.unwrap_err())
-                }
+                self.read_at_reconstruction(data, lba, exbufs, v)
                 // TODO: record error statistics
             });
             Box::pin(fut) as BoxVdevFut
