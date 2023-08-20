@@ -11,6 +11,7 @@ setup: &SETUP
     - kldload fusefs
 
 task:
+  use_compute_credits: $CIRRUS_USER_COLLABORATOR == 'true'
   matrix:
     # Use bleeding edge features: Rust nightly and FreeBSD fspacectl
     - name: cargo test (nightly)
@@ -71,6 +72,7 @@ task:
   before_cache_script: rm -rf $HOME/.cargo/registry/index
 
 lint_task:
+  use_compute_credits: $CIRRUS_USER_COLLABORATOR == 'true'
   name: lint
   env:
     VERSION: nightly
