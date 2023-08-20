@@ -80,6 +80,7 @@ lint_task:
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
+    fingerprint_script: cat Cargo.lock || echo ""
   clippy_script:
     - . $HOME/.cargo/env
     - $HOME/.cargo/bin/rustup component add clippy
