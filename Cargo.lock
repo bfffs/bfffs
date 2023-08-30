@@ -133,7 +133,7 @@ dependencies = [
  "lalrpop-util",
  "libc",
  "mockall",
- "nix",
+ "nix 0.27.1",
  "predicates",
  "prettytable",
  "regex",
@@ -180,7 +180,7 @@ dependencies = [
  "metrohash",
  "mockall",
  "mockall_double",
- "nix",
+ "nix 0.27.1",
  "num-traits",
  "num_cpus",
  "num_enum",
@@ -233,7 +233,7 @@ version = "0.64.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4243e6031260db77ede97ad86c27e501d646a27ab57b59a574f725d98ab1fb4"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
  "cexpr",
  "clang-sys",
  "lazy_static",
@@ -275,6 +275,12 @@ name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
+
+[[package]]
+name = "bitflags"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
 
 [[package]]
 name = "blosc"
@@ -406,7 +412,7 @@ checksum = "4f423e341edefb78c9caba2d9c7f7687d0e72e89df3ce3394554754393ac3990"
 dependencies = [
  "anstream",
  "anstyle",
- "bitflags",
+ "bitflags 1.3.2",
  "clap_lex",
  "once_cell",
  "strsim",
@@ -757,7 +763,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "libc",
- "nix",
+ "nix 0.26.2",
  "serde",
  "slab",
  "tokio",
@@ -1074,9 +1080,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.140"
+version = "0.2.147"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99227334921fae1a979cf0bfdfcc6b3e5ce376ef57e16fb6fb3ea2ed6095f80c"
+checksum = "b4668fb0ea861c1df094127ac5f1da3409a82116a4ba74fca2e58ef927159bb3"
 
 [[package]]
 name = "libloading"
@@ -1169,11 +1175,12 @@ dependencies = [
 
 [[package]]
 name = "mio-aio"
-version = "0.7.0"
-source = "git+http://github.com/asomers/mio-aio?rev=69974fb#69974fb9189a78475c1f9050fcaa41ac73dabac8"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72473aec34176e56e6dc8722e4d7ad1efdb4cc423b6a2cd788278fb6d350cffa"
 dependencies = [
  "mio",
- "nix",
+ "nix 0.27.1",
  "pin-utils",
 ]
 
@@ -1225,11 +1232,22 @@ version = "0.26.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfdda3d196821d6af13126e40375cdf7da646a96114af134d5f417a9a1dc8e1a"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
+ "cfg-if",
+ "libc",
+ "static_assertions",
+]
+
+[[package]]
+name = "nix"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
+dependencies = [
+ "bitflags 2.4.0",
  "cfg-if",
  "libc",
  "pin-utils",
- "static_assertions",
 ]
 
 [[package]]
@@ -1602,7 +1620,7 @@ version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb5a58c1855b4b6819d59012155603f0b22ad30cad752600aadfcb695265519a"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
 ]
 
 [[package]]
@@ -1611,7 +1629,7 @@ version = "0.3.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "567664f262709473930a4bf9e51bf2ebf3348f2e748ccc50dea20646858f8f29"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
 ]
 
 [[package]]
@@ -1709,7 +1727,7 @@ version = "0.37.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2aae838e49b3d63e9274e1c01833cc8139d3fec468c3b84688c628f44b1ae11d"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
  "errno",
  "io-lifetimes",
  "libc",
@@ -1907,7 +1925,7 @@ version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed66d6a2ccbd656659289bc90767895b7abbdec897a0fc6031aca3ed1cb51d3e"
 dependencies = [
- "bitflags",
+ "bitflags 1.3.2",
  "byteorder",
  "enum-as-inner",
  "libc",
@@ -2059,13 +2077,14 @@ dependencies = [
 
 [[package]]
 name = "tokio-file"
-version = "0.8.0"
-source = "git+http://github.com/asomers/tokio-file?rev=8ab925f#8ab925f79a47ea0167d95d3b4e7326f8b41278e8"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "348db3dc9fb1fbb32338e013b69d346370d2f9cafb69f9746efb9056a6f3ecc1"
 dependencies = [
  "futures",
  "mio",
  "mio-aio",
- "nix",
+ "nix 0.27.1",
  "tokio",
 ]
 
