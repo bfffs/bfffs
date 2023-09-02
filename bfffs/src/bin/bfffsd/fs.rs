@@ -151,10 +151,6 @@ impl FuseFs {
                         )
                     }
                 };
-                // The generation number is only used for filesystems exported
-                // by NFS, and is only needed if the filesystem reuses deleted
-                // inodes.  BFFFS does not reuse deleted inodes.
-                let generation = 0;
                 let reply_attr = FileAttr {
                     ino: attr.ino,
                     size: attr.size,
@@ -169,7 +165,6 @@ impl FuseFs {
                     gid: attr.gid,
                     rdev: attr.rdev as u32,
                     blksize: attr.blksize,
-                    generation,
                 };
                 Ok(reply_attr)
             }
@@ -1133,6 +1128,7 @@ impl Filesystem for FuseFs {
         _fh: u64,
         offset: u64,
         data: &[u8],
+        _write_flags: u32,
         flags: u32,
     ) -> fuse3::Result<ReplyWrite> {
         let fd = self
