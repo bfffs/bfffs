@@ -1495,7 +1495,7 @@ impl VdevRaidApi for VdevRaid {
                     debug_assert!(buf4.is_empty());
                 }
                 futs.push(if nstripes == 1 {
-                    Box::pin(self.write_at_one(writable_buf, lba))
+                    self.write_at_one(writable_buf, lba)
                 } else {
                     self.write_at_multi(writable_buf, lba)
                 });
