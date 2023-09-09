@@ -27,6 +27,8 @@ use bfffs_core::{
     raid::{Manager, VdevRaid, VdevRaidApi},
 };
 
+use crate::assert_bufeq;
+
 /// Make a pair of buffers for reading and writing.  The contents of the write
 /// buffer will consist of u64's holding the offset from the start of the buffer
 /// in bytes.
@@ -262,7 +264,6 @@ mod io {
     use super::*;
 
     use bfffs_core::{IoVec, IoVecMut, ZoneT, div_roundup};
-    use pretty_assertions::assert_eq;
 
     #[template]
     #[rstest(h,
@@ -344,7 +345,7 @@ mod io {
         let wbuf0 = dbsw.try_const().unwrap();
         let wbuf1 = dbsw.try_const().unwrap();
         write_read0(vr, vec![wbuf1], vec![dbsr.try_mut().unwrap()]).await;
-        assert_eq!(wbuf0, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf0, &dbsr.try_const().unwrap());
     }
 
     async fn writev_read_n_stripes(
@@ -366,7 +367,7 @@ mod io {
             vr.read_at(dbsr.try_mut().unwrap(), zl.0)
         }).await
         .expect("read_at");
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf, &dbsr.try_const().unwrap());
     }
 
     // read_at should work when directed at the middle of the stripe buffer
@@ -384,9 +385,7 @@ mod io {
             write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf_begin, rbuf_middle]).await;
         }
-        assert_eq!(&wbuf[..],
-                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
-                   "{:#?}\n{:#?}", &wbuf[..],
+        assert_bufeq!(&wbuf[..],
                    &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
@@ -417,7 +416,7 @@ mod io {
                         vec![rbuf0, rbuf1, rbuf2, rbuf3, rbuf4, rbuf5, rbuf6])
             .await;
         }
-        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
+        assert_bufeq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     // Read the end of one stripe and the beginning of another
@@ -435,7 +434,7 @@ mod io {
             write_read0(h.vdev, vec![wbuf.clone()],
                         vec![rbuf_b, rbuf_m, rbuf_e]).await;
         }
-        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
+        assert_bufeq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -463,7 +462,7 @@ mod io {
         let rbuf = dbsr.try_mut().unwrap();
         let block = 0;
         write_read_spacemap(h.vdev, vec![wbuf.clone()], rbuf, idx, block).await;
-        assert_eq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
+        assert_bufeq!(&wbuf[..], &dbsr.try_const().unwrap()[..]);
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -554,7 +553,7 @@ mod io {
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf, &dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -576,7 +575,7 @@ mod io {
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
-        assert_eq!(&dbsw.try_const().unwrap()[..],
+        assert_bufeq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
@@ -590,7 +589,7 @@ mod io {
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf, &dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -603,7 +602,7 @@ mod io {
         let wbuf_r = wbuf_l.split_off(BYTES_PER_LBA);
         write_read0(h.vdev, vec![wbuf_l, wbuf_r],
                     vec![dbsr.try_mut().unwrap()]).await;
-        assert_eq!(wbuf, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf, &dbsr.try_const().unwrap());
     }
 
     #[rstest(h, case(harness(3, 3, 1, 2)))]
@@ -625,7 +624,7 @@ mod io {
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(h.vdev, vec![wbuf_l, wbuf_r], vec![rbuf]).await;
         }
-        assert_eq!(&dbsw.try_const().unwrap()[..],
+        assert_bufeq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
@@ -643,7 +642,7 @@ mod io {
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
-        assert_eq!(&wbuf[0..BYTES_PER_LBA],
+        assert_bufeq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
     }
 
@@ -662,11 +661,11 @@ mod io {
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
-        assert_eq!(&wbuf[0..BYTES_PER_LBA * 3 / 4],
+        assert_bufeq!(&wbuf[0..BYTES_PER_LBA * 3 / 4],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA * 3 / 4]);
         // The remainder of the LBA should've been zero-filled
         let zbuf = vec![0u8; BYTES_PER_LBA / 4];
-        assert_eq!(&zbuf[..],
+        assert_bufeq!(&zbuf[..],
                    &dbsr.try_const().unwrap()[BYTES_PER_LBA * 3 / 4..]);
     }
 
@@ -687,11 +686,11 @@ mod io {
             // After write returns, the DivBufShared should no longer be needed.
             drop(dbsw);
         }
-        assert_eq!(&wbuf[0..wcut],
+        assert_bufeq!(&wbuf[0..wcut],
                    &dbsr.try_const().unwrap()[0..wcut]);
         // The remainder of the LBA should've been zero-filled
         let zbuf = vec![0u8; rcut - wcut];
-        assert_eq!(&zbuf[..],
+        assert_bufeq!(&zbuf[..],
                    &dbsr.try_const().unwrap()[wcut..]);
     }
 
@@ -710,9 +709,7 @@ mod io {
             let _ = rbuf.split_off(2 * BYTES_PER_LBA);
             write_read0(h.vdev, vec![wbuf_begin, wbuf_middle], vec![rbuf]).await;
         }
-        assert_eq!(&wbuf[..],
-                   &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA],
-                   "{:#?}\n{:#?}", &wbuf[..],
+        assert_bufeq!(&wbuf[..],
                    &dbsr.try_const().unwrap()[0..2 * BYTES_PER_LBA]);
     }
 
@@ -734,7 +731,7 @@ mod io {
             let rbuf = dbsr.try_mut().unwrap();
             write_read0(h.vdev, vec![wbuf], vec![rbuf]).await;
         }
-        assert_eq!(&dbsw.try_const().unwrap()[..],
+        assert_bufeq!(&dbsw.try_const().unwrap()[..],
                    &dbsr.try_const().unwrap()[..]);
     }
 
@@ -759,7 +756,7 @@ mod io {
         h.vdev.write_at(wbuf0, zone, zl.0).await.unwrap();
         h.vdev.finish_zone(zone).await.unwrap();
         h.vdev.read_at(rbuf, zl.0).await.unwrap();
-        assert_eq!(wbuf1, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf1, &dbsr.try_const().unwrap());
     }
 
     // Close a zone with an incomplete StripeBuffer, then read back from it
@@ -779,7 +776,7 @@ mod io {
             h.vdev.finish_zone(zone).await.unwrap();
             h.vdev.read_at(rbuf_short, zl.0).await.unwrap();
         }
-        assert_eq!(&wbuf[0..BYTES_PER_LBA],
+        assert_bufeq!(&wbuf[0..BYTES_PER_LBA],
                    &dbsr.try_const().unwrap()[0..BYTES_PER_LBA]);
     }
 
@@ -799,7 +796,7 @@ mod io {
             .and_then(|_| h.vdev.finish_zone(zone)).await
             .expect("open and finish");
         write_read(h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
-        assert_eq!(wbuf1, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf1, &dbsr.try_const().unwrap());
     }
 
     #[should_panic(expected = "Can't write to a closed zone")]
@@ -828,7 +825,7 @@ mod io {
         let rbuf = dbsr.try_mut().unwrap();
         h.vdev.open_zone(zone).await.expect("open_zone");
         write_read(h.vdev, vec![wbuf0], vec![rbuf], zone, start).await;
-        assert_eq!(wbuf1, dbsr.try_const().unwrap());
+        assert_bufeq!(&wbuf1, &dbsr.try_const().unwrap());
     }
 
     // Two zones can be open simultaneously
@@ -845,7 +842,7 @@ mod io {
             let rbuf = dbsr.try_mut().unwrap();
             vdev_raid.open_zone(zone).await.expect("open_zone");
             write_read(vdev_raid.clone(), vec![wbuf0], vec![rbuf], zone, start).await;
-            assert_eq!(wbuf1, dbsr.try_const().unwrap());
+            assert_bufeq!(&wbuf1, &dbsr.try_const().unwrap());
         }
     }
 }
