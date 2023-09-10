@@ -14,7 +14,6 @@ use futures::{
     TryStreamExt,
     stream::FuturesUnordered
 };
-use rand::{Rng, thread_rng};
 use rstest::{fixture, rstest};
 use rstest_reuse::{apply, template};
 use tempfile::{Builder, TempDir};
@@ -28,17 +27,21 @@ use bfffs_core::{
     raid::{Manager, VdevRaid, VdevRaidApi},
 };
 
+/// Make a pair of buffers for reading and writing.  The contents of the write
+/// buffer will consist of u64's holding the offset from the start of the buffer
+/// in bytes.
 fn make_bufs(chunksize: LbaT, k: i16, f: i16, s: usize) ->
     (DivBufShared, DivBufShared)
 {
+    const Z: usize = std::mem::size_of::<LbaT>();
     let chunks = s * (k - f) as usize;
     let lbas = chunksize * chunks as LbaT;
     let bytes = BYTES_PER_LBA * lbas as usize;
-    let mut wvec = vec![0u8; bytes];
-    let mut rng = thread_rng();
-    for x in &mut wvec {
-        *x = rng.gen();
-    }
+    let wvec = (0..bytes).map(|i| {
+        let bofs = i - i % Z;
+        let bshift = 8 * (Z - 1 - i % Z);
+        ((bofs >> bshift) & 0xFF) as u8
+    }).collect::<Vec<_>>();
     let dbsw = DivBufShared::from(wvec);
     let dbsr = DivBufShared::from(vec![0u8; bytes]);
     (dbsw, dbsr)
