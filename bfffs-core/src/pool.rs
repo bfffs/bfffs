@@ -825,7 +825,7 @@ mod pool {
 
         use crate::vdev::Health::*;
 
-        /// When degraded, the pool's health should be the worse of all degraded
+        /// When degraded, the pool's health should be the worst of all degraded
         /// clusters.
         #[rstest]
         #[case(Online, vec![Online, Online])]
