@@ -728,6 +728,8 @@ mod t {
     use futures::{FutureExt, future};
     use itertools::Itertools;
     use mockall::predicate::*;
+    use nonzero_ext::nonzero;
+    use rstest::rstest;
     use super::*;
 
     fn mock_vdev_block() -> VdevBlock {
@@ -1258,6 +1260,49 @@ mod t {
             let r = mirror.readv_at(sglist, 3).now_or_never().unwrap();
             assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
             assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+    }
+
+    mod status {
+        use super::*;
+
+        use std::path::PathBuf;
+
+        use crate::vdev::Health::*;
+
+        fn mock(health: Option<Health>) -> Child {
+            let uuid = Uuid::new_v4();
+            if let Some(health) = health {
+                let mut bd = mock_vdev_block();
+                bd.expect_status()
+                    .return_const(crate::vdev_block::Status {
+                        health,
+                        path: PathBuf::from("/dev/whatever"),
+                        uuid: Uuid::new_v4()
+                    });
+                Child::Present(bd)
+            } else {
+                Child::Missing(uuid)
+            }
+        }
+
+        /// When degraded, the mirror's health should be the worst of all
+        /// degraded disks.
+        #[rstest]
+        #[case(Online, vec![Some(Online), Some(Online)])]
+        #[case(Degraded(nonzero!(1u8)), vec![Some(Online), None])]
+        #[case(Degraded(nonzero!(2u8)), vec![None, Some(Online), None])]
+        // Note: don't test the faulted case, because we can't construct a
+        // Mirror that's already faulted.
+        fn degraded(
+            #[case] health: Health,
+            #[case] child_healths: Vec<Option<Health>>)
+        {
+            let children = child_healths.into_iter()
+                .map(mock)
+                .collect::<Vec<_>>();
+            let mirror = Mirror::new(Uuid::new_v4(), children.into());
+            assert_eq!(health, mirror.status().health);
         }
     }
 
