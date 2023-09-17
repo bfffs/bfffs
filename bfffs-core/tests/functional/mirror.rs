@@ -3,13 +3,13 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    num::NonZeroU8
 };
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
     vdev::{Health, Vdev},
 };
+use nonzero_ext::nonzero;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 
@@ -56,7 +56,7 @@ mod open {
         let (mirror, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, mirror.uuid());
         let status = mirror.status();
-        assert_eq!(status.health, Health::Degraded(NonZeroU8::new(1).unwrap()));
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         for i in 0..paths.len() {
             assert_eq!(old_status.leaves[i].uuid, status.leaves[i].uuid);
             if i != missing {

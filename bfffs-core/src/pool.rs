@@ -818,10 +818,8 @@ mod pool {
     mod status {
         use super::*;
 
-        use std::{
-            num::NonZeroU8,
-            path::PathBuf
-        };
+        use std::path::PathBuf;
+        use nonzero_ext::nonzero;
         use pretty_assertions::assert_eq;
         use rstest::rstest;
 
@@ -833,11 +831,11 @@ mod pool {
         #[case(Online, vec![Online, Online])]
         #[case(Rebuilding, vec![Online, Rebuilding])]
         #[case(Faulted, vec![Rebuilding, Faulted])]
-        #[case(Degraded(NonZeroU8::new(1).unwrap()),
-            vec![Online, Degraded(NonZeroU8::new(1).unwrap())])]
-        #[case(Degraded(NonZeroU8::new(3).unwrap()),
-            vec![Degraded(NonZeroU8::new(3).unwrap()),
-                 Degraded(NonZeroU8::new(1).unwrap())])]
+        #[case(Degraded(nonzero!(1u8)),
+            vec![Online, Degraded(nonzero!(1u8))])]
+        #[case(Degraded(nonzero!(3u8)),
+            vec![Degraded(nonzero!(3u8)),
+                 Degraded(nonzero!(1u8))])]
         fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
             let mut clusters = Vec::<Cluster>::new();
             let c = |cluster_health| {

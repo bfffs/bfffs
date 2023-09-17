@@ -2,7 +2,7 @@
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
-    num::{NonZeroU8, NonZeroU64},
+    num::NonZeroU64,
     path::PathBuf,
     sync::Arc
 };
@@ -14,6 +14,7 @@ use futures::{
     TryStreamExt,
     stream::FuturesUnordered
 };
+use nonzero_ext::nonzero;
 use rstest::{fixture, rstest};
 use rstest_reuse::{apply, template};
 use tempfile::{Builder, TempDir};
@@ -881,7 +882,7 @@ mod open {
         let (vr, _) = manager.import(uuid).await.unwrap();
         assert_eq!(uuid, vr.uuid());
         let status = vr.status();
-        assert_eq!(status.health, Health::Degraded(NonZeroU8::new(1).unwrap()));
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         for i in 0..harness.paths.len() {
             assert_eq!(old_status.mirrors[i].uuid, status.mirrors[i].uuid);
             if i != missing {
