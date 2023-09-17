@@ -3,11 +3,14 @@ use std::{
     str::FromStr,
 };
 
+#[macro_use]
 pub mod util {
     include!("../functional/util.rs");
 }
 
 mod fs;
+mod vdev_raid;
+
 use util::PoolBuilder;
 
 fn test_scale() -> f64 {

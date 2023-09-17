@@ -32,6 +32,33 @@ macro_rules! require_root {
     }
 }
 
+#[macro_export]
+macro_rules! assert_bufeq {
+    ($left:expr, $right:expr) => {
+        if $left != $right {
+            let lhex = ::hexdump::hexdump_iter($left)
+                .fold(String::new(), |mut acc, l| {
+                    acc.push_str(&*l);
+                    acc.push('\n');
+                    acc
+                });
+            let rhex = ::hexdump::hexdump_iter($right)
+                .fold(String::new(), |mut acc, l| {
+                    acc.push_str(&*l);
+                    acc.push('\n');
+                    acc
+                });
+            let lines = prettydiff::diff_lines(lhex.as_str(), rhex.as_str())
+                .set_diff_only(true)
+                .set_show_lines(false)
+                .names(stringify!($left), stringify!($right))
+                ;
+            lines.prettytable();
+            panic!("Miscompare!");
+        }
+    }
+}
+
 /// An md(4) device.
 pub struct Md(pub PathBuf);
 impl Md {

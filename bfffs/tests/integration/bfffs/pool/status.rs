@@ -48,9 +48,6 @@ fn start_bfffsd(files: &Files) -> Daemon {
         .arg("--sock")
         .arg(sockpath.as_os_str())
         .arg(POOLNAME)
-        // The current bfffsd will complain if it tries to taste any disks that
-        // aren't formatted, so we have to restrict the number of paths we give
-        // it.
         .args(&files.paths[..])
         .spawn()
         .unwrap()

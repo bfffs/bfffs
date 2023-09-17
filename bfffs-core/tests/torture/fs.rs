@@ -20,10 +20,9 @@ use rand_xorshift::XorShiftRng;
 use rstest::rstest;
 use std::{
     ffi::OsString,
-    sync::{Arc, Mutex, Once},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tracing_subscriber::EnvFilter;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Op {
@@ -228,14 +227,6 @@ impl TortureTest {
 async fn torture_test(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
                 zone_size: u64) -> TortureTest
 {
-    static TRACINGSUBSCRIBER: Once = Once::new();
-    TRACINGSUBSCRIBER.call_once(|| {
-        tracing_subscriber::fmt()
-            .pretty()
-            .with_env_filter(EnvFilter::from_default_env())
-            .init();
-    });
-
     let ph = crate::PoolBuilder::new()
         .zone_size(zone_size)
         .build();
@@ -285,7 +276,7 @@ async fn do_test(mut torture_test: TortureTest, duration: Duration)
 /// Randomly execute a long series of filesystem operations.
 #[rstest]
 #[case(None, None, 512)]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn random(
     #[case] seed: Option<[u8; 16]>,
     #[case] freqs: Option<Vec<(Op, f64)>>,
@@ -309,7 +300,7 @@ async fn random(
     ]),
     512
 )]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 async fn random_clean_zone(
     #[case] seed: Option<[u8; 16]>,
     #[case] freqs: Option<Vec<(Op, f64)>>,
