@@ -293,6 +293,15 @@ impl Mirror {
         Box::pin(fut)
     }
 
+    /// Mark a child device as faulted.
+    pub fn fault(&mut self, uuid: Uuid) {
+        for child in self.children.iter_mut() {
+            if child.uuid() == uuid {
+                *child = Child::missing(uuid);
+            }
+        }
+    }
+
     /// Asynchronously finish a zone on a mirror
     ///
     /// # Parameters
@@ -440,7 +449,8 @@ impl Mirror {
 
     // XXX TODO: in the case of a missing child, get path from the label
     pub fn status(&self) -> Status {
-        let mut leaves = Vec::with_capacity(self.children.len());
+        let nchildren = self.children.len();
+        let mut leaves = Vec::with_capacity(nchildren);
         for child in self.children.iter() {
             let cs = child.status().unwrap_or(vdev_block::Status {
                 health: Health::Faulted,
@@ -451,10 +461,14 @@ impl Mirror {
         }
         let sick_children = leaves.iter()
             .filter(|l| l.health != Health::Online)
-            .count() as u8;
-        let health = NonZeroU8::new(sick_children)
-            .map(Health::Degraded)
-            .unwrap_or(Health::Online);
+            .count();
+        let health = if sick_children == nchildren {
+            Health::Faulted
+        } else {
+            NonZeroU8::new(sick_children as u8)
+                .map(Health::Degraded)
+                .unwrap_or(Health::Online)
+        };
         Status {
             health,
             leaves,
@@ -723,7 +737,10 @@ mock! {
 
 #[cfg(test)]
 mod t {
-    use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+    use std::{
+        path::PathBuf,
+        sync::{Arc, atomic::{AtomicU32, Ordering}}
+    };
     use divbuf::DivBufShared;
     use futures::{FutureExt, future};
     use itertools::Itertools;
@@ -783,6 +800,69 @@ mod t {
             mirror.erase_zone(3, 31).now_or_never().unwrap().unwrap();
         }
     }
+
+    mod fault {
+        use super::*;
+
+        use nonzero_ext::nonzero;
+
+        fn mock() -> VdevBlock {
+            let mut bd = mock_vdev_block();
+            bd.expect_status()
+                .return_const(crate::vdev_block::Status {
+                    health: Health::Online,
+                    path: PathBuf::from("/dev/whatever"),
+                    uuid: Uuid::new_v4()
+                });
+            bd
+        }
+
+        #[test]
+        fn enoent() {
+            let bd0 = mock();
+            let children = vec![Child::present(bd0)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.fault(Uuid::new_v4());
+            assert_eq!(Health::Online, mirror.status().health);
+        }
+
+        #[test]
+        fn present() {
+            let bd0 = mock();
+            let bd1 = mock();
+            let bd0_uuid = bd0.uuid();
+            let children = vec![Child::present(bd0), Child::present(bd1)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.fault(bd0_uuid);
+            assert_eq!(Health::Degraded(nonzero!(1u8)), mirror.status().health);
+        }
+
+        /// Mirror::fault is a no-op if the child is already Missing
+        #[test]
+        fn missing() {
+            let bd0 = mock();
+            let faulty_uuid = Uuid::new_v4();
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(faulty_uuid)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.fault(faulty_uuid);
+        }
+
+        /// faulting the only child of a mirror should work, but the Mirror will
+        /// end up faulted.
+        #[test]
+        fn only_child() {
+            let bd0 = mock();
+            let bd0_uuid = bd0.uuid();
+            let children = vec![Child::present(bd0)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children.into());
+            mirror.fault(bd0_uuid);
+            assert_eq!(Health::Faulted, mirror.status().health);
+        }
+    }
+
     mod finish_zone {
         use super::*;
 
@@ -1265,8 +1345,6 @@ mod t {
 
     mod status {
         use super::*;
-
-        use std::path::PathBuf;
 
         use crate::vdev::Health::*;
 
