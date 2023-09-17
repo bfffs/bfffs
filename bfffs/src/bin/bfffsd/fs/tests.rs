@@ -3639,7 +3639,7 @@ mod write {
             .unwrap()
             .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
-            .write(request, ino, fh, ofs, DATA, 0)
+            .write(request, ino, fh, ofs, DATA, 0, 0)
             .now_or_never()
             .unwrap();
         assert_eq!(reply, Err(libc::EROFS.into()));
@@ -3674,7 +3674,7 @@ mod write {
             .unwrap()
             .insert(ino, FileDataMut::new_for_tests(None, ino));
         let reply = fusefs
-            .write(request, ino, fh, ofs, DATA, 0)
+            .write(request, ino, fh, ofs, DATA, 0, 0)
             .now_or_never()
             .unwrap()
             .unwrap();
