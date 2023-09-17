@@ -22,7 +22,7 @@ task:
         image_project: freebsd-org-cloud-dev
         # Using image_family doesn't seem to work in conjunction with
         # compute_engine_instance.  So specify a 14.0 snapshot explicitly.
-        image: freebsd-14-0-current-amd64-v20230720
+        image: freebsd-14-0-beta2-amd64
         platform: freebsd
         cpu: 4
         disk: 40
