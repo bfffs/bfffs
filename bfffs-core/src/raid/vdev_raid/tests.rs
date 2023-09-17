@@ -1779,6 +1779,8 @@ mod read_at {
 mod status {
     use super::*;
 
+    use nonzero_ext::nonzero;
+
     use std::path::PathBuf;
 
     use crate::vdev::Health::*;
@@ -1787,20 +1789,20 @@ mod status {
     /// otherwise degraded disks.
     #[rstest]
     #[case(Online, vec![Online, Online, Online])]
-    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+    #[case(Degraded(nonzero!(3u8)),
         vec![Online, Online, Faulted])]
-    #[case(Degraded(NonZeroU8::new(3).unwrap()),
+    #[case(Degraded(nonzero!(3u8)),
         vec![Online, Rebuilding, Online])]
-    #[case(Degraded(NonZeroU8::new(1).unwrap()),
-        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Online])]
-    #[case(Degraded(NonZeroU8::new(2).unwrap()),
-        vec![Degraded(NonZeroU8::new(2).unwrap()), Online, Online])]
-    #[case(Degraded(NonZeroU8::new(2).unwrap()),
-        vec![Degraded(NonZeroU8::new(1).unwrap()),
-             Degraded(NonZeroU8::new(1).unwrap()),
+    #[case(Degraded(nonzero!(1u8)),
+        vec![Degraded(nonzero!(1u8)), Online, Online])]
+    #[case(Degraded(nonzero!(2u8)),
+        vec![Degraded(nonzero!(2u8)), Online, Online])]
+    #[case(Degraded(nonzero!(2u8)),
+        vec![Degraded(nonzero!(1u8)),
+             Degraded(nonzero!(1u8)),
              Online])]
-    #[case(Degraded(NonZeroU8::new(4).unwrap()),
-        vec![Degraded(NonZeroU8::new(1).unwrap()), Online, Faulted])]
+    #[case(Degraded(nonzero!(4u8)),
+        vec![Degraded(nonzero!(1u8)), Online, Faulted])]
     fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
         let k = children.len() as i16; // doesn't matter for Health calculation
         let f = 1;

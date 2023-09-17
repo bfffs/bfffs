@@ -109,12 +109,14 @@ pub trait Vdev {
 mod t {
     use super::*;
 
+    use nonzero_ext::nonzero;
+
     #[test]
     fn health_order() {
-        assert!(Health::Online < Health::Degraded(NonZeroU8::new(1).unwrap()));
-        assert!(Health::Degraded(NonZeroU8::new(1).unwrap()) <
-                Health::Degraded(NonZeroU8::new(2).unwrap()));
-        assert!(Health::Degraded(NonZeroU8::new(2).unwrap()) <
+        assert!(Health::Online < Health::Degraded(nonzero!(1u8)));
+        assert!(Health::Degraded(nonzero!(1u8)) <
+                Health::Degraded(nonzero!(2u8)));
+        assert!(Health::Degraded(nonzero!(2u8)) <
                 Health::Rebuilding);
         assert!(Health::Rebuilding < Health::Faulted);
     }
