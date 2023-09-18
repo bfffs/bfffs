@@ -381,7 +381,6 @@ impl Mirror {
         let (fut, children) = self.read_something(move |c| c.read_at(buf, lba));
         ReadAt {
             children,
-            issued: 1,
             dbi,
             lba,
             fut
@@ -431,7 +430,6 @@ impl Mirror {
         );
         ReadSpacemap {
             children,
-            issued: 1,
             dbi,
             smidx,
             fut
@@ -449,7 +447,6 @@ impl Mirror {
         );
         ReadvAt {
             children,
-            issued: 1,
             dbis,
             lba,
             fut
@@ -574,8 +571,6 @@ impl Vdev for Mirror {
 #[pin_project]
 pub struct ReadAt {
     children: Vec<Arc<VdevBlock>>,
-    /// Reads already issued so far
-    issued: usize,
     dbi: DivBufInaccessible,
     lba: LbaT,
     #[pin]
@@ -586,32 +581,27 @@ impl Future for ReadAt {
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        Poll::Ready(loop {
-            let pinned = self.as_mut().project();
-            if pinned.fut.is_none() {
-                break Err(Error::ENXIO);
-            }
-            let r = futures::ready!(pinned.fut.as_pin_mut().unwrap().poll(cx));
-            if r.is_ok() {
-                break Ok(());
-            }
-            if pinned.children.is_empty() {
-                // Out of children.  Fail the Read.
-                break r;
+        let mut pinned = self.as_mut().project();
+        if pinned.fut.is_none() {
+            return Poll::Ready(Err(Error::ENXIO));
+        }
+        loop {
+            match pinned.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => {
+                    if pinned.children.is_empty() {
+                        // Out of children.  Fail the Read.
+                        return Poll::Ready(Err(e));
+                    }
+                }
             }
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
-            let n = pinned.children.len();
-            let new_fut = pinned.children[n - 1].read_at(buf, *pinned.lba);
-            let new_children = self.children[0..n-1].iter().cloned().collect();
-            self.set(ReadAt {
-                children: new_children,
-                issued: self.issued + 1,
-                dbi: self.dbi.clone(),
-                lba: self.lba,
-                fut: Some(new_fut)
-            });
-        })
+            let child = pinned.children.pop().unwrap();
+            let new_fut = child.read_at(buf, *pinned.lba);
+            pinned.fut.replace(new_fut);
+        }
     }
 }
 
@@ -619,8 +609,6 @@ impl Future for ReadAt {
 #[pin_project]
 pub struct ReadSpacemap {
     children: Vec<Arc<VdevBlock>>,
-    /// Reads already issued so far
-    issued: usize,
     dbi: DivBufInaccessible,
     /// Spacemap index to read
     smidx: u32,
@@ -632,33 +620,27 @@ impl Future for ReadSpacemap {
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        Poll::Ready(loop {
-            let pinned = self.as_mut().project();
-            if pinned.fut.is_none() {
-                break Err(Error::ENXIO);
-            }
-            let r = futures::ready!(pinned.fut.as_pin_mut().unwrap().poll(cx));
-            if r.is_ok() {
-                break Ok(());
-            }
-            if pinned.children.is_empty() {
-                // Out of children.  Fail the Read.
-                break r;
+        let mut pinned = self.as_mut().project();
+        if pinned.fut.is_none() {
+            return Poll::Ready(Err(Error::ENXIO));
+        }
+        loop {
+            match pinned.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => {
+                    if pinned.children.is_empty() {
+                        // Out of children.  Fail the Read.
+                        return Poll::Ready(Err(e));
+                    }
+                }
             }
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
-            let n = pinned.children.len();
-            let new_fut = pinned.children[n - 1]
-                .read_spacemap(buf, *pinned.smidx);
-            let new_children = self.children[0..n-1].iter().cloned().collect();
-            self.set(ReadSpacemap {
-                children: new_children,
-                issued: self.issued + 1,
-                dbi: self.dbi.clone(),
-                smidx: self.smidx,
-                fut: Some(new_fut)
-            });
-        })
+            let child = pinned.children.pop().unwrap();
+            let new_fut = child.read_spacemap(buf, *pinned.smidx);
+            pinned.fut.replace(new_fut);
+        }
     }
 }
 
@@ -666,8 +648,6 @@ impl Future for ReadSpacemap {
 #[pin_project]
 pub struct ReadvAt {
     children: Vec<Arc<VdevBlock>>,
-    /// Reads already issued so far
-    issued: usize,
     dbis: Vec<DivBufInaccessible>,
     /// Address to read from the lower devices
     lba: LbaT,
@@ -679,34 +659,29 @@ impl Future for ReadvAt {
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        Poll::Ready(loop {
-            let pinned = self.as_mut().project();
-            if pinned.fut.is_none() {
-                break Err(Error::ENXIO);
-            }
-            let r = futures::ready!(pinned.fut.as_pin_mut().unwrap().poll(cx));
-            if r.is_ok() {
-                break Ok(());
-            }
-            if pinned.children.is_empty() {
-                // Out of children.  Fail the Read.
-                break r;
+        let mut pinned = self.as_mut().project();
+        if pinned.fut.is_none() {
+            return Poll::Ready(Err(Error::ENXIO));
+        }
+        loop {
+            match pinned.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => {
+                    if pinned.children.is_empty() {
+                        // Out of children.  Fail the Read.
+                        return Poll::Ready(Err(e));
+                    }
+                }
             }
             // Try a different child.
             let bufs = pinned.dbis.iter()
                 .map(|dbi| dbi.try_mut().unwrap())
                 .collect::<Vec<_>>();
-            let n = pinned.children.len();
-            let new_fut = pinned.children[n - 1].readv_at(bufs, *pinned.lba);
-            let new_children = self.children[0..n-1].iter().cloned().collect();
-            self.set(ReadvAt {
-                children: new_children,
-                issued: self.issued + 1,
-                dbis: self.dbis.clone(),
-                lba: self.lba,
-                fut: Some(new_fut)
-            });
-        })
+            let child = pinned.children.pop().unwrap();
+            let new_fut = child.readv_at(bufs, *pinned.lba);
+            pinned.fut.replace(new_fut);
+        }
     }
 }
 
