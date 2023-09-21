@@ -180,11 +180,8 @@ impl StripeBuffer {
 }
 
 /// A child of a VdevRaid.  Probably either a Mirror or a missing disk.
-// We optimize for the large case (Present) which is both more important and
-// more common than the small case.
-#[allow(clippy::large_enum_variant)]
 enum Child {
-    Present(Mirror),
+    Present(Arc<Mirror>),
     Missing(Uuid)
 }
 
@@ -198,14 +195,14 @@ cfg_if! {
 
 impl Child {
     fn present(vdev: Mirror) -> Self {
-        Child::Present(vdev)
+        Child::Present(Arc::new(vdev))
     }
 
     fn missing(uuid: Uuid) -> Self {
         Child::Missing(uuid)
     }
 
-    fn as_present(&self) -> Option<&Mirror> {
+    fn as_present(&self) -> Option<&Arc<Mirror>> {
         if let Child::Present(vb) = self {
             Some(vb)
         } else {
@@ -254,7 +251,7 @@ impl Child {
     }
 
     fn status(&self) -> Option<mirror::Status> {
-        self.as_present().map(Mirror::status)
+        self.as_present().map(|m| m.status())
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
@@ -288,15 +285,15 @@ impl Child {
     }
 
     fn optimum_queue_depth(&self) -> Option<u32> {
-        self.as_present().map(Mirror::optimum_queue_depth)
+        self.as_present().map(|m| m.optimum_queue_depth())
     }
 
     fn size(&self) -> Option<LbaT> {
-        self.as_present().map(Mirror::size)
+        self.as_present().map(|m| m.size())
     }
 
     fn sync_all(&self) -> Option<BoxVdevFut> {
-        self.as_present().map(Mirror::sync_all)
+        self.as_present().map(|m| m.sync_all())
     }
 
     fn uuid(&self) -> Uuid {
@@ -321,7 +318,7 @@ pub struct Label {
 /// Future type of [`VdevRaid::read_spacemap`]
 #[pin_project]
 pub struct ReadSpacemap {
-    vdev: Arc<VdevRaid>,
+    children: Vec<Arc<Mirror>>,
     /// Reads already issued so far
     issued: usize,
     /// Index of the first child read from
@@ -331,41 +328,37 @@ pub struct ReadSpacemap {
     smidx: u32,
     #[cfg(not(test))]
     #[pin]
-    fut: crate::mirror::ReadSpacemap,
+    fut: Option<crate::mirror::ReadSpacemap>,
     #[cfg(test)]
     #[pin]
-    fut: BoxVdevFut,
+    fut: Option<BoxVdevFut>,
 }
 impl Future for ReadSpacemap {
     type Output = Result<()>;
 
     fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
     {
-        let nchildren = self.vdev.children.len();
-        Poll::Ready(loop {
-            let pinned = self.as_mut().project();
-            let r = futures::ready!(pinned.fut.poll(cx));
-            if r.is_ok() {
-                break Ok(());
-            }
-            if *pinned.issued >= nchildren {
-                // Out of children.  Fail the Read.
-                break r;
+        let mut pinned = self.as_mut().project();
+        if pinned.fut.is_none() {
+            return Poll::Ready(Err(Error::ENXIO));
+        }
+        loop {
+            match pinned.fut.as_mut().as_pin_mut().unwrap().poll(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => {
+                    if pinned.children.is_empty() {
+                        // Out of children.  Fail the Read.
+                        return Poll::Ready(Err(e));
+                    }
+                }
             }
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
-            let idx = (*pinned.initial_idx + *pinned.issued) % nchildren;
-            let new_fut = pinned.vdev.children[idx].read_spacemap(buf,
-                *pinned.smidx);
-            self.set(ReadSpacemap {
-                vdev: self.vdev.clone(),
-                issued: self.issued + 1,
-                initial_idx: self.initial_idx,
-                dbi: self.dbi.clone(),
-                smidx: self.smidx,
-                fut: new_fut
-            });
-        })
+            let child = pinned.children.pop().unwrap();
+            let new_fut = child.read_spacemap(buf, *pinned.smidx);
+            pinned.fut.replace(new_fut);
+        }
     }
 }
 
@@ -383,7 +376,9 @@ pub struct VdevRaid {
     chunksize: LbaT,
 
     /// RAID codec
-    codec: Codec,
+    // Using Arc allows the codec to be shared by multiple Clusters.  That is
+    // expected to be a common use-case.
+    codec: Arc<Codec>,
 
     /// Cache of the number of faulted children.
     faulted_children: i16,
@@ -568,12 +563,18 @@ impl VdevRaid {
         let size = disk_size_in_chunks * locator.datachunks() *
             chunksize / LbaT::from(locator.depth());
 
-        VdevRaid { chunksize, codec, locator, children, layout_algorithm,
-                   faulted_children,
-                   optimum_queue_depth,
-                   size,
-                   stripe_buffers: RwLock::new(BTreeMap::new()),
-                   uuid}
+        VdevRaid {
+            chunksize,
+            codec: Arc::new(codec),
+            locator,
+            children,
+            layout_algorithm,
+            faulted_children,
+            optimum_queue_depth,
+            size,
+            stripe_buffers: RwLock::new(BTreeMap::new()),
+            uuid
+        }
     }
 
     /// Open an existing `VdevRaid` from its component devices
@@ -890,7 +891,8 @@ impl VdevRaid {
                 let dvs = lociter
                     .map(|(_cid, loc)| dv[loc.disk as usize])
                     .collect::<Vec<_>>();
-                self.clone().read_at_reconstruction(data, usslba, exbuf, dvs)
+                Self::read_at_reconstruction(&self.codec, self.chunksize, data,
+                                       usslba, exbuf, dvs)
             }).reduce(|acc, e| acc.and(e))
             .unwrap()
         }
@@ -1093,7 +1095,8 @@ impl VdevRaid {
             // We must reconstruct the data
             drop(buf);
             let data = dbi.try_mut().unwrap();
-            self.read_at_reconstruction(data, ulba, exbufs.unwrap(), dv)
+            Self::read_at_reconstruction(&self.codec, self.chunksize, data,
+                                         ulba, exbufs.unwrap(), dv)
         } else  {
             Ok(())
         }
@@ -1103,7 +1106,8 @@ impl VdevRaid {
 
     /// Reconstruct a stripe of data, given surviving columns and parity
     fn read_at_reconstruction(
-        &self,
+        codec: &Codec,
+        chunksize: LbaT,
         // Handle to the original buffer.  Must live on as a DivBufInaccessible
         // in the caller.
         mut data: DivBufMut,
@@ -1117,8 +1121,8 @@ impl VdevRaid {
         v: Vec<Result<()>>
     ) -> Result<()>
     {
-        let f = self.codec.protection() as usize;
-        let k = self.codec.stripesize() as usize;
+        let f = codec.protection() as usize;
+        let k = codec.stripesize() as usize;
         let m = k - f;
         // How many disks, counting from start of stripe, are needed in order to
         // reconstruct the missing ones?
@@ -1139,7 +1143,7 @@ impl VdevRaid {
             return Ok(());
         }
 
-        let col_len = self.chunksize as usize * BYTES_PER_LBA;
+        let col_len = chunksize as usize * BYTES_PER_LBA;
         let end_lba = lba + (data.len() / BYTES_PER_LBA) as LbaT;
 
         let mut surviving = [Vec::with_capacity(k), Vec::with_capacity(k),
@@ -1149,19 +1153,19 @@ impl VdevRaid {
         let mut erasures = FixedBitSet::with_capacity(k);
         let mut excols = exbufs.iter()
             .map(|dbs| dbs.try_mut().unwrap());
-        let stripe_offset = lba % (m as LbaT * self.chunksize);
+        let stripe_offset = lba % (m as LbaT * chunksize);
 
-        let pre_lbas = if end_lba % self.chunksize > 0 {
-            (lba % self.chunksize).min(end_lba % self.chunksize)
+        let pre_lbas = if end_lba % chunksize > 0 {
+            (lba % chunksize).min(end_lba % chunksize)
         } else {
-            lba % self.chunksize
+            lba % chunksize
         };
-        let post_lbas = if end_lba % self.chunksize == 0 {
+        let post_lbas = if end_lba % chunksize == 0 {
             0
-        } else if end_lba % self.chunksize > lba % self.chunksize {
-            self.chunksize - end_lba % self.chunksize
+        } else if end_lba % chunksize > lba % chunksize {
+            chunksize - end_lba % chunksize
         } else {
-            self.chunksize - lba % self.chunksize
+            chunksize - lba % chunksize
         };
 
         let mut codecbytes = [
@@ -1211,9 +1215,9 @@ impl VdevRaid {
         };
 
         for (i, r) in v.iter().enumerate().take(disks_needed) {
-            let chunk_lba = lba - stripe_offset + i as LbaT * self.chunksize;
-            debug_assert_eq!(chunk_lba % self.chunksize, 0);
-            let chunk_elba = chunk_lba + self.chunksize;
+            let chunk_lba = lba - stripe_offset + i as LbaT * chunksize;
+            debug_assert_eq!(chunk_lba % chunksize, 0);
+            let chunk_elba = chunk_lba + chunksize;
             if chunk_elba <= lba {
                 // This chunk is needed for reconstruction only
                 let excol = excols.next().unwrap();
@@ -1247,7 +1251,7 @@ impl VdevRaid {
                 let l = data.len();
                 let dcol = data.split_to(l);
                 debug_assert_eq!(l, (end_lba - chunk_lba) as usize * BYTES_PER_LBA);
-                debug_assert!(l < self.chunksize as usize * BYTES_PER_LBA);
+                debug_assert!(l < chunksize as usize * BYTES_PER_LBA);
                 append_cols(i, r, &mut [dcol, excol][..])
             } else {
                 // This is either beyond what the user wants, or is parity
@@ -1266,7 +1270,7 @@ impl VdevRaid {
                 // data, and by exbufs for parity) and they all have the same
                 // length.
                 unsafe {
-                    self.codec.decode(codecbytes[i], &surviving[i], &mut missing[i],
+                    codec.decode(codecbytes[i], &surviving[i], &mut missing[i],
                                       &erasures);
                 }
             }
@@ -1788,19 +1792,24 @@ impl VdevRaidApi for VdevRaid {
         }
     }
 
-    fn read_spacemap(self: Arc<Self>, buf: IoVecMut, smidx: u32) -> BoxVdevFut
+    fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> BoxVdevFut
     {
         let dbi = buf.clone_inaccessible();
-        let fut = self.first_healthy_child().read_spacemap(buf, smidx);
-        let fut = ReadSpacemap {
-            vdev: self,
+        let fut = self.children.last().map(|child| child.read_spacemap(buf, smidx));
+        let children = self.children[0 .. self.children.len() - 1].iter()
+            .filter_map(|child| {
+                child.as_present().cloned()
+            })
+            .collect::<Vec<_>>();
+
+        Box::pin(ReadSpacemap {
+            children,
             issued: 1,
             initial_idx: 0,
             dbi,
             smidx,
             fut
-        };
-        Box::pin(fut)
+        })
     }
 
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut

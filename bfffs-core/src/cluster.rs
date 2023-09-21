@@ -485,7 +485,7 @@ impl<'a> FreeSpaceMap {
         let blocks = div_roundup(total_zones as usize, SPACEMAP_ZONES_PER_LBA);
         let dbs = DivBufShared::from(vec![0u8; blocks * BYTES_PER_LBA]);
         let dbm = dbs.try_mut().unwrap();
-        vdev.clone().read_spacemap(dbm, 0)
+        vdev.read_spacemap(dbm, 0)
         .and_then(move |_| {
             FreeSpaceMap::deserialize(vdev, dbs.try_const().unwrap(),
                                       total_zones)

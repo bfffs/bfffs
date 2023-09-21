@@ -126,7 +126,7 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.read_at(buf, lba))
     }
 
-    fn read_spacemap(self: Arc<Self>, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
         Box::pin(self.mirror.read_spacemap(buf, idx))
     }
