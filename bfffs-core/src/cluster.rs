@@ -843,7 +843,6 @@ impl Cluster {
     pub fn flush(&self, idx: u32) -> BoxVdevFut
     {
         let mut fsm = self.fsm.write().unwrap();
-        let vdev2 = self.vdev.clone();
         let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
         let mut futs = zone_ids.iter().map(|&zone_id| {
             let (gap, fut) = self.vdev.flush_zone(zone_id);
@@ -867,7 +866,7 @@ impl Cluster {
             } else {
                 vec![db]
             };
-            vdev2.write_spacemap(sglist, idx, block)
+            self.vdev.write_spacemap(sglist, idx, block)
         });
         futs.extend(sm_futs);
         let fut = futs.try_collect::<Vec<_>>()
@@ -994,20 +993,18 @@ impl Cluster {
         let (alloc_result, nearly_full_zones) =
             self.fsm.write().unwrap().try_allocate(space);
         let futs = self.close_zones(&nearly_full_zones, txg);
-        let vdev2: Arc<dyn VdevRaidApi> = self.vdev.clone();
-        let vdev3 = self.vdev.clone();
         alloc_result.map(|(zone_id, lba)| {
             let oz_fut = Box::pin(future::ok(())) as BoxVdevFut;
             (zone_id, lba, oz_fut)
         }).or_else(|| {
             let empty_zone = self.fsm.read().unwrap().find_empty();
             empty_zone.and_then(move |zone_id| {
-                let zl = vdev2.zone_limits(zone_id);
+                let zl = self.vdev.zone_limits(zone_id);
                 let e = self.fsm.write().unwrap()
                     .open_zone(zone_id, zl.0, zl.1, space, txg);
                 match e {
                     Ok(Some((zone_id, lba))) => {
-                        let fut = Box::pin(vdev2.open_zone(zone_id)) as BoxVdevFut;
+                        let fut = Box::pin(self.vdev.open_zone(zone_id)) as BoxVdevFut;
                         Some((zone_id, lba, fut))
                     },
                     Err(_) => None,
@@ -1016,7 +1013,7 @@ impl Cluster {
             })
         }).map(|(zone_id, lba, oz_fut)| {
             self.allocated_space.fetch_add(space, Ordering::Relaxed);
-            let wfut = vdev3.write_at(buf, zone_id, lba);
+            let wfut = self.vdev.write_at(buf, zone_id, lba);
             let owfut = oz_fut.and_then(move |_| {
                 wfut
             });
