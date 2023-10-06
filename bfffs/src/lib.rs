@@ -197,6 +197,12 @@ impl Bfffs {
         self.call(req).await.unwrap().into_pool_clean()
     }
 
+    /// Mark a disk or mirror as faulted.
+    pub async fn pool_fault(&self, pool: String, device: String) -> Result<()> {
+        let req = rpc::pool::fault(pool, device);
+        self.call(req).await.unwrap().into_pool_fault()
+    }
+
     /// List one or more active pools
     ///
     /// # Arguments

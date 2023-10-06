@@ -780,6 +780,26 @@ mod pool {
         }
     }
 
+    /// Fault one or more devices or mirrors
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Fault {
+        /// Pool to operate on
+        pub(super) pool:    String,
+        /// Devices to fault
+        #[arg(required = true)]
+        pub(super) devices: Vec<String>,
+    }
+
+    impl Fault {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            for dev in self.devices.into_iter() {
+                bfffs.pool_fault(self.pool.clone(), dev).await?;
+            }
+            Ok(())
+        }
+    }
+
     /// List one or more storage pools
     #[derive(Parser, Clone, Debug)]
     pub(super) struct List {
@@ -894,6 +914,7 @@ mod pool {
         Clean(Clean),
         Create(Create),
         List(List),
+        Fault(Fault),
         Status(Status),
     }
 }
@@ -946,6 +967,9 @@ async fn main() -> Result<()> {
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
         SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
             clean.main(&cli.sock).await
+        }
+        SubCommand::Pool(pool::PoolCmd::Fault(fault)) => {
+            fault.main(&cli.sock).await
         }
         SubCommand::Pool(pool::PoolCmd::List(list)) => {
             list.main(&cli.sock).await
@@ -1489,6 +1513,40 @@ mod t {
                 ));
                 if let SubCommand::Pool(PoolCmd::Create(create)) = cli.cmd {
                     assert_eq!(create.zone_size, Some(128));
+                }
+            }
+        }
+
+        mod fault {
+            use super::*;
+
+            #[test]
+            fn disk() {
+                let args = vec!["bfffs", "pool", "fault", "testpool", "da0"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Pool(PoolCmd::Fault(_))));
+                if let SubCommand::Pool(PoolCmd::Fault(fault)) = cli.cmd {
+                    assert_eq!("testpool", fault.pool);
+                    assert_eq!(&["da0"][..], fault.devices);
+                }
+            }
+
+            #[test]
+            fn missing_disk() {
+                let args = vec!["bfffs", "pool", "fault", "testpool"];
+                let e = Cli::try_parse_from(args).unwrap_err();
+                assert_eq!(e.kind(), MissingRequiredArgument);
+            }
+
+            #[test]
+            fn two_disks() {
+                let args =
+                    vec!["bfffs", "pool", "fault", "testpool", "da0", "da1"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(cli.cmd, SubCommand::Pool(PoolCmd::Fault(_))));
+                if let SubCommand::Pool(PoolCmd::Fault(fault)) = cli.cmd {
+                    assert_eq!("testpool", fault.pool);
+                    assert_eq!(&["da0", "da1"][..], fault.devices);
                 }
             }
         }

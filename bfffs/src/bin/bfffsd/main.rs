@@ -394,6 +394,15 @@ impl Bfffsd {
                     rpc::Response::PoolClean(r)
                 }
             }
+            rpc::Request::PoolFault(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::PoolClean(Err(Error::EPERM))
+                } else {
+                    let r =
+                        self.controller.fault(&req.pool, &req.device).map(drop);
+                    rpc::Response::PoolFault(r)
+                }
+            }
             rpc::Request::PoolList(req) => {
                 self.controller
                     .list_pool(req.pool, req.offset)

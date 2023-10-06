@@ -147,6 +147,13 @@ impl Controller {
         self.db.dump_fs(f, tree).await
     }
 
+    pub fn fault(&self, pool: &str, _device: &str) -> Result<()> {
+        if pool != self.db.pool_name() {
+            return Err(Error::ENOENT);
+        }
+        todo!()
+    }
+
     pub async fn get_pool_status(&self, pool: &str) -> Result<Status> {
         if pool != self.db.pool_name() {
             return Err(Error::ENOENT);

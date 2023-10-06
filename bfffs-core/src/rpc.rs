@@ -158,7 +158,6 @@ pub mod pool {
         pub clusters: Vec<ClusterStatus>
     }
 
-
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Clean {
         pub pool: String
@@ -168,6 +167,16 @@ pub mod pool {
         Request::PoolClean(Clean {
             pool
         })
+    }
+
+    #[derive(Debug, Deserialize, Serialize)]
+    pub struct Fault {
+        pub pool: String,
+        pub device: String
+    }
+
+    pub fn fault(pool: String, device: String) -> Request {
+        Request::PoolFault(Fault { pool, device })
     }
 
     #[derive(Debug, Deserialize, Serialize)]
@@ -208,6 +217,7 @@ pub enum Request {
     FsStat(fs::Stat),
     FsUnmount(fs::Unmount),
     PoolClean(pool::Clean),
+    PoolFault(pool::Fault),
     PoolList(pool::List),
     PoolStatus(pool::Status)
 }
@@ -223,6 +233,7 @@ pub enum Response {
     FsStat(Result<fs::DsInfo>),
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
+    PoolFault(Result<()>),
     PoolList(Result<Vec<pool::PoolInfo>>),
     PoolStatus(Result<pool::PoolStatus>),
 }
@@ -280,6 +291,13 @@ impl Response {
     pub fn into_pool_clean(self) -> Result<()> {
         match self {
             Response::PoolClean(r) => r,
+            x => panic!("Unexpected response type {x:?}")
+        }
+    }
+
+    pub fn into_pool_fault(self) -> Result<()> {
+        match self {
+            Response::PoolFault(r) => r,
             x => panic!("Unexpected response type {x:?}")
         }
     }
