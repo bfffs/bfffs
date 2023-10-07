@@ -25,8 +25,8 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Option<K>>> + Send>>;
         pub fn new(idml: Arc<IDML>, tree: Arc<ITree<K, V>>)
             -> ReadOnlyDataset<K, V>;
-        pub fn size(&self) -> LbaT;
-        pub fn used(&self) -> LbaT;
+        pub fn size(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
+        pub fn used(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
     }
     impl<K: Key, V: Value> ReadDataset<K, V> for ReadOnlyDataset<K, V> {
         fn get(&self, k: K)

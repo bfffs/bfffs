@@ -110,7 +110,7 @@ impl Dump {
 
     async fn dump_fsm(self) {
         let db = self.load_db().await;
-        for s in db.dump_fsm().into_iter() {
+        for s in db.dump_fsm().await.into_iter() {
             println!("{}", s)
         }
     }

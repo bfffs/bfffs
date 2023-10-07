@@ -163,6 +163,7 @@ pub struct Pool {
     clusters: Vec<Cluster>,
 
     /// Human-readable pool name.  Must be unique on any one system.
+    /// May not change while the pool is online.
     name: String,
 
     stats: Arc<Stats>,

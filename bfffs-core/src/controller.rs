@@ -147,11 +147,11 @@ impl Controller {
         self.db.dump_fs(f, tree).await
     }
 
-    pub fn get_pool_status(&self, pool: &str) -> Result<Status> {
+    pub async fn get_pool_status(&self, pool: &str) -> Result<Status> {
         if pool != self.db.pool_name() {
             return Err(Error::ENOENT);
         }
-        Ok(self.db.status())
+        Ok(self.db.status().await)
     }
 
     /// Get the value of the `propname` property on the given dataset

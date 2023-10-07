@@ -116,7 +116,7 @@ mod get_pool_status {
     #[tokio::test]
     async fn enoent(harness: Harness) {
         assert_eq!(Error::ENOENT,
-                   harness.0.get_pool_status("XXXPool").err().unwrap());
+                   harness.0.get_pool_status("XXXPool").await.err().unwrap());
     }
 
     /// Try to lookup status for a healty pool
@@ -125,7 +125,7 @@ mod get_pool_status {
     #[rstest]
     #[tokio::test]
     async fn healthy(harness: Harness) {
-        harness.0.get_pool_status(POOLNAME).unwrap();
+        harness.0.get_pool_status(POOLNAME).await.unwrap();
     }
 
 }

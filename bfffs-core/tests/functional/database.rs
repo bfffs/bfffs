@@ -518,7 +518,7 @@ root:
         #[tokio::test]
         async fn normal(config: Config) {
             let (db, _paths, _tempdir) = harness(&config).await;
-            let stat = db.status();
+            let stat = db.status().await;
             assert_eq!(stat.name, POOLNAME);
             assert_eq!(stat.clusters.len(), config.nclusters);
             for cluster in stat.clusters.iter() {

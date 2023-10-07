@@ -94,7 +94,7 @@ impl<'a> IDML {
         // preferable to use a dedicated lock for this instead.
         self.transaction.write()
         .then(move |txg_guard| {
-            let used = ddml2.used();
+            let used_fut = ddml2.used().map(Ok);
             let alloct_fut = alloct2.range(..)
             .try_fold(true, move |passes, (pba, rid)| {
                 ridt2.get(rid)
@@ -146,8 +146,8 @@ impl<'a> IDML {
             let alloct_bfut = alloct4.addresses(..)
             .fold(0, |size, drp| future::ready(size + drp.asize()))
             .map(Ok);
-            let ufut = future::try_join3(indirect_bfut, ridt_bfut, alloct_bfut)
-            .map_ok(move |(iblocks, rblocks, ablocks)| {
+            let ufut = future::try_join4(indirect_bfut, ridt_bfut, alloct_bfut, used_fut)
+            .map_ok(move |(iblocks, rblocks, ablocks, used)| {
                 if used != iblocks + rblocks + ablocks {
                     eprintln!(concat!("DDML used space inconsistency.  ",
                         "DDML reports {} blocks used, but there are {} ",
@@ -233,9 +233,14 @@ impl<'a> IDML {
                 alloct3.clean_zone(pba_range, zone.txgs, txg)
             });
             future::try_join(czfut, atfut).map_ok(drop)
-        }).map_ok(move |_| {
+        }).and_then(move |_| {
             #[cfg(debug_assertions)]
-            ddml3.assert_clean_zone(pba.cluster, zid, txg)
+            {
+                ddml3.assert_clean_zone(pba.cluster, zid, txg)
+                    .map(Ok)
+            }
+            #[cfg(not(debug_assertions))]
+            future::ok(())
         })
     }
 
@@ -263,8 +268,8 @@ impl<'a> IDML {
         self.alloct.dump(f).await
     }
 
-    pub fn dump_fsm(&self) -> Vec<String> {
-        self.ddml.dump_fsm()
+    pub async fn dump_fsm(&self) -> Vec<String> {
+        self.ddml.dump_fsm().await
     }
 
     pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
@@ -293,7 +298,7 @@ impl<'a> IDML {
 
     #[tracing::instrument(skip(self))]
     pub fn list_closed_zones(&self)
-        -> impl Iterator<Item=ClosedZone> + Send
+        -> impl Future<Output=impl Iterator<Item=ClosedZone>>
     {
         self.ddml.list_closed_zones()
     }
@@ -430,11 +435,11 @@ impl<'a> IDML {
     }
 
     /// Return approximately the usable storage space in LBAs.
-    pub fn size(&self) -> LbaT {
+    pub fn size(&self) -> impl Future<Output=LbaT> + Send {
         self.ddml.size()
     }
 
-    pub fn status(&self) -> Status {
+    pub fn status(&self) -> impl Future<Output=Status> + Send {
         self.ddml.status()
     }
 
@@ -447,7 +452,7 @@ impl<'a> IDML {
     }
 
     /// How many blocks are currently used?
-    pub fn used(&self) -> LbaT {
+    pub fn used(&self) -> impl Future<Output=LbaT> + Send {
         self.ddml.used()
     }
 
@@ -682,23 +687,23 @@ mock!{
         pub fn drop_cache(&self);
         pub fn dump_alloct(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-        pub fn dump_fsm(&self) -> Vec<String>;
+        pub async fn dump_fsm(&self) -> Vec<String>;
         pub fn dump_ridt(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn list_closed_zones(&self)
-            -> impl Iterator<Item=ClosedZone> + Send;
+            -> Pin<Box<dyn Future<Output=Box<dyn Iterator<Item=ClosedZone> + Send>> + Send>>;
         pub fn open(ddml: Arc<DDML>, cache: Arc<Mutex<Cache>>, wbs: usize,
                      mut label_reader: LabelReader) -> (Self, LabelReader);
         pub fn pool_name(&self) -> &str;
-        pub fn size(&self) -> LbaT;
-        pub fn status(&self) -> Status;
+        pub fn size(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
+        pub fn status(&self) -> Pin<Box<dyn Future<Output=Status> + Send>>;
         // Return a static reference instead of a RwLockReadFut because it makes
         // the expectations easier to write
         pub fn txg(&self)
             -> Pin<Box<dyn Future<Output=&'static TxgT> + Send>>;
-        pub fn used(&self) -> LbaT;
+        pub fn used(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
         // advance_transaction is difficult to mock with Mockall, because f's
         // output is typically a chained future that is difficult to name.
         // Instead, we'll use special logic in advance_transaction and only mock
@@ -801,7 +806,7 @@ mod t {
             let drp = DRP::random(Compression::None, 4096);
             let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            ddml.expect_used().return_const(1u64);
+            ddml.expect_used().returning(|| future::ready(1u64).boxed());
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             inject_record(&idml, rid, &drp, 2);
@@ -815,7 +820,7 @@ mod t {
             let drp = DRP::random(Compression::None, 4096);
             let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            ddml.expect_used().return_const(42u64);
+            ddml.expect_used().returning(|| future::ready(42u64).boxed());
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             inject_record(&idml, rid, &drp, 2);
@@ -829,7 +834,7 @@ mod t {
             let drp = DRP::random(Compression::None, 4096);
             let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            ddml.expect_used().return_const(1u64);
+            ddml.expect_used().returning(|| future::ready(1u64).boxed());
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             // Inject a record into the AllocT but not the RIDT
@@ -847,7 +852,7 @@ mod t {
             let drp = DRP::random(Compression::None, 4096);
             let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            ddml.expect_used().return_const(1u64);
+            ddml.expect_used().returning(|| future::ready(1u64).boxed());
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             // Inject a record into the RIDT but not the AllocT
@@ -867,7 +872,7 @@ mod t {
             let drp2 = DRP::random(Compression::None, 4096);
             let cache = Cache::with_capacity(1_048_576);
             let mut ddml = mock_ddml();
-            ddml.expect_used().return_const(1u64);
+            ddml.expect_used().returning(|| future::ready(1u64).boxed());
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             // Inject a mismatched pair of records

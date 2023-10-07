@@ -412,8 +412,8 @@ impl Bfffsd {
                     .await
             }
             rpc::Request::PoolStatus(req) => {
-                let r =
-                    self.controller.get_pool_status(&req.pool).map(|stat| {
+                let r = self.controller.get_pool_status(&req.pool).await.map(
+                    |stat| {
                         rpc::pool::PoolStatus {
                             health:   stat.health,
                             name:     stat.name,
@@ -444,7 +444,8 @@ impl Bfffsd {
                                 })
                                 .collect(),
                         }
-                    });
+                    },
+                );
                 rpc::Response::PoolStatus(r)
             }
         }
