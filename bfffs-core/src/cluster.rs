@@ -834,6 +834,14 @@ impl Cluster {
         self.allocated_space.fetch_sub(blocks, Ordering::Relaxed);
     }
 
+    /// Mark a child device as faulted.
+    pub fn fault(&mut self, uuid: Uuid) -> Result<()> {
+        match Arc::get_mut(&mut self.vdev) {
+            Some(vdev) => vdev.fault(uuid),
+            None => Err(Error::EAGAIN)
+        }
+    }
+
     /// Find the first closed zone whose index is greater than or equal to `zid`
     pub fn find_closed_zone(&self, zid: ZoneT) -> Option<ClosedZone> {
         self.fsm.read().unwrap().find_closed_zone(zid)

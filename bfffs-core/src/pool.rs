@@ -284,7 +284,17 @@ impl Pool {
 
     /// Fault the given disk or mirror
     pub async fn fault(&mut self, uuid: Uuid) -> Result<()> {
-        todo!()
+        if uuid == self.uuid {
+            return Err(Error::EINVAL);
+        }
+        for c in self.clusters.iter_mut() {
+            match c.fault(uuid) {
+                Ok(()) => return Ok(()),
+                Err(Error::ENOENT) => continue,
+                Err(e) => return Err(e)
+            }
+        }
+        Err(Error::ENOENT)
     }
 
     /// Find the next closed zone in the pool.

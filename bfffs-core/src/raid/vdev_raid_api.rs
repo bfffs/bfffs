@@ -19,6 +19,9 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// - `zone`:    The target zone ID
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
+    /// Mark a child device as faulted.
+    fn fault(&mut self, uuid: Uuid) -> Result<()>;
+
     /// Asynchronously finish a zone on a RAID device
     ///
     /// # Parameters

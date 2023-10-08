@@ -108,6 +108,10 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.erase_zone(limits.0, limits.1 - 1))
     }
 
+    fn fault(&mut self, uuid: Uuid) -> Result<()> {
+        self.mirror.fault(uuid)
+    }
+
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.mirror.zone_limits(zone);
         Box::pin(self.mirror.finish_zone(limits.0, limits.1 - 1))

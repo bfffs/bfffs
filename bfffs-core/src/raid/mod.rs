@@ -215,6 +215,7 @@ mock!{
     impl VdevRaidApi for VdevRaid {
         fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn fault(&mut self, uuid: Uuid) -> Result<()>;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;

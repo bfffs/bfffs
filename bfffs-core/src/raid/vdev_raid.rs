@@ -210,6 +210,14 @@ impl Child {
         }
     }
 
+    fn as_present_mut(&mut self) -> Option<&mut Arc<Mirror>> {
+        if let Child::Present(vb) = self {
+            Some(vb)
+        } else {
+            None
+        }
+    }
+
     fn erase_zone(&self, start: LbaT, end: LbaT) -> Option<BoxVdevFut> {
         self.as_present().map(|m| m.erase_zone(start, end))
     }
@@ -1662,6 +1670,30 @@ impl VdevRaidApi for VdevRaid {
         .try_collect::<Vec<_>>()
         .map_ok(drop);
         Box::pin(fut)
+    }
+
+    /// Mark a child device as faulted.
+    fn fault(&mut self, uuid: Uuid) -> Result<()> {
+        let mut err = Error::ENOENT;
+
+        for child in self.children.iter_mut() {
+            if uuid == child.uuid() {
+                todo!()
+            }
+            if let Some(mirror) = child.as_present_mut() {
+                if let Some(m) = Arc::get_mut(mirror) {
+                    match m.fault(uuid) {
+                        Ok(()) => return Ok(()),
+                        Err(Error::ENOENT) => continue,
+                        Err(e) => panic!("Unexpected error from Mirror::fault: {:?}", e),
+                    }
+                } else {
+                    err = Error::EAGAIN;
+                }
+            }
+        }
+
+        Err(err)
     }
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the

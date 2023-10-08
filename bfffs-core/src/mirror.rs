@@ -275,13 +275,19 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    /// Mark a child device as faulted.
-    pub fn fault(&mut self, uuid: Uuid) {
+    /// Mark a leaf device as faulted.
+    /// 
+    /// # Returns
+    /// * Ok(()) if the device could be faulted
+    /// * Err(Error::ENOENT) if there is no such leaf device
+    pub fn fault(&mut self, uuid: Uuid) -> Result<()> {
         for child in self.children.iter_mut() {
             if child.uuid() == uuid {
                 *child = Child::missing(uuid);
+                return Ok(());
             }
         }
+        Err(Error::ENOENT)
     }
 
     /// Asynchronously finish a zone on a mirror
@@ -703,6 +709,7 @@ mock! {
             -> io::Result<Self>
             where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
+        pub fn fault(&mut self, uuid: Uuid) -> Result<()>;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn open(uuid: Option<Uuid>, combined: Vec<(VdevBlock, LabelReader)>)
             -> (Self, LabelReader);
@@ -820,7 +827,7 @@ mod t {
             let bd0 = mock();
             let children = vec![Child::present(bd0)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.fault(Uuid::new_v4());
+            assert_eq!(Error::ENOENT, mirror.fault(Uuid::new_v4()).unwrap_err());
             assert_eq!(Health::Online, mirror.status().health);
         }
 
@@ -831,7 +838,7 @@ mod t {
             let bd0_uuid = bd0.uuid();
             let children = vec![Child::present(bd0), Child::present(bd1)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.fault(bd0_uuid);
+            mirror.fault(bd0_uuid).unwrap();
             assert_eq!(Health::Degraded(nonzero!(1u8)), mirror.status().health);
         }
 
@@ -845,7 +852,7 @@ mod t {
                 Child::missing(faulty_uuid)
             ];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.fault(faulty_uuid);
+            mirror.fault(faulty_uuid).unwrap();
         }
 
         /// faulting the only child of a mirror should work, but the Mirror will
@@ -856,7 +863,7 @@ mod t {
             let bd0_uuid = bd0.uuid();
             let children = vec![Child::present(bd0)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.fault(bd0_uuid);
+            mirror.fault(bd0_uuid).unwrap();
             assert_eq!(Health::Faulted, mirror.status().health);
         }
     }
