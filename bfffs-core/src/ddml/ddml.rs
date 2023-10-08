@@ -105,6 +105,11 @@ impl DDML {
         self.pool.read().await.dump_fsm()
     }
 
+    /// Mark one disk device as faulted
+    pub async fn fault(&self, device: &str) -> Result<()> {
+        self.pool.write().await.fault(device).await
+    }
+
     pub fn flush(&self, idx: u32) -> BoxVdevFut {
         let fut = self.pool.read()
             .then(move |pool| pool.flush(idx));
@@ -373,6 +378,7 @@ mock! {
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) -> Pin<Box<dyn Future<Output=()> + Send + Sync>>;
         pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
         pub async fn dump_fsm(&self) -> Vec<String>;
+        pub async fn fault(&self, device: &str) -> Result<()>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
         pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)

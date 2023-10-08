@@ -147,11 +147,11 @@ impl Controller {
         self.db.dump_fs(f, tree).await
     }
 
-    pub fn fault(&self, pool: &str, _device: &str) -> Result<()> {
+    pub async fn fault(&self, pool: &str, device: &str) -> Result<()> {
         if pool != self.db.pool_name() {
             return Err(Error::ENOENT);
         }
-        todo!()
+        self.db.fault(device).await
     }
 
     pub async fn get_pool_status(&self, pool: &str) -> Result<Status> {

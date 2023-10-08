@@ -422,6 +422,10 @@ impl Database {
         self.inner.idml.dump_ridt(f).await
     }
 
+    pub async fn fault(&self, device: &str) -> Result<()> {
+        self.inner.idml.fault(device).await
+    }
+
     /// Flush the database's dirty data to disk.
     ///
     /// Does not sync a transaction.  Does not rewrite the labels.

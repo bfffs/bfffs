@@ -282,6 +282,11 @@ impl Pool {
         Pool{clusters, name, stats, uuid}
     }
 
+    /// Mark one disk device as faulted
+    pub async fn fault(&mut self, device: &str) -> Result<()> {
+        todo!()
+    }
+
     /// Find the next closed zone in the pool.
     ///
     /// Returns the next cluster and zone to query as well as ClosedZone.
