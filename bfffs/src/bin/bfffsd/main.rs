@@ -398,8 +398,11 @@ impl Bfffsd {
                 if creds.uid() != unistd::geteuid().as_raw() {
                     rpc::Response::PoolClean(Err(Error::EPERM))
                 } else {
-                    let r =
-                        self.controller.fault(&req.pool, &req.device).map(drop);
+                    let r = self
+                        .controller
+                        .fault(&req.pool, req.device)
+                        .await
+                        .map(drop);
                     rpc::Response::PoolFault(r)
                 }
             }

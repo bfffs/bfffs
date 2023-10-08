@@ -172,10 +172,10 @@ pub mod pool {
     #[derive(Debug, Deserialize, Serialize)]
     pub struct Fault {
         pub pool: String,
-        pub device: String
+        pub device: Uuid
     }
 
-    pub fn fault(pool: String, device: String) -> Request {
+    pub fn fault(pool: String, device: Uuid) -> Request {
         Request::PoolFault(Fault { pool, device })
     }
 

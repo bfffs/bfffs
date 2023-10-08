@@ -282,8 +282,8 @@ impl Pool {
         Pool{clusters, name, stats, uuid}
     }
 
-    /// Mark one disk device as faulted
-    pub async fn fault(&mut self, device: &str) -> Result<()> {
+    /// Fault the given disk or mirror
+    pub async fn fault(&mut self, uuid: Uuid) -> Result<()> {
         todo!()
     }
 

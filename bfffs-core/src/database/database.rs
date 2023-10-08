@@ -422,8 +422,9 @@ impl Database {
         self.inner.idml.dump_ridt(f).await
     }
 
-    pub async fn fault(&self, device: &str) -> Result<()> {
-        self.inner.idml.fault(device).await
+    /// Fault the given disk or mirror
+    pub async fn fault(&self, uuid: Uuid) -> Result<()> {
+        self.inner.idml.fault(uuid).await
     }
 
     /// Flush the database's dirty data to disk.

@@ -7,7 +7,8 @@ use crate::{
     database::{self, Database},
     fs::Fs,
     property::{Property, PropertyName, PropertySource},
-    Result
+    Result,
+    Uuid
 };
 use futures::{
     Future,
@@ -147,11 +148,12 @@ impl Controller {
         self.db.dump_fs(f, tree).await
     }
 
-    pub async fn fault(&self, pool: &str, device: &str) -> Result<()> {
+    /// Fault the given disk or mirror
+    pub async fn fault(&self, pool: &str, uuid: Uuid) -> Result<()> {
         if pool != self.db.pool_name() {
             return Err(Error::ENOENT);
         }
-        self.db.fault(device).await
+        self.db.fault(uuid).await
     }
 
     pub async fn get_pool_status(&self, pool: &str) -> Result<Status> {

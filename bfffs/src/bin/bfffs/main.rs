@@ -611,7 +611,7 @@ mod fs {
 }
 
 mod pool {
-    use std::{num::NonZeroU64, sync::Mutex};
+    use std::{num::NonZeroU64, str::FromStr, sync::Mutex};
 
     use bfffs_core::{
         cache::Cache,
@@ -622,6 +622,7 @@ mod pool {
         mirror::Mirror,
         pool::Pool,
         raid,
+        Uuid,
         BYTES_PER_LBA,
     };
 
@@ -785,7 +786,7 @@ mod pool {
     pub(super) struct Fault {
         /// Pool to operate on
         pub(super) pool:    String,
-        /// Devices to fault
+        /// Devices to fault.  Both path names and UUIDs are accepted.
         #[arg(required = true)]
         pub(super) devices: Vec<String>,
     }
@@ -794,7 +795,12 @@ mod pool {
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
             for dev in self.devices.into_iter() {
-                bfffs.pool_fault(self.pool.clone(), dev).await?;
+                if let Ok(uuid) = Uuid::from_str(&dev) {
+                    bfffs.pool_fault(self.pool.clone(), uuid).await?;
+                } else {
+                    let pb = PathBuf::from(dev);
+                    bfffs.pool_fault(self.pool.clone(), pb).await?;
+                }
             }
             Ok(())
         }

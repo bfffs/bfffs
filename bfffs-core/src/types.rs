@@ -14,6 +14,7 @@ use std::{
     fmt::{self, Display, Formatter},
     io,
     ops::{Add, AddAssign, Sub},
+    str::FromStr,
 };
 
 
@@ -302,6 +303,14 @@ impl Uuid {
 
     pub fn parse_str(input: &str) -> std::result::Result<Uuid, uuid::Error> {
         uuid::Uuid::parse_str(input).map(Uuid)
+    }
+}
+
+impl FromStr for Uuid {
+    type Err = <uuid::Uuid as FromStr>::Err;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        uuid::Uuid::from_str(s).map(Self)
     }
 }
 

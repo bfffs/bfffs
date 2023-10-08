@@ -277,9 +277,9 @@ impl<'a> IDML {
         self.ridt.dump(f).await
     }
 
-    /// Mark one disk device as faulted
-    pub async fn fault(&self, device: &str) -> Result<()> {
-        self.ddml.fault(device).await
+    /// Fault the given disk or mirror
+    pub async fn fault(&self, uuid: Uuid) -> Result<()> {
+        self.ddml.fault(uuid).await
     }
 
     /// Flush the IDML's data to disk
@@ -695,8 +695,7 @@ mock!{
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub fn dump_ridt(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
-        pub fn fault(&self, device: &str)
-            -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
+        pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
         pub fn list_closed_zones(&self)
