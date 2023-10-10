@@ -21,11 +21,13 @@ use tempfile::{Builder, TempDir};
 
 use bfffs_core::{
     BYTES_PER_LBA,
+    Error,
     LbaT,
     label::*,
     mirror::Mirror,
     vdev::{Health, Vdev},
     raid::{Manager, VdevRaid, VdevRaidApi},
+    Uuid
 };
 
 use crate::assert_bufeq;
@@ -258,6 +260,118 @@ mod errors {
             assert!(wbuf1[..] == dbsr.try_const().unwrap()[..],
                 "miscompare!");
         }
+    }
+}
+
+mod fault {
+    use super::*;
+
+    /// Create a fully-clustered VdevRaid with `mirrors` members, each having
+    /// `d` disks per mirror, and `f` redundancy at the RAID level
+    async fn harness(nmirrors: usize, f: i16, d: usize) -> Harness
+    {
+        let chunksize = 1;
+        let n = nmirrors * d;
+        let k = nmirrors as i16;
+        let len = 1 << 30;  // 1 GB
+        let tempdir = Builder::new()
+            .prefix("test_vdev_raid_fault")
+            .tempdir()
+            .unwrap();
+        let paths = (0..n).map(|i| {
+            let mut fname = PathBuf::from(tempdir.path());
+            fname.push(format!("vdev.{i}"));
+            let file = t!(fs::File::create(&fname));
+            t!(file.set_len(len));
+            fname
+        }).collect::<Vec<_>>();
+        let mut mirrors = Vec::new();
+        for m in 0..nmirrors {
+            let mirror = Mirror::create(&paths[(m * d)..(m * d + d)], None);
+            mirrors.push(mirror.unwrap());
+        }
+        let cs = NonZeroU64::new(chunksize);
+        let vdev = Arc::new(VdevRaid::create(cs, k, f, mirrors));
+        vdev.open_zone(0).await
+            .expect("open_zone");
+        Harness{vdev, _tempdir: tempdir, paths, n: n as i16, k, f, chunksize}
+    }
+
+    #[rstest(h, case(harness(3, 1, 2)))]
+    #[tokio::test]
+    #[awt]
+    async fn disk_enoent(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let r = Arc::get_mut(&mut h.vdev).unwrap().fault(Uuid::new_v4());
+        assert_eq!(Err(Error::ENOENT), r);
+    }
+
+    #[rstest(h, case(harness(3, 1, 2)))]
+    #[tokio::test]
+    #[awt]
+    async fn disk_missing(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let duuid = h.vdev.status().mirrors[0].leaves[0].uuid;
+
+        Arc::get_mut(&mut h.vdev).unwrap().fault(duuid).unwrap();
+        Arc::get_mut(&mut h.vdev).unwrap().fault(duuid).unwrap();
+
+        let status = h.vdev.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+    }
+
+    #[rstest(h, case(harness(3, 1, 2)))]
+    #[tokio::test]
+    #[awt]
+    async fn disk_present(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let duuid = h.vdev.status().mirrors[0].leaves[0].uuid;
+        Arc::get_mut(&mut h.vdev).unwrap().fault(duuid).unwrap();
+
+        let status = h.vdev.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+    }
+
+    #[rstest(h, case(harness(3, 1, 1)))]
+    #[tokio::test]
+    #[awt]
+    async fn mirror_present(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let muuid = h.vdev.status().mirrors[0].uuid;
+        Arc::get_mut(&mut h.vdev).unwrap().fault(muuid).unwrap();
+
+        let status = h.vdev.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].health, Health::Faulted);
+    }
+
+    #[rstest(h, case(harness(3, 1, 1)))]
+    #[tokio::test]
+    #[awt]
+    async fn mirror_missing(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let muuid = h.vdev.status().mirrors[0].uuid;
+        Arc::get_mut(&mut h.vdev).unwrap().fault(muuid).unwrap();
+        Arc::get_mut(&mut h.vdev).unwrap().fault(muuid).unwrap();
+
+        let status = h.vdev.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].health, Health::Faulted);
+    }
+
+    // Attempt to fault the entire RAID device
+    #[rstest(h, case(harness(3, 1, 1)))]
+    #[tokio::test]
+    #[awt]
+    async fn raid(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let ruuid = h.vdev.uuid();
+        let r = Arc::get_mut(&mut h.vdev).unwrap().fault(ruuid);
+        assert_eq!(Err(Error::EINVAL), r);
     }
 }
 

@@ -2,19 +2,52 @@
 use bfffs_core::{
     label::*,
     pool::*,
+    vdev::Health,
     Error,
     TxgT
 };
 use divbuf::DivBufShared;
+use rstest::{fixture, rstest};
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
 };
 
+#[fixture]
+fn harness() -> crate::PoolHarness {
+    crate::PoolBuilder::new()
+        .disks(2)
+        .nclusters(2)
+        .name("TestPool")
+        .chunksize(1)
+        .zone_size(16)
+        .build()
+}
+
+mod fault {
+    use super::*;
+
+    #[rstest]
+    #[tokio::test]
+    async fn disk(mut harness: crate::PoolHarness) {
+        let stat = harness.pool.status();
+        let uuid = stat.clusters[0].mirrors[0].leaves[0].uuid;
+        harness.pool.fault(uuid).await.unwrap();
+
+        let stat = harness.pool.status();
+        assert_eq!(stat.health, Health::Faulted);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn fault_self(mut harness: crate::PoolHarness) {
+        assert_eq!(Err(Error::EINVAL), harness.pool.fault(harness.pool.uuid()).await);
+    }
+}
+
 mod persistence {
     use futures::future;
     use pretty_assertions::assert_eq;
-    use rstest::{fixture, rstest};
     use super::*;
 
     // To regenerate this literal, dump the binary label using this command:
@@ -35,17 +68,6 @@ mod persistence {
         0xbe, 0x55, 0x44, 0x83, 0xac, 0x4a, 0x4f, 0x5b,
         0xab, 0x9d, 0xa5, 0x1a, 0x9d, 0x11, 0x5f, 0xfb,
     ];
-
-    #[fixture]
-    fn harness() -> crate::PoolHarness {
-        crate::PoolBuilder::new()
-            .disks(2)
-            .nclusters(2)
-            .name("TestPool")
-            .chunksize(1)
-            .zone_size(16)
-            .build()
-    }
 
     // Test open-after-write for Pool
     #[rstest]

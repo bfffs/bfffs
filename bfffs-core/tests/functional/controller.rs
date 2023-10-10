@@ -1,6 +1,7 @@
 // vim: tw=80
 use bfffs_core::{
     Error,
+    Uuid,
     cache::*,
     controller::Controller,
     database::Database,
@@ -106,6 +107,20 @@ mod create_fs {
             Error::ENOENT
         )
     }
+}
+
+mod fault {
+    use super::*;
+
+    /// Try to fault a pool that doesn't exist
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(harness: Harness) {
+        let uuid = Uuid::default();
+        assert_eq!(Error::ENOENT,
+                   harness.0.fault("XXXPool", uuid).await.err().unwrap());
+    }
+
 }
 
 mod get_pool_status {
