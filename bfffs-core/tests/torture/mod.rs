@@ -8,6 +8,7 @@ pub mod util {
     include!("../functional/util.rs");
 }
 
+mod ddml;
 mod fs;
 mod vdev_raid;
 
