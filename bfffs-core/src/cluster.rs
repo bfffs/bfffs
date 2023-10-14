@@ -33,7 +33,8 @@ use std::{
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
-        RwLock
+        RwLock,
+        RwLockWriteGuard
     },
 };
 
@@ -794,11 +795,16 @@ impl Cluster {
     /// Finish any zones that are too full for new allocations.
     ///
     /// This defines the policy of when to close nearly full zones.
-    fn close_zones(&self, nearly_full_zones: &[ZoneT], txg: TxgT)
+    #[allow(clippy::needless_lifetimes)] // Isn't needless for automock
+    fn close_zones<'a>(
+        &self,
+        wg: &mut RwLockWriteGuard<'a, FreeSpaceMap>,
+        nearly_full_zones: &[ZoneT],
+        txg: TxgT)
         -> FuturesUnordered<BoxVdevFut>
     {
         nearly_full_zones.iter().map(|&zone_id| {
-            let blocks = self.fsm.write().unwrap().finish_zone(zone_id, txg);
+            let blocks = wg.finish_zone(zone_id, txg);
             self.allocated_space.fetch_add(blocks, Ordering::Relaxed);
             let fut = self.vdev.finish_zone(zone_id);
             Box::pin(fut) as BoxVdevFut
@@ -990,41 +996,47 @@ impl Cluster {
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
         let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
-        let (alloc_result, nearly_full_zones) =
-            self.fsm.write().unwrap().try_allocate(space);
-        let futs = self.close_zones(&nearly_full_zones, txg);
-        alloc_result.map(|(zone_id, lba)| {
+
+        let mut wg = self.fsm.write().unwrap();
+        let (alloc_result, nearly_full_zones) = wg.try_allocate(space);
+        let futs = self.close_zones(&mut wg, &nearly_full_zones, txg);
+        let (zone_id, lba, oz_fut) = if let Some(ac) = alloc_result {
+            let zone_id = ac.0;
+            let lba = ac.1;
             let oz_fut = Box::pin(future::ok(())) as BoxVdevFut;
             (zone_id, lba, oz_fut)
-        }).or_else(|| {
-            let empty_zone = self.fsm.read().unwrap().find_empty();
-            empty_zone.and_then(move |zone_id| {
-                let zl = self.vdev.zone_limits(zone_id);
-                let e = self.fsm.write().unwrap()
-                    .open_zone(zone_id, zl.0, zl.1, space, txg);
-                match e {
-                    Ok(Some((zone_id, lba))) => {
-                        let fut = Box::pin(self.vdev.open_zone(zone_id)) as BoxVdevFut;
-                        Some((zone_id, lba, fut))
-                    },
-                    Err(_) => None,
-                    Ok(None) => panic!("Tried a 0-length write?"),
-                }
-            })
-        }).map(|(zone_id, lba, oz_fut)| {
-            self.allocated_space.fetch_add(space, Ordering::Relaxed);
-            let wfut = self.vdev.write_at(buf, zone_id, lba);
-            let owfut = oz_fut.and_then(move |_| {
-                wfut
-            });
-            futs.push(Box::pin(owfut));
-            let fut = Box::pin(
-                futs
-                .try_collect::<Vec<_>>()
-                .map_ok(drop)
-            ) as BoxVdevFut;
-            (lba, fut)
-        }).ok_or(Error::ENOSPC)
+        } else {
+            match wg.find_empty() {
+                Some(zone_id) => {
+                    let zl = self.vdev.zone_limits(zone_id);
+                    let e = wg.open_zone(zone_id, zl.0, zl.1, space, txg);
+                    match e {
+                        Ok(Some(oza)) => {
+                            let lba = oza.1;
+                            let oz_fut = Box::pin(self.vdev.open_zone(zone_id))
+                                as BoxVdevFut;
+                            (zone_id, lba, oz_fut)
+                        },
+                        Err(_) => {return Err(Error::ENOSPC);},
+                        Ok(None) => panic!("Tried a 0-length write?"),
+                    }
+                },
+                None => return Err(Error::ENOSPC)
+            }
+        };
+        self.allocated_space.fetch_add(space, Ordering::Relaxed);
+        let wfut = self.vdev.write_at(buf, zone_id, lba);
+        drop(wg);
+        let owfut = oz_fut.and_then(move |_| {
+            wfut
+        });
+        futs.push(Box::pin(owfut));
+        let fut = Box::pin(
+            futs
+            .try_collect::<Vec<_>>()
+            .map_ok(drop)
+        ) as BoxVdevFut;
+        Ok((lba, fut))
     }
 
     /// Asynchronously write this cluster's label to all component devices
@@ -1622,6 +1634,41 @@ mod cluster {
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
         assert_eq!(result.err().unwrap(), Error::ENOSPC);
         assert_eq!(cluster.allocated(), 0);
+    }
+
+    /// Two callers who both try to write at the same time, both needing to open
+    /// a new zone, should not race.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn write_open_zone_race() {
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768u32);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((0, 1000));
+        vr.expect_open_zone()
+            .once()
+            .with(eq(0))
+            .return_once(|_| Box::pin(future::ok(())));
+        vr.expect_write_at()
+            .withf(|buf, zone, _lba|
+                buf.len() == BYTES_PER_LBA &&
+                *zone == 0
+            ).returning(|_, _, _| Box::pin(future::ok(())));
+        let fsm = FreeSpaceMap::new(vr.zones());
+        let cluster = Arc::new(Cluster::new((fsm, Arc::new(vr))));
+
+        let buf = vec![0u8; BYTES_PER_LBA];
+        (0..16).map(|_| {
+            let dbs = DivBufShared::from(buf.clone());
+            let cluster2 = cluster.clone();
+            tokio::spawn(async move {
+                cluster2.write(dbs.try_const().unwrap(), TxgT::from(0))
+            })
+        }).collect::<FuturesUnordered<_>>()
+        .try_collect::<Vec<_>>()
+        .await
+        .unwrap();
     }
 
     #[test]
