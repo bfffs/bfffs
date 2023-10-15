@@ -109,7 +109,11 @@ impl VdevRaidApi for NullRaid {
     }
 
     fn fault(&mut self, uuid: Uuid) -> Result<()> {
-        self.mirror.fault(uuid)
+        if uuid == self.uuid {
+            Err(Error::EINVAL)
+        } else {
+            self.mirror.fault(uuid)
+        }
     }
 
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {

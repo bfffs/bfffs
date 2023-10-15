@@ -322,6 +322,27 @@ mod fault {
         assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
     }
 
+    /// Fault a disk which is the only child of a mirror
+    #[rstest(h, case(harness(3, 1, 1)))]
+    #[tokio::test]
+    #[awt]
+    async fn disk_only_child(#[future] h: Harness) {
+        let mut h = h;  //rstest doesn't allow declaring args as mutable
+        let duuid = h.vdev.status().mirrors[0].leaves[0].uuid;
+        Arc::get_mut(&mut h.vdev).unwrap().fault(duuid).unwrap();
+
+        let status = h.vdev.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(status.mirrors[0].health, Health::Faulted);
+
+        // Ensure that basic vdev methods work on an array that's degraded like
+        // this:
+        assert_eq!(Some(0), h.vdev.lba2zone(32));
+        assert_eq!(4, h.vdev.zones());
+        assert_eq!(10, h.vdev.optimum_queue_depth());
+        assert_eq!((20, 131072), h.vdev.zone_limits(0));
+    }
+
     #[rstest(h, case(harness(3, 1, 2)))]
     #[tokio::test]
     #[awt]

@@ -1676,14 +1676,24 @@ impl VdevRaidApi for VdevRaid {
     fn fault(&mut self, uuid: Uuid) -> Result<()> {
         let mut err = Error::ENOENT;
 
+        if uuid == self.uuid {
+            return Err(Error::EINVAL);
+        }
+
         for child in self.children.iter_mut() {
             if uuid == child.uuid() {
-                todo!()
-            }
-            if let Some(mirror) = child.as_present_mut() {
+                *child = Child::Missing(uuid);
+                return Ok(());
+            } else if let Some(mirror) = child.as_present_mut() {
                 if let Some(m) = Arc::get_mut(mirror) {
                     match m.fault(uuid) {
-                        Ok(()) => return Ok(()),
+                        Ok(()) => {
+                            let status = m.status();
+                            if status.health == Health::Faulted {
+                                *child = Child::Missing(status.uuid)
+                            }
+                            return Ok(());
+                        }
                         Err(Error::ENOENT) => continue,
                         Err(e) => panic!("Unexpected error from Mirror::fault: {:?}", e),
                     }

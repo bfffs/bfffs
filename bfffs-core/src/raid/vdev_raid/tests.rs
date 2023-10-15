@@ -207,6 +207,8 @@ fn mock_mirror() -> Mirror{
         .return_const(zl1);
     m.expect_optimum_queue_depth()
         .return_const(10u32);
+    m.expect_zones()
+        .return_const(32768u32);
     m
 }
 
@@ -1252,6 +1254,32 @@ mod layout {
     }
 }
 
+mod lba2zone {
+    use super::*;
+
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 1;
+
+        for i in 0..3 {
+            let mut mirrors = vec![
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+            ];
+            mirrors[i] = Child::missing(Uuid::new_v4());
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            assert_eq!(Some(0), vdev_raid.lba2zone(2));
+        }
+    }
+}
+
 mod open {
     use super::*;
     use itertools::Itertools;
@@ -1515,6 +1543,32 @@ mod open_zone {
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
         vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
+    }
+}
+
+mod optimum_queue_depth {
+    use super::*;
+
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        for i in 0..3 {
+            let mut mirrors = vec![
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+            ];
+            mirrors[i] = Child::missing(Uuid::new_v4());
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            assert_eq!(6, vdev_raid.optimum_queue_depth());
+        }
     }
 }
 
@@ -2095,6 +2149,58 @@ mod write_at {
         let wbuf = dbs.try_const().unwrap();
         vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
         vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
+    }
+}
+
+mod zone_limits {
+    use super::*;
+
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 1;
+
+        for i in 0..3 {
+            let mut mirrors = vec![
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+            ];
+            mirrors[i] = Child::missing(Uuid::new_v4());
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            assert_eq!((2, 120000), vdev_raid.zone_limits(0));
+        }
+    }
+}
+
+mod zones {
+    use super::*;
+
+    #[test]
+    fn degraded() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        for i in 0..3 {
+            let mut mirrors = vec![
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+                Child::present(mock_mirror()),
+            ];
+            mirrors[i] = Child::missing(Uuid::new_v4());
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            assert_eq!(32768, vdev_raid.zones());
+        }
     }
 }
 // LCOV_EXCL_STOP
