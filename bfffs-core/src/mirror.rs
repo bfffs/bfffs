@@ -298,6 +298,15 @@ impl Mirror {
         Box::pin(fut)
     }
 
+    fn first_present_child(&self) -> &Child {
+        for child in self.children.iter() {
+            if child.is_present() {
+                return child
+            }
+        }
+        panic!("No present children");
+    }
+
     fn new(uuid: Uuid, children: Vec<Child>) -> Self
     {
         assert!(!children.is_empty(), "Need at least one disk");
@@ -533,7 +542,7 @@ impl Mirror {
 
 impl Vdev for Mirror {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        self.children[0].lba2zone(lba)
+        self.first_present_child().lba2zone(lba)
     }
 
     fn optimum_queue_depth(&self) -> u32 {
@@ -559,11 +568,11 @@ impl Vdev for Mirror {
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
-        self.children[0].zone_limits(zone)
+        self.first_present_child().zone_limits(zone)
     }
 
     fn zones(&self) -> ZoneT {
-        self.children[0].zones()
+        self.first_present_child().zones()
     }
 }
 
@@ -747,6 +756,11 @@ mod t {
         bd.expect_zone_limits()
             .with(eq(0))
             .return_const(ZL0);
+        bd.expect_lba2zone()
+            .with(eq(30))
+            .return_const(0);
+        bd.expect_zones()
+            .return_const(32768u32);
         bd
     }
 
@@ -892,6 +906,23 @@ mod t {
         }
     }
 
+    mod lba2zone {
+        use super::*;
+
+        #[test]
+        fn degraded() {
+            for i in 0..2 {
+                let mut children = vec![
+                    Child::present(mock_vdev_block()),
+                    Child::present(mock_vdev_block()),
+                ];
+                children[i] = Child::missing(Uuid::new_v4());
+                let mirror = Mirror::new(Uuid::new_v4(), children);
+                assert_eq!(Some(0), mirror.lba2zone(30));
+            }
+        }
+    }
+
     mod open {
         use super::*;
 
@@ -974,6 +1005,23 @@ mod t {
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
             mirror.open_zone(0).now_or_never().unwrap().unwrap();
+        }
+    }
+
+    mod optimum_queue_depth {
+        use super::*;
+
+        #[test]
+        fn degraded() {
+            for i in 0..2 {
+                let mut children = vec![
+                    Child::present(mock_vdev_block()),
+                    Child::present(mock_vdev_block()),
+                ];
+                children[i] = Child::missing(Uuid::new_v4());
+                let mirror = Mirror::new(Uuid::new_v4(), children);
+                assert_eq!(10, mirror.optimum_queue_depth());
+            }
         }
     }
 
@@ -1327,6 +1375,23 @@ mod t {
         }
     }
 
+    mod size {
+        use super::*;
+
+        #[test]
+        fn degraded() {
+            for i in 0..2 {
+                let mut children = vec![
+                    Child::present(mock_vdev_block()),
+                    Child::present(mock_vdev_block()),
+                ];
+                children[i] = Child::missing(Uuid::new_v4());
+                let mirror = Mirror::new(Uuid::new_v4(), children);
+                assert_eq!(262_144u64, mirror.size());
+            }
+        }
+    }
+
     mod status {
         use super::*;
 
@@ -1606,5 +1671,41 @@ mod t {
             mirror.write_spacemap(sgl, 1, 2).now_or_never().unwrap().unwrap();
         }
     }
+
+    mod zone_limits {
+        use super::*;
+
+        #[test]
+        fn degraded() {
+            for i in 0..2 {
+                let mut children = vec![
+                    Child::present(mock_vdev_block()),
+                    Child::present(mock_vdev_block()),
+                ];
+                children[i] = Child::missing(Uuid::new_v4());
+                let mirror = Mirror::new(Uuid::new_v4(), children);
+                let zl = mirror.zone_limits(0);
+                assert_eq!(zl, (3, 32));
+            }
+        }
+    }
+
+    mod zones {
+        use super::*;
+
+        #[test]
+        fn degraded() {
+            for i in 0..2 {
+                let mut children = vec![
+                    Child::present(mock_vdev_block()),
+                    Child::present(mock_vdev_block()),
+                ];
+                children[i] = Child::missing(Uuid::new_v4());
+                let mirror = Mirror::new(Uuid::new_v4(), children);
+                assert_eq!(32768, mirror.zones());
+            }
+        }
+    }
+
 }
 // LCOV_EXCL_STOP
