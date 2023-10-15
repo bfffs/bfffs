@@ -8,6 +8,8 @@ use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
     vdev::{Health, Vdev},
+    Error,
+    Uuid
 };
 use nonzero_ext::nonzero;
 use rstest::{fixture, rstest};
@@ -29,6 +31,56 @@ fn harness() -> Harness {
     }).collect::<Vec<_>>();
     let mirror = Mirror::create(&paths, None).unwrap();
     (mirror, tempdir, paths)
+}
+
+mod fault {
+    use super::*;
+
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(mut harness: Harness) {
+        assert_eq!(Err(Error::ENOENT), harness.0.fault(Uuid::new_v4()));
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn missing(mut harness: Harness) {
+        let uuid = harness.0.status().leaves[2].uuid;
+        harness.0.fault(uuid).unwrap();
+        harness.0.fault(uuid).unwrap();
+        let stat = harness.0.status();
+        assert_eq!(stat.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(stat.leaves[2].health, Health::Faulted);
+    }
+
+    #[tokio::test]
+    async fn only_child() {
+    let len = 1 << 26;  // 64 MB
+        let tempdir = Builder::new()
+            .prefix("test_mirror_fault")
+            .tempdir()
+            .unwrap();
+        let path = format!("{}/vdev", tempdir.path().display());
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(len).unwrap();
+        let mut vdev = Mirror::create(&[path][..], None).unwrap();
+        let uuid = vdev.status().leaves[0].uuid;
+
+        vdev.fault(uuid).unwrap();
+        let stat = vdev.status();
+        assert_eq!(stat.health, Health::Faulted);
+        assert_eq!(stat.leaves[0].health, Health::Faulted);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn present(mut harness: Harness) {
+        let uuid = harness.0.status().leaves[2].uuid;
+        harness.0.fault(uuid).unwrap();
+        let stat = harness.0.status();
+        assert_eq!(stat.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(stat.leaves[2].health, Health::Faulted);
+    }
 }
 
 mod open {

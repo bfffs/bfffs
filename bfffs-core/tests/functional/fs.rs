@@ -815,7 +815,7 @@ mod fs {
         let xvalue = vec![42u8; 4096];
         h.fs.sync().await;
 
-        let stat1 = h.db.stat();
+        let stat1 = h.db.stat().await;
 
         // Create a file with blob extents and extended attrs
         let fd = h.fs.create(&rooth, &filename, 0o644, 0, 0).await.unwrap();
@@ -824,7 +824,7 @@ mod fs {
         h.fs.setextattr(&fdh, ns, &xname, &xvalue[..]).await.unwrap();
         h.fs.sync().await;
 
-        let stat2 = h.db.stat();
+        let stat2 = h.db.stat().await;
         assert_eq!(stat2.used - stat1.used, 2);
 
         drop(h.fs);
@@ -833,7 +833,7 @@ mod fs {
 
         // The fs tree and both blobs should've been deallocated.  Other
         // metadata stuff might've been deallocated too, in the forest or idml.
-        let stat3 = h.db.stat();
+        let stat3 = h.db.stat().await;
         assert!(stat3.used < stat1.used);
     }
 

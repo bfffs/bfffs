@@ -163,6 +163,7 @@ pub struct Pool {
     clusters: Vec<Cluster>,
 
     /// Human-readable pool name.  Must be unique on any one system.
+    /// May not change while the pool is online.
     name: String,
 
     stats: Arc<Stats>,
@@ -279,6 +280,21 @@ impl Pool {
             used_space,
         });
         Pool{clusters, name, stats, uuid}
+    }
+
+    /// Fault the given disk or mirror
+    pub async fn fault(&mut self, uuid: Uuid) -> Result<()> {
+        if uuid == self.uuid {
+            return Err(Error::EINVAL);
+        }
+        for c in self.clusters.iter_mut() {
+            match c.fault(uuid) {
+                Ok(()) => return Ok(()),
+                Err(Error::ENOENT) => continue,
+                Err(e) => return Err(e)
+            }
+        }
+        Err(Error::ENOENT)
     }
 
     /// Find the next closed zone in the pool.
@@ -825,7 +841,7 @@ mod pool {
 
         use crate::vdev::Health::*;
 
-        /// When degraded, the pool's health should be the worse of all degraded
+        /// When degraded, the pool's health should be the worst of all degraded
         /// clusters.
         #[rstest]
         #[case(Online, vec![Online, Online])]

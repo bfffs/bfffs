@@ -408,8 +408,8 @@ impl Database {
     }
 
     /// Dump the FreeSpaceMap in human-readable form, for debugging purposes
-    pub fn dump_fsm(&self) -> Vec<String> {
-        self.inner.idml.dump_fsm()
+    pub async fn dump_fsm(&self) -> Vec<String> {
+        self.inner.idml.dump_fsm().await
     }
 
     pub async fn dump_alloct(&self, f: &mut dyn io::Write) -> Result<()>
@@ -420,6 +420,11 @@ impl Database {
     pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.inner.idml.dump_ridt(f).await
+    }
+
+    /// Fault the given disk or mirror
+    pub async fn fault(&self, uuid: Uuid) -> Result<()> {
+        self.inner.idml.fault(uuid).await
     }
 
     /// Flush the database's dirty data to disk.
@@ -679,15 +684,17 @@ impl Database {
     }
 
     /// Retrieve information about a pool's space usage
-    pub fn stat(&self) -> Stat {
-        Stat {
-            size: self.inner.idml.size(),
-            used: self.inner.idml.used(),
-        }
+    pub fn stat(&self) -> impl Future<Output = Stat> + Send {
+        let sf = self.inner.idml.size();
+        let uf = self.inner.idml.used();
+        future::join(sf, uf)
+        .map(|(size, used)| {
+            Stat { size, used }
+        })
     }
 
     /// Retrieve the topology and health of the storage pool
-    pub fn status(&self) -> Status {
+    pub fn status(&self) -> impl Future<Output=Status> + Send {
         self.inner.idml.status()
     }
 

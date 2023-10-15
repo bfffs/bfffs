@@ -394,6 +394,18 @@ impl Bfffsd {
                     rpc::Response::PoolClean(r)
                 }
             }
+            rpc::Request::PoolFault(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::PoolClean(Err(Error::EPERM))
+                } else {
+                    let r = self
+                        .controller
+                        .fault(&req.pool, req.device)
+                        .await
+                        .map(drop);
+                    rpc::Response::PoolFault(r)
+                }
+            }
             rpc::Request::PoolList(req) => {
                 self.controller
                     .list_pool(req.pool, req.offset)
@@ -412,8 +424,8 @@ impl Bfffsd {
                     .await
             }
             rpc::Request::PoolStatus(req) => {
-                let r =
-                    self.controller.get_pool_status(&req.pool).map(|stat| {
+                let r = self.controller.get_pool_status(&req.pool).await.map(
+                    |stat| {
                         rpc::pool::PoolStatus {
                             health:   stat.health,
                             name:     stat.name,
@@ -444,7 +456,8 @@ impl Bfffsd {
                                 })
                                 .collect(),
                         }
-                    });
+                    },
+                );
                 rpc::Response::PoolStatus(r)
             }
         }

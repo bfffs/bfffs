@@ -2345,10 +2345,11 @@ impl Fs {
 
     pub async fn statvfs(&self) -> std::result::Result<libc::statvfs, i32> {
         let rs = 1 << self.record_size.load(Ordering::Relaxed);
-        self.db.fsread(self.tree, move |dataset| {
-            let blocks = dataset.size();
-            let used = dataset.used();
-            let r = libc::statvfs {
+        self.db.fsread(self.tree, move |dataset| async move {
+            let sf = dataset.size();
+            let uf = dataset.used();
+            let (blocks, used) = future::join(sf, uf).await;
+            Ok(libc::statvfs {
                 f_bavail: blocks - used,
                 f_bfree: blocks - used,
                 f_blocks: blocks,
@@ -2360,8 +2361,7 @@ impl Fs {
                 f_frsize: 4096,
                 f_fsid: 0,
                 f_namemax: 255,
-            };
-            future::ok(r)
+            })
         }).map_err(Error::into)
         .await
     }

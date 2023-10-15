@@ -215,10 +215,11 @@ mock!{
     impl VdevRaidApi for VdevRaid {
         fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn fault(&mut self, uuid: Uuid) -> Result<()>;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        fn read_spacemap(self: Arc<Self>, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
         fn status(&self) -> Status;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;

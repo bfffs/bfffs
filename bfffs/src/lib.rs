@@ -4,17 +4,54 @@
 //! This library is for programmatic access to BFFFS.  It is intended to be A
 //! stable API.
 
-use std::{collections::VecDeque, path::Path};
+use std::{
+    collections::VecDeque,
+    path::{Path, PathBuf},
+};
 
-use bfffs_core::rpc;
 pub use bfffs_core::{
     controller::TreeID,
     property::{Property, PropertyName},
     Error,
     Result,
 };
+use bfffs_core::{rpc, Uuid};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
 use tokio_seqpacket::UnixSeqpacket;
+
+/// Represents a single BFFFS vdev.  Could be a either a leaf device, or a
+/// Mirror, or a Raid, or a Cluster.
+pub enum Device {
+    Path(PathBuf),
+    Uuid(Uuid),
+}
+
+impl Device {
+    fn into_uuid(path: PathBuf, status: rpc::pool::PoolStatus) -> Result<Uuid> {
+        for clust in status.clusters.iter() {
+            for mirror in clust.mirrors.iter() {
+                for leaf in mirror.leaves.iter() {
+                    if leaf.path == path {
+                        return Ok(leaf.uuid);
+                    }
+                }
+            }
+        }
+        Err(Error::ENOENT)
+    }
+}
+
+impl From<Uuid> for Device {
+    fn from(uuid: Uuid) -> Self {
+        Device::Uuid(uuid)
+    }
+}
+
+impl From<PathBuf> for Device {
+    fn from(path: PathBuf) -> Self {
+        Device::Path(path)
+    }
+}
 
 /// A connection to the bfffsd server
 #[derive(Debug)]
@@ -197,6 +234,26 @@ impl Bfffs {
         self.call(req).await.unwrap().into_pool_clean()
     }
 
+    /// Mark a disk or mirror as faulted.
+    ///
+    /// Disks may be specified by either device path or UUID.  Mirrors may only
+    /// be specified by UUID.
+    pub async fn pool_fault<D>(&self, pool: String, d: D) -> Result<()>
+    where
+        D: Into<Device>,
+    {
+        let dev = d.into();
+        let uuid = match dev {
+            Device::Uuid(uuid) => uuid,
+            Device::Path(path) => {
+                let status = self.pool_status(pool.clone()).await?;
+                Device::into_uuid(path, status)?
+            }
+        };
+        let req = rpc::pool::fault(pool, uuid);
+        self.call(req).await.unwrap().into_pool_fault()
+    }
+
     /// List one or more active pools
     ///
     /// # Arguments
@@ -252,6 +309,76 @@ impl Bfffs {
             let resp = bincode::deserialize::<rpc::Response>(&buf[..])
                 .expect("Corrupt response from server");
             Ok(resp)
+        }
+    }
+}
+
+#[cfg(test)]
+mod t {
+    use super::*;
+
+    mod into_uuid {
+        use bfffs_core::{
+            rpc::pool::{ClusterStatus, LeafStatus, MirrorStatus, PoolStatus},
+            vdev::Health,
+        };
+
+        use super::*;
+
+        #[test]
+        fn disk() {
+            let device_uuid = Uuid::new_v4();
+            let path = PathBuf::from("/dev/da0");
+
+            let stat = PoolStatus {
+                health:   Health::Online,
+                name:     "TestPool".to_string(),
+                clusters: vec![ClusterStatus {
+                    health:  Health::Online,
+                    codec:   "NonRedundant".to_string(),
+                    mirrors: vec![MirrorStatus {
+                        health: Health::Online,
+                        leaves: vec![LeafStatus {
+                            health: Health::Online,
+                            path:   PathBuf::from("/dev/da0"),
+                            uuid:   device_uuid,
+                        }],
+                    }],
+                }],
+            };
+
+            assert_eq!(Ok(device_uuid), Device::into_uuid(path, stat));
+        }
+
+        #[test]
+        #[ignore = "Need to add Uuid to MirrorStatus first"]
+        fn mirror() {
+            todo!()
+        }
+
+        #[test]
+        fn enoent() {
+            let device_uuid = Uuid::new_v4();
+            let path = PathBuf::from("/dev/da1");
+
+            let stat = PoolStatus {
+                health:   Health::Online,
+                name:     "TestPool".to_string(),
+                clusters: vec![ClusterStatus {
+                    health:  Health::Online,
+                    codec:   "NonRedundant".to_string(),
+                    mirrors: vec![MirrorStatus {
+                        health: Health::Online,
+                        leaves: vec![LeafStatus {
+                            health: Health::Online,
+                            path:   PathBuf::from("/dev/da0"),
+                            uuid:   device_uuid,
+                        }],
+                    }],
+                }],
+            };
+
+            assert_eq!(Err(Error::ENOENT), Device::into_uuid(path, stat));
         }
     }
 }

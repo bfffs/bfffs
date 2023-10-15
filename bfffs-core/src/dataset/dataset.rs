@@ -91,11 +91,11 @@ impl<K: Key, V: Value> Dataset<K, V> {
         self.tree.clone().remove(k, txg, credit).in_current_span()
     }
 
-    fn size(&self) -> LbaT {
+    fn size(&self) -> impl Future<Output=LbaT> + Send {
         self.idml.size()
     }
 
-    fn used(&self) -> LbaT {
+    fn used(&self) -> impl Future<Output=LbaT> + Send {
         self.idml.used()
     }
 }
@@ -115,11 +115,11 @@ impl<K: Key, V: Value> ReadOnlyDataset<K, V> {
         ReadOnlyDataset{dataset: Dataset::new(idml, tree)}
     }
 
-    pub fn size(&self) -> LbaT {
+    pub fn size(&self) -> impl Future<Output=LbaT> + Send {
         self.dataset.size()
     }
 
-    pub fn used(&self) -> LbaT {
+    pub fn used(&self) -> impl Future<Output=LbaT> + Send {
         self.dataset.used()
     }
 }

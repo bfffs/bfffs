@@ -108,6 +108,14 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.erase_zone(limits.0, limits.1 - 1))
     }
 
+    fn fault(&mut self, uuid: Uuid) -> Result<()> {
+        if uuid == self.uuid {
+            Err(Error::EINVAL)
+        } else {
+            self.mirror.fault(uuid)
+        }
+    }
+
     fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.mirror.zone_limits(zone);
         Box::pin(self.mirror.finish_zone(limits.0, limits.1 - 1))
@@ -126,7 +134,7 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.read_at(buf, lba))
     }
 
-    fn read_spacemap(self: Arc<Self>, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
     {
         Box::pin(self.mirror.read_spacemap(buf, idx))
     }

@@ -219,7 +219,7 @@ mod t {
         }
         {
             let txg = idml3.txg().await;
-            let cz = idml3.list_closed_zones().next().unwrap();
+            let cz = idml3.list_closed_zones().await.next().unwrap();
             idml3.clean_zone(cz, *txg).await.unwrap();
         }
         assert!(idml3.check().await.unwrap());
