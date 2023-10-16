@@ -142,20 +142,23 @@ pub mod pool {
     pub struct MirrorStatus {
         pub leaves: Vec<LeafStatus>,
         pub health: Health,
+        pub uuid: Uuid
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct ClusterStatus {
         pub health: Health,
         pub codec: String,
-        pub mirrors: Vec<MirrorStatus>
+        pub mirrors: Vec<MirrorStatus>,
+        pub uuid: Uuid
     }
 
     #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
     pub struct PoolStatus {
         pub health: Health,
         pub name: String,
-        pub clusters: Vec<ClusterStatus>
+        pub clusters: Vec<ClusterStatus>,
+        pub uuid: Uuid
     }
 
     #[derive(Debug, Deserialize, Serialize)]

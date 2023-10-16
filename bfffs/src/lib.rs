@@ -343,17 +343,14 @@ mod t {
                             path:   PathBuf::from("/dev/da0"),
                             uuid:   device_uuid,
                         }],
+                        uuid:   Uuid::default(),
                     }],
+                    uuid:    Uuid::default(),
                 }],
+                uuid:     Uuid::default(),
             };
 
             assert_eq!(Ok(device_uuid), Device::into_uuid(path, stat));
-        }
-
-        #[test]
-        #[ignore = "Need to add Uuid to MirrorStatus first"]
-        fn mirror() {
-            todo!()
         }
 
         #[test]
@@ -374,8 +371,11 @@ mod t {
                             path:   PathBuf::from("/dev/da0"),
                             uuid:   device_uuid,
                         }],
+                        uuid:   Uuid::default(),
                     }],
+                    uuid:    Uuid::default(),
                 }],
+                uuid:     Uuid::default(),
             };
 
             assert_eq!(Err(Error::ENOENT), Device::into_uuid(path, stat));
