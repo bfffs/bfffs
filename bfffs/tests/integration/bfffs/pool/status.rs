@@ -1,12 +1,14 @@
 use std::{
+    ffi::OsStr,
     fs,
-    os::unix::fs::FileTypeExt,
+    os::unix::{ffi::OsStrExt, fs::FileTypeExt},
     path::PathBuf,
     process::Command,
     time::Duration,
 };
 
 use assert_cmd::{cargo::cargo_bin, prelude::*};
+use regex::Regex;
 use tempfile::{Builder, TempDir};
 
 use super::super::super::*;
@@ -340,6 +342,63 @@ async fn raid51() {
        {:51}  Online 
        {:51}  Online 
        {:51}  Online 
+",
+            files.paths[0].display(),
+            files.paths[1].display(),
+            files.paths[2].display(),
+            files.paths[3].display(),
+            files.paths[4].display(),
+            files.paths[5].display(),
+            files.paths[6].display(),
+            files.paths[7].display(),
+            files.paths[8].display()
+        ));
+}
+
+#[tokio::test]
+async fn uuid() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create", POOLNAME, "raid", "3", "1"])
+        .arg("mirror")
+        .args(&files.paths[0..3])
+        .arg("mirror")
+        .args(&files.paths[3..6])
+        .arg("mirror")
+        .args(&files.paths[6..9])
+        .assert()
+        .success();
+    let daemon = start_bfffsd(&files);
+
+    let cmd_stat = bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", "-u", POOLNAME])
+        .assert()
+        .success();
+    let output = cmd_stat.get_output();
+    let osstdout = OsStr::from_bytes(&output.stdout[..]);
+    let stdout = osstdout.to_string_lossy();
+    let re = Regex::new(r"[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}").unwrap();
+    let stripped_stdout =
+        re.replace_all(&stdout, "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx");
+    pretty_assertions::assert_eq!(stripped_stdout,
+        format!(
+" NAME                                                       UUID                                  HEALTH 
+ StatusPool                                                 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+   PrimeS-3,3,1                                             xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+     mirror                                                 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+     mirror                                                 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+     mirror                                                 xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
+       {:51}  xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx  Online 
 ",
             files.paths[0].display(),
             files.paths[1].display(),

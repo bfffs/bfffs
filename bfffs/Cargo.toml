@@ -52,6 +52,7 @@ function_name = "0.3.0"
 mockall = "0.11.0"
 nix = { version = "0.27.0", default-features = false, features = ["mount", "process", "signal", "user"] }
 predicates = "3.0.0"
+pretty_assertions = "1.3"
 regex = "1.0"
 rstest = "0.17.0"
 sysctl = "0.5"

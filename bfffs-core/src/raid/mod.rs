@@ -133,7 +133,8 @@ impl Manager {
 pub struct Status {
     pub health: Health,
     pub codec: String,
-    pub mirrors: Vec<mirror::Status>
+    pub mirrors: Vec<mirror::Status>,
+    pub uuid: Uuid
 }
 
 /// Create a raid-like `Vdev` from its components.

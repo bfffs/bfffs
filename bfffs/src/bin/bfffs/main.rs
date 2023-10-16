@@ -848,41 +848,81 @@ mod pool {
     pub(super) struct Status {
         /// Pool name.  If not given, list all pools.
         pub(super) pool: Option<String>,
+        /// Display vdev UUIDs in addition to device names.
+        #[clap(short, long)]
+        pub(super) uuid: bool,
     }
 
     impl Status {
-        fn print(stat: rpc::pool::PoolStatus) {
+        fn print(&self, stat: rpc::pool::PoolStatus) {
             use prettytable::{format::consts::FORMAT_CLEAN, row, Table};
 
             let mut table = Table::new();
             table.set_format(*FORMAT_CLEAN);
-            table.set_titles(row!["NAME", "HEALTH"]);
-            table.add_row(row!(stat.name, stat.health));
+            if self.uuid {
+                table.set_titles(row!["NAME", "UUID", "HEALTH"]);
+                table.add_row(row!(stat.name, stat.uuid, stat.health));
+            } else {
+                table.set_titles(row!["NAME", "HEALTH"]);
+                table.add_row(row!(stat.name, stat.health));
+            }
             let mut indent = 0;
             indent += 2;
             for cl in stat.clusters.iter() {
                 if cl.mirrors.len() > 1 {
-                    table.add_row(row!(
-                        format!("{:indent$}{}", "", cl.codec),
-                        cl.health
-                    ));
+                    if self.uuid {
+                        table.add_row(row!(
+                            format!("{:indent$}{}", "", cl.codec),
+                            cl.uuid,
+                            cl.health
+                        ));
+                    } else {
+                        table.add_row(row!(
+                            format!("{:indent$}{}", "", cl.codec),
+                            cl.health
+                        ));
+                    }
                     indent += 2;
                 }
                 for mirror in cl.mirrors.iter() {
                     if mirror.leaves.len() > 1 ||
                         mirror.health == Health::Faulted
                     {
-                        table.add_row(row!(
-                            format!("{:indent$}mirror", ""),
-                            mirror.health
-                        ));
+                        if self.uuid {
+                            table.add_row(row!(
+                                format!("{:indent$}mirror", ""),
+                                mirror.uuid,
+                                mirror.health
+                            ));
+                        } else {
+                            table.add_row(row!(
+                                format!("{:indent$}mirror", ""),
+                                mirror.health
+                            ));
+                        }
                         indent += 2;
                     }
                     for leaf in mirror.leaves.iter() {
-                        table.add_row(row!(
-                            format!("{:indent$}{}", "", leaf.path.display()),
-                            leaf.health
-                        ));
+                        if self.uuid {
+                            table.add_row(row!(
+                                format!(
+                                    "{:indent$}{}",
+                                    "",
+                                    leaf.path.display()
+                                ),
+                                leaf.uuid,
+                                leaf.health
+                            ));
+                        } else {
+                            table.add_row(row!(
+                                format!(
+                                    "{:indent$}{}",
+                                    "",
+                                    leaf.path.display()
+                                ),
+                                leaf.health
+                            ));
+                        }
                     }
                     if mirror.leaves.len() > 1 ||
                         mirror.health == Health::Faulted
@@ -899,14 +939,16 @@ mod pool {
 
         pub(super) async fn main(self, sock: &Path) -> Result<()> {
             let bfffs = Bfffs::new(sock).await.unwrap();
-            if let Some(pool) = self.pool {
-                let stat = bfffs.pool_status(pool).await?;
-                Self::print(stat);
+            if let Some(pool) = &self.pool {
+                let stat = bfffs.pool_status(pool.clone()).await?;
+                self.print(stat);
             } else {
                 bfffs
                     .pool_list(None, None)
                     .try_for_each(|poolinfo| {
-                        bfffs.pool_status(poolinfo.name).map_ok(Self::print)
+                        bfffs
+                            .pool_status(poolinfo.name)
+                            .map_ok(|stat| self.print(stat))
                     })
                     .await?;
             }
@@ -1598,6 +1640,20 @@ mod t {
                     SubCommand::Pool(PoolCmd::Status(_))
                 ));
                 if let SubCommand::Pool(PoolCmd::Status(status)) = cli.cmd {
+                    assert_eq!(status.pool.unwrap(), "testpool");
+                }
+            }
+
+            #[test]
+            fn uuid() {
+                let args = vec!["bfffs", "pool", "status", "-u", "testpool"];
+                let cli = Cli::try_parse_from(args).unwrap();
+                assert!(matches!(
+                    cli.cmd,
+                    SubCommand::Pool(PoolCmd::Status(_))
+                ));
+                if let SubCommand::Pool(PoolCmd::Status(status)) = cli.cmd {
+                    assert!(status.uuid);
                     assert_eq!(status.pool.unwrap(), "testpool");
                 }
             }

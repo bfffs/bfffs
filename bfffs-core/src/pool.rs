@@ -155,7 +155,8 @@ pub struct Status {
     /// Overall health of the Pool
     pub health: Health,
     pub name: String,
-    pub clusters: Vec<cluster::Status>
+    pub clusters: Vec<cluster::Status>,
+    pub uuid: Uuid
 }
 
 /// An BFFFS storage pool
@@ -405,7 +406,8 @@ impl Pool {
         Status {
             health,
             name: self.name().to_string(),
-            clusters
+            clusters,
+            uuid: self.uuid
         }
     }
 
@@ -868,7 +870,8 @@ mod pool {
                                 path: PathBuf::default()
                             }],
                             uuid: Uuid::new_v4()
-                        }]
+                        }],
+                        uuid: Uuid::new_v4()
                     });
                 c
             };

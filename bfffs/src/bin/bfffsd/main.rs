@@ -429,6 +429,7 @@ impl Bfffsd {
                         rpc::pool::PoolStatus {
                             health:   stat.health,
                             name:     stat.name,
+                            uuid:     stat.uuid,
                             clusters: stat
                                 .clusters
                                 .into_iter()
@@ -436,12 +437,14 @@ impl Bfffsd {
                                     rpc::pool::ClusterStatus {
                                         health:  cl.health,
                                         codec:   cl.codec,
+                                        uuid:    cl.uuid,
                                         mirrors: cl
                                             .mirrors
                                             .into_iter()
                                             .map(|m| {
                                                 rpc::pool::MirrorStatus {
                                                     health: m.health,
+                                                    uuid: m.uuid,
                                         leaves: m.leaves.into_iter().map(|l|
                                             rpc::pool::LeafStatus {
                                                 health: l.health,

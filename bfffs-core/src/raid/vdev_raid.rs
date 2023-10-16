@@ -1896,6 +1896,7 @@ impl VdevRaidApi for VdevRaid {
             health,
             codec,
             mirrors,
+            uuid: self.uuid
         }
     }
 

@@ -150,7 +150,8 @@ impl VdevRaidApi for NullRaid {
         Status {
             health: child.health,
             codec,
-            mirrors: vec![child]
+            mirrors: vec![child],
+            uuid: self.uuid
         }
     }
 
