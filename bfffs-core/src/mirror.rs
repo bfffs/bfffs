@@ -18,16 +18,18 @@ use std::{
 };
 
 use cfg_if::cfg_if;
-use divbuf::{DivBufInaccessible, DivBufMut};
+use divbuf::{DivBufInaccessible, DivBufMut, DivBufShared};
 use futures::{
     Future,
+    StreamExt,
     TryFutureExt,
     TryStreamExt,
+    future,
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
 #[cfg(not(test))]
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 
@@ -36,6 +38,7 @@ use crate::{
     types::*,
     vdev::*,
     vdev_block,
+    BYTES_PER_LBA
 };
 
 cfg_if! {
@@ -408,6 +411,38 @@ impl Mirror {
             self.children.len()
     }
 
+    /// Read an LBA range including all parity.  Return an iterator that will
+    /// yield every possible reconstruction of the data.
+    ///
+    /// As an optimization, if only one reconstruction is possible then
+    /// immediately return EINTEGRITY, under the assumption that this method
+    /// should only be called after a normal read already returned such an
+    /// error.
+    pub fn read_long(&self, len: LbaT, lba: LbaT)
+        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>
+    {
+        if self.children.iter().filter(|c| c.is_present()).count() <= 1 {
+            return future::err(Error::EINTEGRITY).boxed();
+        }
+
+        self.children.iter()
+        .filter_map(Child::as_present)
+        .map(|child| {
+            let dbs = DivBufShared::from(vec![0u8; len as usize * BYTES_PER_LBA]);
+            let dbm = dbs.try_mut().unwrap();
+            child.read_at(dbm, lba)
+                .map_ok(move |_| dbs)
+        }).collect::<FuturesUnordered<_>>()
+        .collect::<Vec<_>>()
+        .map(|r| {
+            if r.iter().all(Result::is_err) {
+                Err(*r[0].as_ref().unwrap_err())
+            } else {
+                Ok(Box::new(r.into_iter().filter_map(Result::ok)) as Box<dyn Iterator<Item=DivBufShared> + Send>)
+            }
+        }).boxed()
+    }
+
     /// Issue a read operation on the one child, and return a Vec of the other
     /// Present children.
     fn read_something<F, R>(&self, f: F) -> (Option<R>, Vec<Arc<VdevBlock>>)
@@ -715,6 +750,8 @@ mock! {
             -> (Self, LabelReader);
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        pub fn read_long(&self, len: LbaT, lba: LbaT)
+            -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared>>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn status(&self) -> Status;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
@@ -1154,6 +1191,161 @@ mod t {
             let r = mirror.read_at(buf, 3).now_or_never().unwrap();
             assert!(r == Err(Error::EIO) || r == Err(Error::ENXIO));
             assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+        }
+    }
+
+    mod read_long {
+        use super::*;
+
+        fn mock(times: usize, r: Result<()>, total_reads: Arc<AtomicU32>)
+            -> VdevBlock
+        {
+            let mut bd = mock_vdev_block();
+            bd.expect_open_zone()
+                .once()
+                .with(eq(0))
+                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+            bd.expect_read_at()
+                .times(times)
+                .withf(|buf, _lba| buf.len() == 4096)
+                .returning(move |_, _| {
+                    total_reads.fetch_add(1, Ordering::Relaxed);
+                    Box::pin(future::ready(r))
+                });
+            bd
+        }
+
+        #[test]
+        fn basic() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(1, Ok(()), total_reads.clone());
+            let bd2 = mock(1, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1),
+                Child::present(bd2)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let reconstructions = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 3);
+            assert_eq!(3, reconstructions.count());
+        }
+
+        /// If only one reconstruction is possible, then immediately return
+        /// EINTEGRITY.
+        #[test]
+        fn critically_degraded() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(0, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let err = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .err()
+                .unwrap();
+            assert_eq!(Error::EINTEGRITY, err);
+            assert_eq!(total_reads.load(Ordering::Relaxed), 0);
+        }
+
+        /// No read should be attempted on missing children
+        #[test]
+        fn degraded() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(1, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1),
+                Child::missing(Uuid::new_v4())
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let reconstructions = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 2);
+            assert_eq!(2, reconstructions.count());
+        }
+
+        /// If only one reconstruction is possible, then immediately return
+        /// EINTEGRITY.
+        #[test]
+        fn nonredundant() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(0, Ok(()), total_reads.clone());
+            let children = vec![Child::present(bd0)];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let err = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .err()
+                .unwrap();
+            assert_eq!(Error::EINTEGRITY, err);
+            assert_eq!(total_reads.load(Ordering::Relaxed), 0);
+        }
+
+        /// If fewer than all children fail, the read_long should proceed with
+        /// the other children.
+        #[test]
+        fn recoverable_eio() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Ok(()), total_reads.clone());
+            let bd1 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd2 = mock(1, Ok(()), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1),
+                Child::present(bd2)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let reconstructions = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+            assert_eq!(total_reads.load(Ordering::Relaxed), 3);
+            assert_eq!(2, reconstructions.count());
+        }
+
+        /// If all children fail, then the read_long must return an error.
+        #[test]
+        fn unrecoverable_eio() {
+            let total_reads = Arc::new(AtomicU32::new(0));
+
+            let bd0 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd1 = mock(1, Err(Error::EIO), total_reads.clone());
+            let bd2 = mock(1, Err(Error::EIO), total_reads.clone());
+            let children = vec![
+                Child::present(bd0),
+                Child::present(bd1),
+                Child::present(bd2)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.open_zone(0).now_or_never().unwrap().unwrap();
+            let err = mirror.read_long(1, 3)
+                .now_or_never()
+                .unwrap()
+                .err()
+                .unwrap();
+            assert_eq!(Error::EIO, err);
+            assert_eq!(total_reads.load(Ordering::Relaxed), 3);
         }
     }
 
