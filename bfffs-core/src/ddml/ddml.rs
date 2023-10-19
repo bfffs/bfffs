@@ -156,33 +156,31 @@ impl DDML {
         let len = drp.asize() as usize * BYTES_PER_LBA;
         let dbs = DivBufShared::uninitialized(len);
         let dbm = dbs.try_mut().unwrap();
-        Box::pin(
-            // Read
-            pool.read(dbm, drp.pba)
-            .and_then(move |_| {
-                //Truncate
-                let mut dbm = dbs.try_mut().unwrap();
-                dbm.try_truncate(drp.csize as usize).unwrap();
-                let db = dbm.freeze();
+        // Read
+        pool.read(dbm, drp.pba)
+        .and_then(move |_| {
+            //Truncate
+            let mut dbm = dbs.try_mut().unwrap();
+            dbm.try_truncate(drp.csize as usize).unwrap();
+            let db = dbm.freeze();
 
-                // Verify checksum
-                let mut hasher = MetroHash64::new();
-                checksum_iovec(&db, &mut hasher);
-                let checksum = hasher.finish();
-                if checksum == drp.checksum {
-                    // Decompress
-                    let db = dbs.try_const().unwrap();
-                    if drp.is_compressed() {
-                        future::ok(Compression::decompress(&db))
-                    } else {
-                        future::ok(dbs)
-                    }
+            // Verify checksum
+            let mut hasher = MetroHash64::new();
+            checksum_iovec(&db, &mut hasher);
+            let checksum = hasher.finish();
+            if checksum == drp.checksum {
+                // Decompress
+                let db = dbs.try_const().unwrap();
+                if drp.is_compressed() {
+                    future::ok(Compression::decompress(&db))
                 } else {
-                    tracing::warn!("Checksum mismatch");
-                    future::err(Error::EINTEGRITY)
+                    future::ok(dbs)
                 }
-            })
-        )
+            } else {
+                tracing::warn!("Checksum mismatch");
+                future::err(Error::EINTEGRITY)
+            }
+        })
     }
 
     /// Open an existing `DDML` from its underlying `Pool`.
