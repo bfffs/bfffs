@@ -589,7 +589,6 @@ mod ddml {
 
         #[test]
         fn cold() {
-            let mut seq = Sequence::new();
             let pba = PBA::default();
             let key = Key::PBA(pba);
             let drp = DRP{pba, compressed: false, lsize: 4096,
@@ -599,7 +598,6 @@ mod ddml {
             pool.expect_read()
                 .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
                 .once()
-                .in_sequence(&mut seq)
                 .returning(|mut dbm, _pba| {
                     for x in dbm.iter_mut() {
                         *x = 0;
