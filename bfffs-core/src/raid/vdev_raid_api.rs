@@ -1,7 +1,13 @@
 // vim: tw=80
-use std::sync::Arc;
+use std::{
+    pin::Pin,
+    sync::Arc
+};
 
 use async_trait::async_trait;
+use divbuf::DivBufShared;
+use futures::Future;
+
 use crate::{
     label::*,
     raid::Status,
@@ -44,10 +50,20 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
 
     /// Asynchronously read a contiguous portion of the vdev.
     ///
-    /// Returns `()` on success, or an error on failure
+    /// Returns `()` on success, or an error on failure.
+    ///
+    /// As an optimization, if only one reconstruction is possible then
+    /// immediately return EINTEGRITY, under the assumption that this method
+    /// should only be called after a normal read already returned such an
+    /// error.
     // We can't use &Arc<Self> because that isn't object-safe.  But we could use
     // it if we eliminate this trait and just use an enum instead.
     fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+
+    /// Read an LBA range including all parity.  Return an iterator that will
+    /// yield every possible reconstruction of the data.
+    fn read_long(&self, len: LbaT, lba: LbaT)
+        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
 
     /// Read one of the spacemaps from disk.
     ///

@@ -1835,6 +1835,12 @@ impl VdevRaidApi for VdevRaid {
         }
     }
 
+    fn read_long(&self, len: LbaT, lba: LbaT)
+        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>
+    {
+        todo!()
+    }
+
     fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> BoxVdevFut
     {
         let dbi = buf.clone_inaccessible();

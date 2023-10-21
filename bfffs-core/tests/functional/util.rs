@@ -162,6 +162,7 @@ pub struct PoolBuilder {
 
 pub struct PoolHarness {
     pub tempdir: TempDir,
+    pub disks_per_mirror: usize,
     pub paths: Vec<PathBuf>,
     pub pool: Pool,
     pub gnops: Vec<Gnop>
@@ -209,7 +210,7 @@ impl PoolBuilder {
                 Cluster::create(raid)
             }).collect::<Vec<_>>();
         let pool = Pool::create(String::from(self.name), clusters);
-        PoolHarness{tempdir, paths, pool, gnops}
+        PoolHarness{tempdir, disks_per_mirror: self.m, paths, pool, gnops}
     }
 
     pub fn chunksize(&mut self, cs: u64) -> &mut Self {

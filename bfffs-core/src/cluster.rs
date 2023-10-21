@@ -963,6 +963,20 @@ impl Cluster {
         self.vdev.clone().read_at(buf, lba)
     }
 
+    /// Asynchronously read a contiguous portion of the cluster.
+    ///
+    /// Returns `()` on success, or an error on failure.
+    ///
+    /// As an optimization, if only one reconstruction is possible then
+    /// immediately return EINTEGRITY, under the assumption that this method
+    /// should only be called after a normal read already returned such an
+    /// error.
+    pub fn read_long(&self, len: LbaT, lba: LbaT)
+        -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
+    {
+        self.vdev.read_long(len, lba)
+    }
+
     /// Return approximately the usable space of the Cluster in LBAs.
     pub fn size(&self) -> LbaT {
         self.vdev.size()

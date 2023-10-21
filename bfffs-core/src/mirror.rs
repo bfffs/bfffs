@@ -21,6 +21,7 @@ use cfg_if::cfg_if;
 use divbuf::{DivBufInaccessible, DivBufMut, DivBufShared};
 use futures::{
     Future,
+    FutureExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
@@ -28,8 +29,6 @@ use futures::{
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
-#[cfg(not(test))]
-use futures::FutureExt;
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 
@@ -751,7 +750,7 @@ mock! {
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_long(&self, len: LbaT, lba: LbaT)
-            -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared>>>> + Send>>;
+            -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn status(&self) -> Status;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
