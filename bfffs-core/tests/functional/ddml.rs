@@ -13,7 +13,7 @@ mod ddml {
     use std::{
         fs,
         io::Read,
-        path::Path,
+        path::PathBuf,
         sync::{Arc, Mutex}
     };
 
@@ -60,12 +60,9 @@ mod ddml {
     async fn compressible(ddml: DDML) {
         let txg = TxgT::from(0);
         let ddml2 = &ddml;
-        let mut file = fs::File::open(
-                Path::new("../bfffs-core/src/raid/vdev_raid.rs")
-            ).unwrap_or_else(|_|
-                fs::File::open(Path::new("bfffs-core/src/raid/vdev_raid.rs")
-            ).unwrap()
-        );
+        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("src/raid/vdev_raid.rs");
+        let mut file = fs::File::open(path).unwrap();
         let mut vdev_raid_contents = Vec::new();
         file.read_to_end(&mut vdev_raid_contents).unwrap();
         let dbs = DivBufShared::from(vdev_raid_contents.clone());
