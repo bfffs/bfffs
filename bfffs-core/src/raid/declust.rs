@@ -84,7 +84,7 @@ impl Chunkloc {
 /// no healthy disk will be saturated, so user I/O suffers less than in a
 /// traditional RAID array.
 #[enum_dispatch::enum_dispatch(LocatorImpl)]
-pub trait Locator : Send + Sync {
+pub trait Locator : Clone + Send + Sync {
     /// Return the number of data chunks in a single repetition of the layout
     fn datachunks(&self) -> u64;
 

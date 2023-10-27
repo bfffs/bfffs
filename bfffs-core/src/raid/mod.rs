@@ -80,6 +80,7 @@ impl<'a> Label {
     }
 }
 
+#[derive(Clone)]
 #[enum_dispatch::enum_dispatch]
 enum LocatorImpl {
     PrimeS(prime_s::PrimeS)
