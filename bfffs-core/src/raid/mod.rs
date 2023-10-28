@@ -41,6 +41,8 @@ mod null_raid;
 mod vdev_raid;
 mod vdev_raid_api;
 
+use declust::{Locator, ChunkId, Chunkloc};
+
 pub use self::null_raid::NullRaid;
 pub use self::vdev_raid::VdevRaid;
 pub use self::vdev_raid_api::VdevRaidApi;
@@ -72,6 +74,11 @@ impl<'a> Label {
             Label::NullRaid(l) => l.uuid,
         }
     }
+}
+
+#[enum_dispatch::enum_dispatch]
+enum LocatorImpl {
+    PrimeS(prime_s::PrimeS)
 }
 
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.

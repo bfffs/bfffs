@@ -36,6 +36,7 @@ use std::{
 };
 use serde_derive::{Deserialize, Serialize};
 use super::{
+    LocatorImpl,
     Status,
     codec::*,
     declust::*,
@@ -392,7 +393,7 @@ pub struct VdevRaid {
     faulted_children: i16,
 
     /// Locator, declustering or otherwise
-    locator: Box<dyn Locator>,
+    locator: LocatorImpl,
 
     /// Underlying mirror devices.  Order is important!
     children: Box<[Child]>,
@@ -529,9 +530,9 @@ impl VdevRaid {
         let mut faulted_children = 0;
         let num_disks = children.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
-        let locator: Box<dyn Locator> = match layout_algorithm {
-            LayoutAlgorithm::PrimeS => Box::new(
-                PrimeS::new(num_disks, disks_per_stripe, redundancy))
+        let locator: LocatorImpl = match layout_algorithm {
+            LayoutAlgorithm::PrimeS => 
+                PrimeS::new(num_disks, disks_per_stripe, redundancy).into()
         };
 
         // XXX The vdev size or child size should be recorded in the label.
