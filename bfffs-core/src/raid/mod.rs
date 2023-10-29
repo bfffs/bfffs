@@ -12,8 +12,10 @@ use crate::{
     mirror,
     vdev::*,
 };
+#[cfg(test)]
+use divbuf::DivBufShared;
+use futures::Future;
 #[cfg(not(test))] use futures::{
-    Future,
     FutureExt,
     StreamExt,
     future,
@@ -29,6 +31,8 @@ use std::{
     path::Path,
     sync::Arc
 };
+#[cfg(test)]
+use std::pin::Pin;
 
 #[double]
 use crate::mirror::Mirror;
@@ -40,6 +44,8 @@ mod sgcursor;
 mod null_raid;
 mod vdev_raid;
 mod vdev_raid_api;
+
+use declust::{Locator, ChunkId, Chunkloc};
 
 pub use self::null_raid::NullRaid;
 pub use self::vdev_raid::VdevRaid;
@@ -72,6 +78,12 @@ impl<'a> Label {
             Label::NullRaid(l) => l.uuid,
         }
     }
+}
+
+#[derive(Clone)]
+#[enum_dispatch::enum_dispatch]
+enum LocatorImpl {
+    PrimeS(prime_s::PrimeS)
 }
 
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
@@ -220,6 +232,8 @@ mock!{
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_long(&self, len: LbaT, lba: LbaT)
+            -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
         fn status(&self) -> Status;

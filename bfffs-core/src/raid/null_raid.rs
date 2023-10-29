@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    pin::Pin,
     sync::Arc
 };
 
@@ -13,7 +14,8 @@ use crate::{
     types::*,
     vdev::*,
 };
-use futures::future;
+use divbuf::DivBufShared;
+use futures::{Future, FutureExt, TryFutureExt, future};
 use mockall_double::double;
 use serde_derive::{Deserialize, Serialize};
 use super::{
@@ -132,6 +134,14 @@ impl VdevRaidApi for NullRaid {
 
     fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         Box::pin(self.mirror.read_at(buf, lba))
+    }
+
+    fn read_long(&self, len: LbaT, lba: LbaT)
+        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>
+    {
+        self.mirror.read_long(len, lba)
+            .map_ok(|r| Box::new(r) as Box<dyn Iterator<Item=DivBufShared> + Send>)
+            .boxed()
     }
 
     fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut

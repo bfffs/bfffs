@@ -9,7 +9,9 @@ use bfffs_core::{
     mirror::{Manager, Mirror},
     vdev::{Health, Vdev},
     Error,
-    Uuid
+    LbaT,
+    Uuid,
+    BYTES_PER_LBA,
 };
 use nonzero_ext::nonzero;
 use rstest::{fixture, rstest};
@@ -185,3 +187,39 @@ mod persistence {
     }
 }
 
+mod read_long {
+    use super::*;
+
+    use std::io::Write;
+
+    /// Mirror::read_long should return every possible reconstruction of the
+    /// data.
+    #[rstest]
+    #[tokio::test]
+    async fn reconstructions(harness: Harness) {
+        const OFS: LbaT = 3;
+
+        // Write patterns directly to each disk
+        for (i, path) in harness.2.iter().enumerate() {
+            let v = vec![110u8 + i as u8; BYTES_PER_LBA];
+            let mut f = fs::OpenOptions::new()
+                .write(true)
+                .open(path)
+                .unwrap();
+            f.seek(SeekFrom::Start(OFS * BYTES_PER_LBA as LbaT)).unwrap();
+            f.write_all(&v[..]).unwrap();
+        }
+
+        let mut reconstructor = harness.0.read_long(1, 3).await.unwrap();
+        let mut reconstructions = vec![
+            reconstructor.next().unwrap().try_const().unwrap(),
+            reconstructor.next().unwrap().try_const().unwrap(),
+            reconstructor.next().unwrap().try_const().unwrap()
+        ];
+        (reconstructions[..]).sort_by_key(|db| db[0]);
+        assert_eq!(&vec![110; BYTES_PER_LBA][..], &reconstructions[0][..]);
+        assert_eq!(&vec![111; BYTES_PER_LBA][..], &reconstructions[1][..]);
+        assert_eq!(&vec![112; BYTES_PER_LBA][..], &reconstructions[2][..]);
+        assert!(reconstructor.next().is_none());
+    }
+}

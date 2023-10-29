@@ -620,6 +620,221 @@ mod errors {
         }
     }
 
+    mod read_long {
+        use super::*;
+
+        /// read_long should return the correct number of reconstructions.
+        // But it's too hard to predict what they each should be, so just test
+        // that they're all distinct.
+        #[rstest]
+        #[case(1)]  // single LBA
+        #[case(15)]  // One stripe
+        #[case(45)] // Three stripes           
+        #[tokio::test]
+        async fn basic(#[case] lbas: LbaT) {
+            let k = 5i16;
+            let f = 2;
+            const CHUNKSIZE: LbaT = 5;
+
+            let mut mirrors = Vec::new();
+            for i in 0..k {
+                let mut m = mock_mirror();
+                m.expect_read_at()
+                    .times(1)
+                    .returning(move |mut dbm, _lba| {
+                        for x in dbm.iter_mut() {*x = i as u8;}
+                        Box::pin( future::ok::<(), Error>(()))
+                    });
+                mirrors.push(Child::present(m));
+            }
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            let zl = vdev_raid.zone_limits(0);
+            let reconstructions = vdev_raid.read_long(lbas, zl.0)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(reconstructions.len(), 10);  // 10 == kCf
+            if lbas >= 15 {
+                // For reads of less than a stripe, not all reconstructions must
+                // be unique.
+                for pair in reconstructions.iter().combinations(2) {
+                    let l = pair[0].try_const().unwrap();
+                    let r = pair[1].try_const().unwrap();
+                    assert_ne!(&l[..], &r[..]);
+                }
+            }
+        }
+
+        /// No reads should be issued to a degraded child
+        #[rstest]
+        #[case(1)]  // single LBA
+        #[case(15)] // One stripe
+        #[case(45)] // Three stripes           
+        #[tokio::test]
+        async fn degraded(#[case] lbas: LbaT) {
+            let k = 5i16;
+            let f = 2;
+            const CHUNKSIZE: LbaT = 5;
+
+            let mut mirrors = Vec::new();
+            for i in 0..(k - 1) {
+                let mut m = mock_mirror();
+                m.expect_read_at()
+                    .times(1)
+                    .returning(move |mut dbm, _lba| {
+                        for x in dbm.iter_mut() {*x = i as u8;}
+                        Box::pin( future::ok::<(), Error>(()))
+                    });
+                mirrors.push(Child::present(m));
+            }
+            mirrors.push(Child::missing(Uuid::new_v4()));
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            let zl = vdev_raid.zone_limits(0);
+            let reconstructions = vdev_raid.read_long(lbas, zl.0)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(reconstructions.len(), 4);  // 4 == (k-1)C(f-1)
+            if lbas >= 15 {
+                // For reads of less than a stripe, not all reconstructions must
+                // be unique.
+                for pair in reconstructions.iter().combinations(2) {
+                    let l = pair[0].try_const().unwrap();
+                    let r = pair[1].try_const().unwrap();
+                    assert_ne!(&l[..], &r[..]);
+                }
+            }
+        }
+
+
+        /// If only one reconstruction is possible, then immediately reutrn
+        /// EINTEGRITY.
+        #[tokio::test]
+        async fn critically_degraded() {
+            let k = 3;
+            let f = 1;
+            const CHUNKSIZE: LbaT = 1;
+
+            let mut mirrors = Vec::<Child>::new();
+
+            let bd0 = Child::present(mock_mirror());
+            let bd1 = Child::present(mock_mirror());
+            let bd2 = Child::missing(Uuid::new_v4());
+            mirrors.push(bd0);
+            mirrors.push(bd1);
+            mirrors.push(bd2);
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            assert_eq!(Error::EINTEGRITY,
+                       vdev_raid.read_long(1, 5).await.err().unwrap());
+        }
+
+        /// If some children fail, but there is still redundancy, read_long
+        /// should return a reduced set of possibilities.
+        #[rstest]
+        #[case(1)]  // single LBA
+        #[case(15)] // One stripe
+        #[case(45)] // Three stripes           
+        #[tokio::test]
+        async fn recoverable_eio(#[case] lbas: LbaT) {
+            let k = 5i16;
+            let f = 2;
+            const CHUNKSIZE: LbaT = 5;
+
+            let mut mirrors = Vec::new();
+            for i in 0..(k - 1) {
+                let mut m = mock_mirror();
+                m.expect_read_at()
+                    .times(1)
+                    .returning(move |mut dbm, _lba| {
+                        for x in dbm.iter_mut() {*x = i as u8;}
+                        Box::pin( future::ok::<(), Error>(()))
+                    });
+                mirrors.push(Child::present(m));
+            }
+            let mut m = mock_mirror();
+            m.expect_read_at()
+                .times(1)
+                .return_once(|_, _|  Box::pin(future::err(Error::EIO)));
+            mirrors.push(Child::present(m));
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            let zl = vdev_raid.zone_limits(0);
+            let reconstructions = vdev_raid.read_long(lbas, zl.0)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(reconstructions.len(), 4);  // 4 == (k-1)C(f-1)
+            if lbas >= 15 {
+                // For reads of less than a stripe, not all reconstructions must
+                // be unique.
+                for pair in reconstructions.iter().combinations(2) {
+                    let l = pair[0].try_const().unwrap();
+                    let r = pair[1].try_const().unwrap();
+                    assert_ne!(&l[..], &r[..]);
+                }
+            }
+        }
+
+        /// If f children fail such that only one reconstruction is possible,
+        /// then return EINTEGRITY, under the assumption that this same failure
+        /// happened prior to read_long being called.
+        #[rstest]
+        #[case(1)]  // single LBA
+        #[case(15)] // One stripe
+        #[case(45)] // Three stripes           
+        #[tokio::test]
+        async fn unrecoverable_eio(#[case] lbas: LbaT) {
+            let k = 5i16;
+            let f = 2;
+            const CHUNKSIZE: LbaT = 5;
+
+            let mut mirrors = Vec::new();
+            for i in 0..(k - 2) {
+                let mut m = mock_mirror();
+                m.expect_read_at()
+                    .times(1)
+                    .returning(move |mut dbm, _lba| {
+                        for x in dbm.iter_mut() {*x = i as u8;}
+                        Box::pin( future::ok::<(), Error>(()))
+                    });
+                mirrors.push(Child::present(m));
+            }
+            for _i in 0..2 {
+                let mut m = mock_mirror();
+                m.expect_read_at()
+                    .times(1)
+                    .return_once(|_, _|  Box::pin(future::err(Error::EIO)));
+                mirrors.push(Child::present(m));
+            }
+
+            let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                          Uuid::new_v4(),
+                                          LayoutAlgorithm::PrimeS,
+                                          mirrors.into_boxed_slice());
+            let zl = vdev_raid.zone_limits(0);
+            let reconstructions = vdev_raid.read_long(lbas, zl.0)
+                .await
+                .unwrap()
+                .collect::<Vec<_>>();
+            assert_eq!(reconstructions.len(), 1);
+        }
+    }
+
     mod read_spacemap {
         use super::*;
         use pretty_assertions::assert_eq;

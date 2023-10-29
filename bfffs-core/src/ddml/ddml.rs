@@ -128,8 +128,8 @@ impl DDML {
     {
         let drp = *drp;
         self.pool.read()
-        .then(move |pg| Self::read(&pg, drp))
-        .map_ok(move |dbs| Box::new(T::deserialize(dbs)))
+        .then(move |pg| Self::read(pg, drp))
+        .map_ok(move |(_, dbs)| Box::new(T::deserialize(dbs)))
         .boxed()
     }
 
@@ -144,9 +144,9 @@ impl DDML {
     }
 
     /// Read a record from disk
-    #[instrument(skip(pool))]
-    fn read(pool: &RwLockReadGuard<Pool>, drp: DRP)
-        -> impl Future<Output=Result<DivBufShared>> + Send
+    #[instrument(skip(pg))]
+    fn read(pg: RwLockReadGuard<Pool>, drp: DRP)
+        -> impl Future<Output=Result<(RwLockReadGuard<Pool>, DivBufShared)>> + Send
     {
         // Outline
         // 1) Read
@@ -156,33 +156,56 @@ impl DDML {
         let len = drp.asize() as usize * BYTES_PER_LBA;
         let dbs = DivBufShared::uninitialized(len);
         let dbm = dbs.try_mut().unwrap();
-        Box::pin(
-            // Read
-            pool.read(dbm, drp.pba)
-            .and_then(move |_| {
-                //Truncate
-                let mut dbm = dbs.try_mut().unwrap();
-                dbm.try_truncate(drp.csize as usize).unwrap();
-                let db = dbm.freeze();
+        // Read
+        pg.read(dbm, drp.pba)
+        .and_then(move |_| {
+            //Truncate
+            let mut dbm = dbs.try_mut().unwrap();
+            dbm.try_truncate(drp.csize as usize).unwrap();
+            let db = dbm.freeze();
 
-                // Verify checksum
-                let mut hasher = MetroHash64::new();
-                checksum_iovec(&db, &mut hasher);
-                let checksum = hasher.finish();
-                if checksum == drp.checksum {
-                    // Decompress
-                    let db = dbs.try_const().unwrap();
-                    if drp.is_compressed() {
-                        future::ok(Compression::decompress(&db))
-                    } else {
-                        future::ok(dbs)
-                    }
+            // Verify checksum
+            let mut hasher = MetroHash64::new();
+            checksum_iovec(&db, &mut hasher);
+            let checksum = hasher.finish();
+            if checksum == drp.checksum {
+                // Decompress
+                let db = dbs.try_const().unwrap();
+                if drp.is_compressed() {
+                    future::ok((pg, Compression::decompress(&db)))
                 } else {
-                    tracing::warn!("Checksum mismatch");
-                    future::err(Error::EINTEGRITY)
-                }
-            })
-        )
+                    future::ok((pg, dbs))
+                }.boxed()
+            } else {
+                tracing::warn!("Checksum mismatch");
+                pg.read_long(drp.asize(), drp.pba)
+                .map(move |r| {
+                    match r {
+                        Ok(reconstructions) => {
+                            for rdbs in reconstructions {
+                                let rdb = rdbs.try_const().unwrap();
+                                let mut hasher = MetroHash64::new();
+                                checksum_iovec(&rdb, &mut hasher);
+                                let checksum = hasher.finish();
+                                if checksum == drp.checksum {
+                                    // Somehow fault the stuff in bad
+                                    let dbs = if drp.is_compressed() {
+                                        Compression::decompress(&rdb)
+                                    } else {
+                                        let mut dbm = dbs.try_mut().unwrap();
+                                        dbm[..].copy_from_slice(&rdb[..]);
+                                        dbs
+                                    };
+                                    return Ok((pg, dbs));
+                                }
+                            }
+                            Err(Error::EINTEGRITY)
+                        },
+                        Err(e) => Err(e)
+                    }
+                }).boxed()
+            }
+        })
     }
 
     /// Open an existing `DDML` from its underlying `Pool`.
@@ -205,8 +228,8 @@ impl DDML {
         let drp2 = *drp;
         self.pool.read()
         .then(move |pg| {
-            Self::read(&pg, drp2)
-            .and_then(move |dbs| {
+            Self::read(pg, drp2)
+            .and_then(move |(pg, dbs)| {
                 pg.free(pba, lbas)
                 .map_ok(move |_| Box::new(T::deserialize(dbs)))
             })
@@ -591,7 +614,6 @@ mod ddml {
 
         #[test]
         fn cold() {
-            let mut seq = Sequence::new();
             let pba = PBA::default();
             let key = Key::PBA(pba);
             let drp = DRP{pba, compressed: false, lsize: 4096,
@@ -601,7 +623,6 @@ mod ddml {
             pool.expect_read()
                 .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
                 .once()
-                .in_sequence(&mut seq)
                 .returning(|mut dbm, _pba| {
                     for x in dbm.iter_mut() {
                         *x = 0;
@@ -618,7 +639,7 @@ mod ddml {
         }
 
         #[test]
-        fn ecksum() {
+        fn nonredundant_eintegrity() {
             let pba = PBA::default();
             let drp = DRP{pba, compressed: false, lsize: 4096,
                           csize: 1, checksum: 0xdead_beef_dead_beef};
@@ -627,12 +648,129 @@ mod ddml {
             pool.expect_read()
                 .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
                 .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            pool.expect_read_long()
+                .withf(|len, pba| *len == 1 && *pba == PBA::default())
+                .times(1)
+                .return_once(|_, _| future::err(Error::EINTEGRITY).boxed());
 
             let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
             let err = ddml.get::<DivBufShared, DivBuf>(&drp)
                 .now_or_never().unwrap()
                 .unwrap_err();
             assert_eq!(err, Error::EINTEGRITY);
+        }
+
+        /// A read yields a checksum error.  A subsequent read_long finds the
+        /// correct data.
+        #[test]
+        fn redundant_eintegrity() {
+            let pba = PBA::default();
+            let csize = 1usize;
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: csize as u32, checksum: 0xe7f_1596_6a3d_61f8};
+            let cache = Cache::with_capacity(1_048_576);
+            let mut pool = mock_pool();
+            pool.expect_read()
+                .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+                .returning(|mut dbm, _| {
+                    for x in dbm.iter_mut() {
+                        *x = b'X';
+                    }
+                    Box::pin(future::ok::<(), Error>(()))
+                });
+            pool.expect_read_long()
+                .withf(|len, pba| *len == 1 && *pba == PBA::default())
+                .times(1)
+                .return_once(move |_, _| {
+                    let dbs0 = DivBufShared::from(vec![1u8; csize]);
+                    let dbs1 = DivBufShared::from(vec![0u8; csize]);
+                    let reconstructions = Box::new(vec![dbs0, dbs1].into_iter())
+                        as Box<dyn Iterator<Item=DivBufShared> + Send>;
+                    Box::new(future::ok(reconstructions)).boxed()
+                });
+
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            let db = ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap();
+            assert_eq!(&db[..], &vec![0u8; csize]);
+        }
+
+        /// A read yields a checksum error.  A subsequent read_long yields other
+        /// possibilities, but they're all wrong.
+        #[test]
+        fn redundant_eintegrity_all_wrong() {
+            let pba = PBA::default();
+            let drp = DRP{pba, compressed: false, lsize: 4096,
+                          csize: 1, checksum: 0xdead_beef_dead_beef};
+            let cache = Cache::with_capacity(1_048_576);
+            let mut pool = mock_pool();
+            pool.expect_read()
+                .withf(|dbm, pba| dbm.len() == 4096 && *pba == PBA::default())
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            pool.expect_read_long()
+                .withf(|len, pba| *len == 1 && *pba == PBA::default())
+                .times(1)
+                .return_once(|_, _| {
+                    let dbs0 = DivBufShared::from(vec![0u8; BYTES_PER_LBA]);
+                    let dbs1 = DivBufShared::from(vec![1u8; BYTES_PER_LBA]);
+                    let reconstructions = Box::new(vec![dbs0, dbs1].into_iter())
+                        as Box<dyn Iterator<Item=DivBufShared> + Send>;
+                    Box::new(future::ok(reconstructions)).boxed()
+                });
+
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            let err = ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap_err();
+            assert_eq!(err, Error::EINTEGRITY);
+        }
+
+        /// A read yields a checksum error.  A subsequent read_long finds the
+        /// correct data.
+        #[test]
+        fn redundant_eintegrity_compressed() {
+            let lsize = 2 * BYTES_PER_LBA;
+            let raw = DivBufShared::from(vec![0u8; lsize]);
+            let db = raw.try_const().unwrap();
+            let (compressed, compression) = Compression::LZ4(None).compress(db);
+            assert!(compression != Compression::None);
+            let mut hasher = MetroHash64::new();
+            checksum_iovec(&compressed, &mut hasher);
+            let checksum = hasher.finish();
+
+            let pba = PBA::default();
+            let csize = compressed.len();
+            let drp = DRP{pba, compressed: true, lsize: lsize as u32,
+                          csize: csize as u32, checksum};
+            let asize = drp.asize() as usize * BYTES_PER_LBA;
+            let cache = Cache::with_capacity(1_048_576);
+            let mut pool = mock_pool();
+            pool.expect_read()
+                .withf(move |dbm, pba| dbm.len() == asize && *pba == PBA::default())
+                .return_once(|mut dbm, _| {
+                    for x in dbm.iter_mut() {
+                        *x = 0;
+                    }
+                    Box::pin(future::ok::<(), Error>(()))
+                });
+            pool.expect_read_long()
+                .withf(|len, pba| *len == 1 && *pba == PBA::default())
+                .times(1)
+                .return_once(move |_, _| {
+                    let dbs0 = DivBufShared::from(vec![1u8; csize]);
+                    let dbs1 = DivBufShared::from(Vec::from(&compressed[..]));
+                    let reconstructions = Box::new(vec![dbs0, dbs1].into_iter())
+                        as Box<dyn Iterator<Item=DivBufShared> + Send>;
+                    Box::new(future::ok(reconstructions)).boxed()
+                });
+
+            let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
+            let db = ddml.get::<DivBufShared, DivBuf>(&drp)
+                .now_or_never().unwrap()
+                .unwrap();
+            assert_eq!(db.len(), raw.len());
+            assert_eq!(&db[..], &raw.try_const().unwrap()[..]);
         }
     }
 
@@ -740,7 +878,7 @@ mod ddml {
     }
 
     #[test]
-    fn pop_ecksum() {
+    fn pop_eintegrity() {
         let pba = PBA::default();
         let drp = DRP{pba, compressed: false, lsize: 4096,
                       csize: 1, checksum: 0xdead_beef_dead_beef};
@@ -749,6 +887,10 @@ mod ddml {
         pool.expect_read()
             .with(always(), eq(pba))
             .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+        pool.expect_read_long()
+            .withf(|len, pba| *len == 1 && *pba == PBA::default())
+            .times(1)
+            .return_once(|_, _| future::err(Error::EINTEGRITY).boxed());
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         let err = ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))

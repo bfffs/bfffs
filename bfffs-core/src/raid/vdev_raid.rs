@@ -21,7 +21,7 @@ use futures::{
     stream::{FuturesOrdered, FuturesUnordered},
     task::{Context, Poll}
 };
-use itertools::multizip;
+use itertools::{Itertools, multizip};
 use mockall_double::double;
 use pin_project::pin_project;
 use std::{
@@ -36,6 +36,7 @@ use std::{
 };
 use serde_derive::{Deserialize, Serialize};
 use super::{
+    LocatorImpl,
     Status,
     codec::*,
     declust::*,
@@ -392,7 +393,7 @@ pub struct VdevRaid {
     faulted_children: i16,
 
     /// Locator, declustering or otherwise
-    locator: Box<dyn Locator>,
+    locator: LocatorImpl,
 
     /// Underlying mirror devices.  Order is important!
     children: Box<[Child]>,
@@ -529,9 +530,9 @@ impl VdevRaid {
         let mut faulted_children = 0;
         let num_disks = children.len() as i16;
         let codec = Codec::new(disks_per_stripe as u32, redundancy as u32);
-        let locator: Box<dyn Locator> = match layout_algorithm {
-            LayoutAlgorithm::PrimeS => Box::new(
-                PrimeS::new(num_disks, disks_per_stripe, redundancy))
+        let locator: LocatorImpl = match layout_algorithm {
+            LayoutAlgorithm::PrimeS => 
+                PrimeS::new(num_disks, disks_per_stripe, redundancy).into()
         };
 
         // XXX The vdev size or child size should be recorded in the label.
@@ -1110,6 +1111,266 @@ impl VdevRaid {
         }
         // TODO: on error, record error statistics, possibly fault a drive,
         // and request the faulty drive's zone to be rebuilt.
+    }
+
+    fn read_long_multi(&self, unlbas: LbaT, ulba: LbaT)
+        -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
+    {
+        let codec2 = self.codec.clone();
+        let f = self.codec.protection();
+        let k = self.codec.stripesize();
+        let m = self.codec.stripesize() - f;
+        let n = self.children.len();
+        let chunksize = self.chunksize;
+        // The only current Locator is small enough that it's probably cheaper
+        // to clone it than to use an Arc.
+        let locator = self.locator.clone();
+        let lbas_per_stripe = chunksize * m as LbaT;
+        let start_stripe = ulba / (chunksize * m as LbaT);
+        let col_len = chunksize as usize * BYTES_PER_LBA;
+        // end_lba is inclusive.  The highest LBA from which data will be read
+        let end_lba = ulba + unlbas - 1;
+        let end_stripe = end_lba / (chunksize as LbaT * m as LbaT);
+        let stripes = end_stripe - start_stripe + 1;
+
+        // Assemble the list of read operations.  Unlink read_at_multi, don't
+        // use scatter/gather operations.  Instead, read each disks's data into
+        // a single contiguous buffer.  We'll chop it up in the next step.
+        let mut buffers = Vec::with_capacity(self.children.len());
+        for _ in 0..self.children.len() {
+            buffers.push(None);
+        }
+        let mut args_per_disk = vec![None; self.children.len()];
+
+        let stripe_lba = ulba - ulba % lbas_per_stripe;
+        let start_lba = stripe_lba;
+        let start_chunk_addr = start_lba / chunksize;
+        let start_cid = ChunkId::Data(start_chunk_addr);
+        let end_cid = ChunkId::Data(start_chunk_addr + stripes * m as LbaT);
+        for (_cid, loc) in locator.iter(start_cid, end_cid) {
+            match args_per_disk[loc.disk as usize] {
+                None => args_per_disk[loc.disk as usize] =
+                    Some((loc.offset, loc.offset + 1)),
+                Some((_s, ref mut e)) => *e = loc.offset + 1
+            };
+        }
+        args_per_disk.iter()
+        .enumerate()
+        .filter_map(|(disk_idx, x)| x.map(|(sofs, eofs)| (disk_idx, sofs, eofs)))
+        .map(|(disk_idx, sofs, eofs)| {
+            let disk_lba = sofs * chunksize;
+            let len = ((eofs - sofs) * chunksize) as usize * BYTES_PER_LBA;
+            let dbs = DivBufShared::from(vec![0u8; len]);
+            let dbm = dbs.try_mut().unwrap();
+            buffers[disk_idx] = Some(dbs);
+            self.children[disk_idx].read_at(dbm, disk_lba)
+        }).collect::<FuturesOrdered<_>>()
+        .collect::<Vec<Result<()>>>()
+        .map(move |dv| {
+            let mut failures = FixedBitSet::with_capacity(n);
+            for (i, v) in dv.iter().enumerate() {
+                if v.is_err() {
+                    failures.set(i, true);
+                }
+            }
+            // Now iterate over all combinations of disk failures
+            let iterator = (0..n).combinations(f as usize)
+            .filter_map(move |it| {
+                let mut disk_erasures = FixedBitSet::with_capacity(n);
+                for i in it {
+                    disk_erasures.set(i, true);
+                }
+                if failures.difference(&disk_erasures).count() != 0 {
+                    return None;
+                }
+                // Allocate storage for the reconstructed stripes
+                let sdbs = DivBufShared::from(
+                    vec![0u8; stripes as usize * m as usize * col_len]
+                );
+                let sdbm = sdbs.try_mut().unwrap();
+                let mut sdbmi = sdbm.into_chunks(col_len);
+
+                // Now iterate stripe by stripe, reconstructing the result
+                // Allocate storage for the entire stripe.
+                for s in start_stripe..=end_stripe {
+                    let mut erasures = FixedBitSet::with_capacity(k as usize);
+                    let mut surviving = Vec::with_capacity(m as usize);
+                    let mut vdbm = Vec::with_capacity(f as usize);
+                    let mut vdb = Vec::with_capacity(m as usize);
+                    let mut missing = Vec::with_capacity(f as usize);
+                    let start_chunk_addr = s * m as LbaT;
+                    let past_chunk_addr = (s + 1) * m as LbaT;
+                    let start_cid = ChunkId::Data(start_chunk_addr);
+                    let end_cid = ChunkId::Data(past_chunk_addr);
+                    for (chunkpos, (cid, loc)) in locator
+                        .iter(start_cid, end_cid)
+                        .enumerate()
+                    {
+                        let disk = loc.disk as usize;
+                        let args = args_per_disk[disk].as_ref().unwrap();
+                        if disk_erasures.contains(disk) && cid.is_data() {
+                            erasures.set(chunkpos, true);
+                            let mut dbm = sdbmi.next().unwrap();
+                            missing.push(dbm.as_mut_ptr());
+                            vdbm.push(dbm);
+                        } else {
+                            let dbs = buffers[disk].as_mut().unwrap();
+                            let mut db = dbs.try_const().unwrap();
+                            db.split_to((loc.offset - args.0) as usize * col_len);
+                            db.split_off(col_len);
+                            if cid.is_data() {
+                                sdbmi.next().unwrap().copy_from_slice(&db[..]);
+                            }
+                            surviving.push(db.as_ptr());
+                            vdb.push(db);
+                        }
+                        if surviving.len() >= m as usize {
+                            break;
+                        }
+                    }
+                    // Safe because all columns are still owned by vdb and vdbm
+                    // and they all have the same length.
+                    if !missing.is_empty() {
+                        unsafe {
+                            codec2.decode(col_len, &surviving[..],
+                                          &mut missing[..], &erasures);
+                        }
+                    }
+                }
+                debug_assert!(sdbmi.next().is_none());
+                drop(sdbmi);
+                // Now copy just the part that the user wants
+                let udbs = DivBufShared::from(
+                    vec![0u8; unlbas as usize * BYTES_PER_LBA]
+                );
+                let mut udbm = udbs.try_mut().unwrap();
+                let sdb = sdbs.try_const().unwrap();
+                let uo = (ulba % lbas_per_stripe) as usize * BYTES_PER_LBA;
+                let ul = unlbas as usize * BYTES_PER_LBA;
+                udbm.copy_from_slice(&sdb[uo..uo + ul]);
+
+                Some(udbs)
+            });
+            Ok(Box::new(iterator) as Box<dyn Iterator<Item=DivBufShared> + Send>)
+        })
+    }
+
+    // NB: In a cluster that uses raid on top of mirrors, this function won't
+    // consult the mirrors' read_long methods.  Instead, it assumes that the
+    // raid layer itself contains enough redundancy to rebuild the corrupt data.
+    // This limitation could be lifted, but I don't expect it to come up very
+    // often.
+    fn read_long_one(&self, unlbas: LbaT, ulba: LbaT)
+        -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
+    {
+        let col_len = self.chunksize as usize * BYTES_PER_LBA;
+        let k = self.codec.stripesize() as usize;
+        let f = self.codec.protection();
+        let m = (self.codec.stripesize() - f) as usize;
+        let n = self.children.len();
+        let lbas_per_stripe = self.chunksize * m as LbaT;
+        let codec2 = self.codec.clone();
+
+        let stripe_lba = ulba - ulba % lbas_per_stripe;
+        let end_of_stripe_lba = stripe_lba + lbas_per_stripe;
+        let start_lba = stripe_lba;
+        let end_lba = end_of_stripe_lba;
+
+        let mut exbufs = Vec::with_capacity(n);
+
+        let start_chunk_addr = start_lba / self.chunksize;
+        let start_cid = ChunkId::Data(start_chunk_addr);
+        let end_cid = ChunkId::Data(end_lba / self.chunksize);
+
+        let rfut = self.locator.iter(start_cid, end_cid)
+        .map(|(_cid, loc)| {
+            let disk_lba = loc.offset * self.chunksize;
+            let dbs = DivBufShared::from(vec![0u8; col_len]);
+            let dbm = dbs.try_mut().unwrap();
+            exbufs.push(dbs);
+            self.children[loc.disk as usize].read_at(dbm, disk_lba)
+        }).collect::<FuturesOrdered<_>>();
+        rfut.collect::<Vec<Result<()>>>()
+        .map(move |dv| {
+            let mut failures = FixedBitSet::with_capacity(k);
+            for (i, v) in dv.iter().enumerate() {
+                if v.is_err() {
+                    failures.set(i, true);
+                }
+            }
+            let iterator = (0..k).combinations(f as usize).filter_map(move |it| {
+                let mut erasures = FixedBitSet::with_capacity(k);
+                for i in it {
+                    erasures.set(i, true);
+                }
+                if failures.difference(&erasures).count() != 0 {
+                    None
+                } else {
+                    // Reconstruct the entire stripe.
+                    // NB: this could be more efficient if the user only wants a
+                    // few LBAs in the middle of a chunk.  In that case we don't
+                    // need to reconstruct the entire stripe, just a thin
+                    // substripe of it.  But read_long is not optimized for
+                    // performance.
+                    let dbs = DivBufShared::from(vec![0u8; m * col_len]);
+                    let dbm = dbs.try_mut().unwrap();
+                    let mut vdb = Vec::with_capacity(m);
+                    let mut surviving = Vec::with_capacity(m);
+                    let mut vdbm = Vec::with_capacity(f as usize);
+                    let mut missing = Vec::with_capacity(f as usize);
+                    for (i, mut dbm) in dbm.into_chunks(col_len).enumerate() {
+                        if erasures.contains(i) {
+                            missing.push(dbm.as_mut_ptr());
+                            vdbm.push(dbm);
+                        } else if !erasures.contains(i) {
+                            debug_assert!(dv[i].is_ok());
+                            let db = exbufs[i].try_const().unwrap();
+                            dbm[..].copy_from_slice(&db[..]);
+                            surviving.push(db.as_ptr());
+                            vdb.push(db);
+                        }
+                    }
+                    for i in m..k {
+                        if !erasures.contains(i) {
+                            debug_assert!(dv[i].is_ok());
+                            let db = exbufs[i].try_const().unwrap();
+                            surviving.push(db.as_ptr());
+                            vdb.push(db);
+                        }
+                        if surviving.len() >= m {
+                            break;
+                        }
+                    }
+                    // Safe because all columns are still owned by vdb and vdbm
+                    // and they all have the same length.
+                    if !missing.is_empty() {
+                        unsafe {
+                            codec2.decode(col_len, &surviving[..],
+                                          &mut missing[..], &erasures);
+                        }
+                    }
+                    drop(vdbm);
+                    drop(vdb);
+                    if unlbas == lbas_per_stripe {
+                        Some(dbs)
+                    } else {
+                        // Copy just the part that the user wants
+                        // NB: this could be more efficient.  The data copy
+                        // could be eliminated by using more exbufs for stuff
+                        // the user doesn't want, and reading or reconstructing
+                        // directly into udbs.  But that would be complicated,
+                        // and read_long isn't optimized for performance.
+                        let uo = (ulba % lbas_per_stripe) as usize * BYTES_PER_LBA;
+                        let ul = unlbas as usize * BYTES_PER_LBA;
+                        let udbs = DivBufShared::from(vec![0u8; ul]);
+                        let mut udbm = udbs.try_mut().unwrap();
+                        udbm.copy_from_slice(&dbs.try_const().unwrap()[uo..uo + ul]);
+                        Some(udbs)
+                    }
+                }
+            });
+            Ok(Box::new(iterator) as Box<dyn Iterator<Item=DivBufShared> + Send>)
+        })
     }
 
     /// Reconstruct a stripe of data, given surviving columns and parity
@@ -1831,6 +2092,31 @@ impl VdevRaidApi for VdevRaid {
             Box::pin(self.read_at_one(buf2, lba))
         } else {
             Box::pin(self.read_at_multi(buf2, lba))
+        }
+    }
+
+    fn read_long(&self, len: LbaT, ulba: LbaT)
+        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>
+    {
+        let f = self.codec.protection();
+        let m = self.codec.stripesize() - f;
+
+        if self.faulted_children() >= f {
+            return future::err(Error::EINTEGRITY).boxed();
+        }
+
+        // Ignore the stripe buffer.  The fact that read_long got called meant
+        // that, even if the data is available in the stripe buffer , it must be
+        // wrong.
+
+        let start_stripe = ulba / (self.chunksize * m as LbaT);
+        // end_lba is inclusive.  The highest LBA from which data will be read
+        let end_lba = ulba + len - 1;
+        let end_stripe = end_lba / (self.chunksize as LbaT * m as LbaT);
+        if start_stripe == end_stripe {
+            Box::pin(self.read_long_one(len, ulba))
+        } else {
+            Box::pin(self.read_long_multi(len, ulba))
         }
     }
 

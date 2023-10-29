@@ -7,6 +7,7 @@ use crate::{
     util::*,
     vdev::*
 };
+use divbuf::DivBufShared;
 use futures::{
     Future,
     FutureExt,
@@ -388,6 +389,27 @@ impl Pool {
                 r
             });
         Box::pin(fut)
+    }
+
+    /// Asynchronously read a contiguous portion of the pool.
+    ///
+    /// Returns `()` on success, or an error on failure.
+    ///
+    /// As an optimization, if only one reconstruction is possible then
+    /// immediately return EINTEGRITY, under the assumption that this method
+    /// should only be called after a normal read already returned such an
+    /// error.
+    pub fn read_long(&self, len: LbaT, pba: PBA)
+        -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
+    {
+        let cidx = pba.cluster as usize;
+        self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
+        let stats2 = self.stats.clone();
+        self.clusters[cidx].read_long(len, pba.lba)
+        .map(move |r| {
+            stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
+            r
+        })
     }
 
     /// Return approximately the Pool's usable storage space in LBAs.
