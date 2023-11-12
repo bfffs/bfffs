@@ -1,3 +1,7 @@
 [build]
-# Needed so that dtrace's ustack() function can unwind stack frames.
-rustflags = ["-C", "force-frame-pointers"]
+rustflags = [
+	# Needed so that dtrace's ustack() function can unwind stack frames.
+	"-C", "force-frame-pointers",
+	# Needed to use tokio-console
+	"--cfg", "tokio_unstable"
+]
