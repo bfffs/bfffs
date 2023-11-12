@@ -26,7 +26,7 @@ use tokio::{
     runtime::{Builder, Runtime},
     task::JoinError,
 };
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod ffi;
 
@@ -90,6 +90,8 @@ struct BfffsOptions {
     /// silly fio can't handle an offset of 0
     _pad:           u32,
     cache_size:     usize,
+    /// Publish to tokio-console on port 6669
+    console:        bool,
     pool_name:      *const libc::c_char,
     /// The name of the device(s) that backs the pool.  If there are multiple
     /// devices, then they should be space-separated
@@ -97,7 +99,7 @@ struct BfffsOptions {
     writeback_size: usize,
 }
 
-static mut OPTIONS: Option<[fio_option; 5]> = None;
+static mut OPTIONS: Option<[fio_option; 6]> = None;
 
 #[link_section = ".init_array"]
 #[used] //  Don't allow the optimizer to eliminate this symbol!
@@ -108,10 +110,6 @@ pub static INITIALIZE: extern "C" fn() = rust_ctor;
 /// If mem::zeroed were a const_fn, then we wouldn't need this.
 #[no_mangle]
 pub extern "C" fn rust_ctor() {
-    tracing_subscriber::fmt()
-        .pretty()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
     unsafe {
         OPTIONS = Some([
             fio_option::new(
@@ -120,6 +118,16 @@ pub extern "C" fn rust_ctor() {
                 fio_opt_type_FIO_OPT_INT,
                 offset_of!(BfffsOptions, cache_size),
                 b"Cache size in bytes\0",
+                b"0\0",
+                opt_category___FIO_OPT_C_ENGINE,
+                opt_category_group_FIO_OPT_G_INVALID,
+            ),
+            fio_option::new(
+                b"console\0",
+                b"console\0",
+                fio_opt_type_FIO_OPT_BOOL,
+                offset_of!(BfffsOptions, console),
+                b"Publish to tokio::console on port 6669\0",
                 b"0\0",
                 opt_category___FIO_OPT_C_ENGINE,
                 opt_category_group_FIO_OPT_G_INVALID,
@@ -301,6 +309,24 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                 };
                 (pool, vdevs)
             };
+
+            let tracing_registry = tracing_subscriber::registry();
+            if (*opts).console {
+                let console_layer = console_subscriber::ConsoleLayer::builder()
+                    .retention(std::time::Duration::from_secs(60))
+                    .server_addr((
+                        std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                        6669,
+                    ))
+                    .spawn();
+                tracing_registry.with(console_layer).init();
+            } else {
+                tracing_registry
+                    .with(tracing_subscriber::fmt::layer())
+                    .with(EnvFilter::from_default_env())
+                    .init();
+            }
+
             let mut manager = database::Manager::default();
             if (*opts).cache_size != 0 {
                 manager.cache_size((*opts).cache_size);
@@ -442,39 +468,40 @@ pub unsafe extern "C" fn fio_bfffs_queue(
 
 #[export_name = "ioengine"]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
-    cancel:             None,
-    cleanup:            Some(fio_bfffs_cleanup),
-    close_file:         Some(fio_bfffs_close),
-    commit:             None,
-    dlhandle:           ptr::null_mut(),
-    errdetails:         None,
-    event:              Some(fio_bfffs_event),
-    fdp_fetch_ruhs:     None,
-    finish_zone:        None,
-    flags:              fio_ioengine_flags_FIO_ASYNCIO_SYNC_TRIM as i32,
-    get_file_size:      None,
-    getevents:          Some(fio_bfffs_getevents),
-    get_max_open_zones: None,
-    get_zoned_model:    None,
-    init:               Some(fio_bfffs_init),
-    invalidate:         Some(fio_bfffs_invalidate),
-    io_u_free:          None,
-    io_u_init:          None,
-    iomem_alloc:        None,
-    iomem_free:         None,
-    list:               flist_head::zeroed(),
-    name:               b"bfffs\0" as *const _ as *const libc::c_char,
-    open_file:          Some(fio_bfffs_open),
-    option_struct_size: mem::size_of::<BfffsOptions>() as i32,
-    options:            ptr::null_mut(),
-    post_init:          None,
-    prep:               None,
-    prepopulate_file:   None,
-    report_zones:       None,
-    reset_wp:           None,
-    queue:              Some(fio_bfffs_queue),
-    setup:              None,
-    terminate:          None,
-    unlink_file:        None,
-    version:            FIO_IOOPS_VERSION as i32,
+    cancel:               None,
+    cleanup:              Some(fio_bfffs_cleanup),
+    close_file:           Some(fio_bfffs_close),
+    commit:               None,
+    dlhandle:             ptr::null_mut(),
+    errdetails:           None,
+    event:                Some(fio_bfffs_event),
+    fdp_fetch_ruhs:       None,
+    finish_zone:          None,
+    flags:                fio_ioengine_flags_FIO_ASYNCIO_SYNC_TRIM as i32,
+    get_file_size:        None,
+    getevents:            Some(fio_bfffs_getevents),
+    get_max_active_zones: None,
+    get_max_open_zones:   None,
+    get_zoned_model:      None,
+    init:                 Some(fio_bfffs_init),
+    invalidate:           Some(fio_bfffs_invalidate),
+    io_u_free:            None,
+    io_u_init:            None,
+    iomem_alloc:          None,
+    iomem_free:           None,
+    list:                 flist_head::zeroed(),
+    name:                 b"bfffs\0" as *const _ as *const libc::c_char,
+    open_file:            Some(fio_bfffs_open),
+    option_struct_size:   mem::size_of::<BfffsOptions>() as i32,
+    options:              ptr::null_mut(),
+    post_init:            None,
+    prep:                 None,
+    prepopulate_file:     None,
+    report_zones:         None,
+    reset_wp:             None,
+    queue:                Some(fio_bfffs_queue),
+    setup:                None,
+    terminate:            None,
+    unlink_file:          None,
+    version:              FIO_IOOPS_VERSION as i32,
 };

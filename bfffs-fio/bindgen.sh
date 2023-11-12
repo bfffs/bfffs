@@ -1,9 +1,6 @@
 #! /bin/sh
 
-# fio doesn't install the necessary headers, so we have to reference its source
-# directory.
-# https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=272960
-FIOPATH="/wrkdirs/usr/home/somers/src/freebsd.org/ports/benchmarks/fio/work/fio-3.35/"
+FIOPATH=/usr/local/include/fio
 
 cat > src/ffi.rs << HERE
 #![allow(non_camel_case_types)]

@@ -35,7 +35,7 @@ use nix::{
 };
 use tokio_seqpacket::{UCred, UnixSeqpacket, UnixSeqpacketListener};
 use tracing::{error, warn};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{prelude::*, EnvFilter};
 
 mod fs;
 
@@ -44,6 +44,12 @@ use crate::fs::FuseFs;
 #[derive(Parser, Clone, Debug)]
 #[clap(version = crate_version!())]
 struct Cli {
+    /// Publish tracing data to tokio-console on port 6669.
+    ///
+    /// If not set, print it to the terminal according to the RUST_LOG
+    /// environment variable.
+    #[clap(long)]
+    console:   bool,
     // TODO: configurable log level
     /// Mount options, comma delimited.  Apply to all BFFFS mounts
     #[clap(
@@ -487,11 +493,24 @@ impl Bfffsd {
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    tracing_subscriber::fmt()
-        .pretty()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
     let cli: Cli = Cli::parse();
+
+    let tracing_registry = tracing_subscriber::registry();
+    if cli.console {
+        let console_layer = console_subscriber::ConsoleLayer::builder()
+            .retention(std::time::Duration::from_secs(60))
+            .server_addr((
+                std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+                6669,
+            ))
+            .spawn();
+        tracing_registry.with(console_layer).init();
+    } else {
+        tracing_registry
+            .with(tracing_subscriber::fmt::layer())
+            .with(EnvFilter::from_default_env())
+            .init();
+    }
 
     let sock = Socket::new(&cli.sock);
     let bfffsd = Arc::new(Bfffsd::new(cli).await);
