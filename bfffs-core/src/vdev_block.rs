@@ -445,6 +445,7 @@ impl Inner {
                     // VdevBlocks or other processes outside of bfffs's control
                     // are using too many disk resources.  In this case, the
                     // only thing we can do is sleep and try again later.
+                    tracing::warn!("No disk resources available");
                     let duration = time::Duration::from_millis(10);
                     let schfut = self.reschedule();
                     let delay_fut = tokio::time::sleep(duration)
@@ -599,7 +600,7 @@ impl Inner {
         }
     }
 
-    /// Create a future which, when polled, will advanced the scheduler,
+    /// Create a future which, when polled, will advance the scheduler,
     /// issueing more disk ops if any are waiting.
     fn reschedule(&self) -> ReschedFut {
         ReschedFut(self.weakself.clone())
