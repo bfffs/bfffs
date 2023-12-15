@@ -11,6 +11,4 @@ members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 resolver = "2"
 
 [patch.crates-io]
-mockall = { git = "https://github.com/asomers/mockall.git", rev = "7aba6d3" }
-mockall_double = { git = "https://github.com/asomers/mockall.git", rev = "7aba6d3" }
 fuse3 = { git = "https://github.com/Sherlock-Holo/fuse3.git", rev = "59d9c6e" }
