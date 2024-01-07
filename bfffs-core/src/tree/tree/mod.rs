@@ -896,7 +896,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// Flush all in-memory Nodes to disk.
     pub async fn flush(self: Arc<Self>, txg: TxgT) -> Result<()>
     {
-        while let true = Tree::flush_once(self.clone(), txg).await? {
+        while Tree::flush_once(self.clone(), txg).await? {
         }
         Ok(())
     }

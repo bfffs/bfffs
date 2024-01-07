@@ -1,5 +1,6 @@
 // vim: tw=80
 use std::{
+    ffi::OsString,
     fs,
     future::Future,
     io::Write,
@@ -132,6 +133,12 @@ struct Cli {
     /// benchmarks.
     #[clap(subcommand)]
     subcommand: Option<SubCommand>,
+    /// Cargo always passes either --bench when invoked like
+    /// "cargo bench --bench bfffs-bench", even when the standard benchmark
+    /// harness is not in use.  So we need to accept such arguments, and ignore
+    /// them.
+    #[clap(long, hide = true)]
+    bench:      bool,
 }
 
 /// Run a function while monitoring the given PID with dtrace.  Record its
@@ -227,8 +234,10 @@ async fn bench_one<'a>(
 
 async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
     for benchmark in [
-        Box::new(fs_create::Cli::default().build()) as Box<dyn Benchmark>,
-        Box::new(fs_destroy::Cli::default().build()) as Box<dyn Benchmark>,
+        Box::new(fs_create::Cli::parse_from::<_, OsString>([]).build())
+            as Box<dyn Benchmark>,
+        Box::new(fs_destroy::Cli::parse_from::<_, OsString>([]).build())
+            as Box<dyn Benchmark>,
     ] {
         bench_one(None, geom_regex, benchmark, harness).await
     }
