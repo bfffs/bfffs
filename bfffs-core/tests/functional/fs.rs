@@ -3011,7 +3011,6 @@ root:
         assert_ts_changed(&h.fs, &fdh, false, false, false, false).await;
     }
 
-    #[allow(clippy::blocks_in_if_conditions)]
     #[rstest(h, case(harness4k()))]
     #[tokio::test]
     #[awt]
