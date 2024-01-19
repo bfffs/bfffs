@@ -211,7 +211,7 @@ mod read_long {
         }
 
         let mut reconstructor = harness.0.read_long(1, 3).await.unwrap();
-        let mut reconstructions = vec![
+        let mut reconstructions = [
             reconstructor.next().unwrap().try_const().unwrap(),
             reconstructor.next().unwrap().try_const().unwrap(),
             reconstructor.next().unwrap().try_const().unwrap()
