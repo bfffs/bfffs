@@ -36,7 +36,7 @@ use std::{
         Arc,
     },
 };
-use super::{Forest, Status, TreeID};
+use super::{Forest, TreeID};
 use tokio::{
     task::JoinHandle,
     time::{Duration, Instant, sleep_until},
@@ -852,10 +852,7 @@ mod database {
     use super::super::*;
     use super::super::super::{ForestKey, ForestValue};
     use crate::tree::{OPEN_MTX, RangeQuery, Tree};
-    use futures::{
-        task::Poll,
-        future
-    };
+    use futures::task::Poll;
     use mockall::{Sequence, predicate::*};
     use std::ops::RangeFull;
 

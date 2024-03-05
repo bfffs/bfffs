@@ -542,8 +542,6 @@ mod label {
 
 mod pool {
     use super::super::*;
-    use crate::cluster;
-    use divbuf::DivBufShared;
     use futures::future;
     use mockall::predicate::*;
     use pretty_assertions::assert_eq;

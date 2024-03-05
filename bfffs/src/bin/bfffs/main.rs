@@ -611,7 +611,7 @@ mod fs {
 }
 
 mod pool {
-    use std::{num::NonZeroU64, str::FromStr, sync::Mutex};
+    use std::{num::NonZeroU64, sync::Mutex};
 
     use bfffs_core::{
         cache::Cache,

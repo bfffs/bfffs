@@ -4,7 +4,6 @@ mod ffi;
 use std::{
     io::{Error, ErrorKind},
     os::raw::*,
-    result::Result,
 };
 
 pub const fn version() -> u32 {

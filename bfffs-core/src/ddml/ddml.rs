@@ -1,6 +1,6 @@
 // vim: tw=80
 use crate::{
-    cache::{self, Cache, Cacheable, CacheRef, Key},
+    cache::{self, Cache, Key},
     dml::*,
     label::*,
     pool::ClosedZone,
@@ -481,12 +481,10 @@ mod ddml {
     use super::super::*;
     use divbuf::{DivBuf, DivBufShared};
     use futures::{
-        FutureExt,
         future,
         channel::oneshot
     };
     use mockall::{
-        self,
         Sequence,
         predicate::*
     };

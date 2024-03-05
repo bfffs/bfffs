@@ -24,7 +24,6 @@ use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
-    convert::TryFrom,
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
     ops::Range,
@@ -1112,7 +1111,6 @@ mod open_zone {
 mod cluster {
     use super::super::*;
     use crate::vdev::*;
-    use divbuf::DivBufShared;
     use itertools::Itertools;
     use mockall::{Sequence, predicate::*};
     use pretty_assertions::assert_eq;

@@ -12,7 +12,7 @@ use crate::{
     util::*,
     dml::Compression
 };
-#[cfg(test)] use rand::{self, Rng};
+#[cfg(test)] use rand::Rng;
 
 use cfg_if::cfg_if;
 use std::{
