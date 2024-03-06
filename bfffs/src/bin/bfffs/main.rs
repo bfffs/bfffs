@@ -664,7 +664,11 @@ mod pool {
     }
 
     use lalrpop_util::lalrpop_mod;
-    lalrpop_mod!(#[allow(clippy::just_underscores_and_digits)] pub pool_create_parser);
+    lalrpop_mod!(
+        #[allow(clippy::just_underscores_and_digits)]
+        #[allow(dead_code)]
+        pub pool_create_parser
+    );
     use pool_create_parser::PoolParser;
 
     use crate::pool_create_ast::{RaidChild, Tlv};
