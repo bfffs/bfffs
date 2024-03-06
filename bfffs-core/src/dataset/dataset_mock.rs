@@ -33,6 +33,7 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Option<V>>> + Send>>;
         fn get_blob(&self, rid: RID)
             -> Pin<Box<dyn Future<Output=Result<Box<DivBuf>>> + Send>>;
+        #[allow(clippy::multiple_bound_locations)]  // False positive
         fn range<R, T>(&self, range: R) -> RangeQuery<K, T, V>
             where K: Borrow<T>,
                   R: RangeBounds<T> + 'static,

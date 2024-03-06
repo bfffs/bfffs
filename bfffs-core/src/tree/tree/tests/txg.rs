@@ -1,8 +1,6 @@
 //! Tests regarding transaction transaction membership of nodes
 // LCOV_EXCL_START
 
-use crate::dml::MockDML;
-use futures::future;
 use mockall::predicate::eq;
 use pretty_assertions::assert_eq;
 use super::*;

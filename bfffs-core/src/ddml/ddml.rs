@@ -1,6 +1,6 @@
 // vim: tw=80
 use crate::{
-    cache::{self, Cache, Cacheable, CacheRef, Key},
+    cache::{self, Cache, Key},
     dml::*,
     label::*,
     pool::ClosedZone,
@@ -412,10 +412,10 @@ mock! {
         pub fn pool_name(&self) -> &str;
         pub fn pop_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
-        pub fn put_direct<T: 'static>(&self, cacheref: &T, compression: Compression,
+        pub fn put_direct<T>(&self, cacheref: &T, compression: Compression,
                          txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<DRP>> + Send>>
-            where T: borrow::Borrow<dyn CacheRef>;
+            where T: borrow::Borrow<dyn CacheRef> + 'static;
         pub fn size(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
         pub fn status(&self) -> Pin<Box<dyn Future<Output=Status> + Send>>;
         pub fn used(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
@@ -481,12 +481,10 @@ mod ddml {
     use super::super::*;
     use divbuf::{DivBuf, DivBufShared};
     use futures::{
-        FutureExt,
         future,
         channel::oneshot
     };
     use mockall::{
-        self,
         Sequence,
         predicate::*
     };

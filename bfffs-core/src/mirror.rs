@@ -778,7 +778,7 @@ mod t {
         sync::{Arc, atomic::{AtomicU32, Ordering}}
     };
     use divbuf::DivBufShared;
-    use futures::{FutureExt, future};
+    use futures::future;
     use itertools::Itertools;
     use mockall::predicate::*;
     use nonzero_ext::nonzero;

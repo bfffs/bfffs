@@ -1611,7 +1611,6 @@ use crate::{
     ddml::DRP
 };
 use pretty_assertions::assert_eq;
-use std::ops::Deref;
 use super::*;
 
 #[test]

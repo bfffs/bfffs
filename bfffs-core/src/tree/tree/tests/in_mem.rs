@@ -1,15 +1,6 @@
 //! Tests regarding in-memory manipulation of Trees
 // LCOV_EXCL_START
 
-use crate::{
-    dml::MockDML,
-    writeback::Credit
-};
-use futures::{
-    future,
-    TryStreamExt,
-    stream::FuturesUnordered
-};
 use mockall::predicate::eq;
 use pretty_assertions::assert_eq;
 use super::*;

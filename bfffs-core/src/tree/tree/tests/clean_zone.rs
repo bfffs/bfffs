@@ -2,7 +2,6 @@
 // LCOV_EXCL_START
 
 use crate::ddml::*;
-use futures::future;
 use mockall::predicate::*;
 use pretty_assertions::assert_eq;
 use std::sync::atomic::{AtomicU64, Ordering};

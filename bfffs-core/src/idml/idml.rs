@@ -3,7 +3,7 @@
 use crate::{
     dml::*,
     ddml::*,
-    cache::{self, Cache, Cacheable, CacheRef, Key},
+    cache::{self, Cache, Key},
     label::*,
     tree::TreeOnDisk,
     types::*,
@@ -26,7 +26,7 @@ use std::{
 };
 use tracing::instrument;
 use tracing_futures::Instrument;
-use super::{DTree, RidtEntry, Status};
+use super::{DTree, RidtEntry};
 
 /// Indirect Data Management Layer for a single `Pool`
 pub struct IDML {

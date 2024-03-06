@@ -11,7 +11,7 @@ use lazy_static::lazy_static;
 use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
 use std::{
-    cmp::{Ord, Ordering, PartialOrd},
+    cmp::Ordering,
     collections::BinaryHeap,
     collections::VecDeque,
     io,
@@ -1544,7 +1544,6 @@ mod t {
         use std::pin::pin;
         use divbuf::DivBufShared;
         use futures::{
-            Future,
             TryFutureExt,
             TryStreamExt,
             channel::oneshot,
@@ -1555,7 +1554,6 @@ mod t {
         use futures_test::task::noop_context;
         use mockall::*;
         use mockall::predicate::*;
-        use mockall::PredicateBooleanExt;
         use rstest::{fixture, rstest};
         use super::*;
 

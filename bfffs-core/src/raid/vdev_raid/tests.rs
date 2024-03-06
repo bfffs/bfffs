@@ -1,7 +1,7 @@
 // vim: tw=80
 // LCOV_EXCL_START
 use super::*;
-use futures::{FutureExt, future};
+use futures::future;
 use mockall::predicate::*;
 use rstest::rstest;
 
@@ -218,7 +218,6 @@ mod errors {
 
     use std::sync::Mutex;
 
-    use itertools::Itertools;
     use rand::{Rng, thread_rng};
     use rstest_reuse::{apply, template};
 
@@ -1497,11 +1496,7 @@ mod lba2zone {
 
 mod open {
     use super::*;
-    use itertools::Itertools;
-    use crate::{
-        mirror,
-        raid::{self, vdev_raid}
-    };
+    use crate::raid::{self, vdev_raid};
 
     /// Regardless of the order in which the devices are given to
     /// raid::open, it will construct itself in the correct order.

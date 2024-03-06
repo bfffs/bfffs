@@ -28,7 +28,6 @@ use serde::ser::{Serialize, Serializer, SerializeStruct};
 use std::{
     any::Any,
     collections::BTreeMap,
-    convert::TryFrom,
     ffi::{OsString, OsStr},
     fmt::{self, Debug},
     hash::{Hash, Hasher},

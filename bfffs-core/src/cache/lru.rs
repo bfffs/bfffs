@@ -493,7 +493,7 @@ fn test_remove_lru() {
     cache.insert(key2, dbs);
 
     assert_eq!(cache.remove(&key1).unwrap().cache_space(), 5);
-    assert!(cache.store.get(&key1).is_none());
+    assert!(!cache.store.contains_key(&key1));
     assert_eq!(cache.size(), 7);
     assert_eq!(cache.lru, Some(key2));
     {
@@ -517,7 +517,7 @@ fn test_remove_middle() {
     cache.insert(key3, dbs);
 
     assert_eq!(cache.remove(&key2).unwrap().cache_space(), 7);
-    assert!(cache.store.get(&key2).is_none());
+    assert!(!cache.store.contains_key(&key2));
     assert_eq!(cache.size(), 16);
     assert_eq!(cache.lru, Some(key1));
     assert_eq!(cache.mru, Some(key3));
@@ -543,7 +543,7 @@ fn test_remove_mru() {
     cache.insert(key2, dbs);
 
     assert_eq!(cache.remove(&key2).unwrap().cache_space(), 7);
-    assert!(cache.store.get(&key2).is_none());
+    assert!(!cache.store.contains_key(&key2));
     assert_eq!(cache.size(), 5);
     assert_eq!(cache.mru, Some(key1));
     {

@@ -4,17 +4,10 @@
 // TODO: add unit tests to assert that Fs::write borrows the correct amount
 // of credit
 use super::*;
-use crate::{
-    dataset::RangeQuery,
-    tree::{Key, Value}
-};
-use futures::task::Poll;
+use crate::tree::{Key, Value};
 use mockall::{Sequence, predicate::*};
 use pretty_assertions::assert_eq;
-use std::{
-    borrow::Borrow,
-    ffi::OsString
-};
+use std::borrow::Borrow;
 
 fn read_write_filesystem() -> ReadWriteFilesystem {
     ReadWriteFilesystem::default()
