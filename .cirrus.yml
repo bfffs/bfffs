@@ -32,7 +32,7 @@ task:
         VERSION: 1.70.0
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
-        image: freebsd-13-2-release-amd64
+        image: freebsd-13-3-release-amd64
         platform: freebsd
         cpu: 4
         disk: 40
