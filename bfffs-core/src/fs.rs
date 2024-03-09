@@ -2110,7 +2110,7 @@ impl Fs {
                 assert_eq!(ino, dirent.ino);
                 // 2) Insert the new directory entry
                 let isdir = dirent.dtype == libc::DT_DIR;
-                dirent.name = owned_newname2.clone();
+                dirent.name.clone_from(&owned_newname2);
                 let ino = dirent.ino;
                 htable::insert(ds6, dst_de_key, dirent, owned_newname2)
                 .map_ok(move |r| {
