@@ -42,32 +42,32 @@ use std::{
 use tracing::instrument;
 use tracing_futures::Instrument;
 
-/// Anything that has a min_value method.  Too bad libstd doesn't define this.
+/// Anything that has a MIN associated constant.  Too bad libstd doesn't define this.
 pub trait MinValue {
     fn min_value() -> Self;
 }
 
 impl MinValue for u32 {
     fn min_value() -> Self {
-        u32::min_value()
+        u32::MIN
     }
 }
 
 impl MinValue for PBA {
     fn min_value() -> Self {
-        PBA::new(ClusterT::min_value(), LbaT::min_value())
+        PBA::new(ClusterT::MIN, LbaT::MIN)
     }
 }
 
 impl MinValue for RID {
     fn min_value() -> Self {
-        RID(u64::min_value())
+        RID(u64::MIN)
     }
 }
 
 impl MinValue for TxgT {
     fn min_value() -> Self {
-        TxgT(u32::min_value())
+        TxgT(u32::MIN)
     }
 }
 

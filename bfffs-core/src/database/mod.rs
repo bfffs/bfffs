@@ -111,7 +111,7 @@ impl TypicalSize for ForestKey {
 impl MinValue for ForestKey {
     fn min_value() -> Self {
         Self {
-            tree_id: TreeID(u64::min_value()),
+            tree_id: TreeID(u64::MIN),
             offset: 0
         }
     }

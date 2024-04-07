@@ -217,8 +217,7 @@ impl TortureTest {
             let piece: u64 = self.rng.gen_range(0..4);
             let ofs = 2048 * piece;
             // Use a predictable fill value
-            let fill = (fd.ino().wrapping_mul(piece) %
-                        u64::from(u8::max_value()))
+            let fill = (fd.ino().wrapping_mul(piece) % u64::from(u8::MAX))
                 as u8;
             let buf = [fill; 2048];
             info!("write {:x} at offset {}", self.files[idx].0, ofs);

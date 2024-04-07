@@ -187,13 +187,13 @@ impl PrimeS {
         // The chunk address
         let id = chunkid.address();
         let a = id.rem_euclid(self.datachunks as u64);
-        debug_assert!(a < i32::max_value() as u64);
+        debug_assert!(a < i32::MAX as u64);
         let a = a as i32;
         // The repetition and iteration
         let (r, z) = self.id2rep_and_iter(chunkid);
         // The stripe
         let s = a / i32::from(self.m);
-        debug_assert!(s <= i32::from(i16::max_value()));
+        debug_assert!(s <= i32::from(i16::MAX));
         // The stride
         let y = (z.rem_euclid(i16::from(self.n - 1))) + 1;
         ChunklocInt{a, r, s: s as i16, y, z}
@@ -209,7 +209,7 @@ impl PrimeS {
         let rep = id.div_euclid(self.datachunks as u64);
         let iter = id.rem_euclid(self.datachunks as u64) as i32 /
                    (i32::from(self.m) * i32::from(self.n));
-        debug_assert!(iter <= i32::from(i16::max_value()));
+        debug_assert!(iter <= i32::from(i16::MAX));
         (rep, iter as i16)
     }
 
@@ -253,7 +253,7 @@ impl PrimeS {
             ChunkId::Data(_) => a - i32::from(s * i16::from(m)),
             ChunkId::Parity(_, i) => i32::from(m) + i32::from(i)
         };
-        debug_assert!(b < i32::from(u8::max_value()));
+        debug_assert!(b < i32::from(u8::MAX));
         b as u8
     }
 
@@ -311,7 +311,7 @@ impl Locator for PrimeS {
         let offset = chunkloc.offset.rem_euclid(self.depth as u64) as i32;
         // iteration
         let z = offset / i32::from(self.k);
-        debug_assert!(z < i32::from(i16::max_value()));
+        debug_assert!(z < i32::from(i16::MAX));
         let z = z as i16;
         // stride
         let y = z.rem_euclid(i16::from(self.n - 1)) + 1;
@@ -639,8 +639,7 @@ mod benches {
         let f = 3;
 
         let locator = PrimeS::new(n, k, f);
-        let mut iter = locator.iter(ChunkId::Data(0),
-                                    ChunkId::Data(u64::max_value()));
+        let mut iter = locator.iter(ChunkId::Data(0), ChunkId::Data(u64::MAX));
 
         bench.iter(|| {
             iter.next()
@@ -985,7 +984,7 @@ mod tests {
         assert_eq!(locator.id2loc(ChunkId::Parity(126, 0)).offset, 30);
         assert_eq!(locator.id2loc(ChunkId::Parity(126, 1)).offset, 30);
         assert_eq!(locator.loc2id(Chunkloc::new(0, 30)), ChunkId::Data(126));
-        // Repetition u32::max_value()
+        // Repetition u32::MAX
         assert_eq!(locator.id2loc(ChunkId::Data(541_165_879_170)).offset,
             128_849_018_850);
         assert_eq!(locator.id2loc(ChunkId::Parity(541_165_879_170, 0)).offset,

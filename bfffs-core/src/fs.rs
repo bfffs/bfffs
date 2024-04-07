@@ -1863,7 +1863,7 @@ impl Fs {
         }
         impl Cursor {
             fn new(offset: u64, bucket_idx: usize) -> Self {
-                debug_assert!(bucket_idx <= u8::max_value() as usize,
+                debug_assert!(bucket_idx <= u8::MAX as usize,
                     "A directory has a > 256-way hash collision?");
                 Cursor((offset << 8) | bucket_idx as u64)
             }
@@ -2353,9 +2353,9 @@ impl Fs {
                 f_bavail: blocks - used,
                 f_bfree: blocks - used,
                 f_blocks: blocks,
-                f_favail: u64::max_value(),
-                f_ffree: u64::max_value(),
-                f_files: u64::max_value(),
+                f_favail: u64::MAX,
+                f_ffree: u64::MAX,
+                f_files: u64::MAX,
                 f_bsize: rs,
                 f_flag: 0,
                 f_frsize: 4096,

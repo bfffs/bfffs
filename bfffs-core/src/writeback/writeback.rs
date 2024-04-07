@@ -268,7 +268,7 @@ impl WriteBack {
 
     /// Construct a nearly unlimited WriteBack cache.
     pub fn limitless() -> Self {
-        Self::with_capacity((isize::max_value() >> 1) as usize)
+        Self::with_capacity((isize::MAX >> 1) as usize)
     }
 
     pub fn repay(&self, mut credit: Credit) {

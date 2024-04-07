@@ -237,7 +237,7 @@ impl<'a> FreeSpaceMap {
                 if zod.txgs.end > TxgT::from(0) {
                     let zl = vdev.zone_limits(zid);
                     fsm.open_zone(zid, zl.0, zl.1, 0, zod.txgs.start).unwrap();
-                    if zod.allocated_blocks == u32::max_value() {
+                    if zod.allocated_blocks == u32::MAX {
                         // Zone is closed
                         fsm.finish_zone(zid, zod.txgs.end - 1);
                     } else if zod.allocated_blocks > 0 {
@@ -401,7 +401,7 @@ impl<'a> FreeSpaceMap {
                 } else {
                     Some(ClosedZone {
                         zid,
-                        start: LbaT::max_value(),   // sentinel value
+                        start: LbaT::MAX,   // sentinel value
                         freed_blocks: LbaT::from(z.freed_blocks),
                         total_blocks: LbaT::from(z.total_blocks),
                         txgs: z.txgs.clone()
@@ -462,7 +462,7 @@ impl<'a> FreeSpaceMap {
         }
         self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
-        self.zones[idx].txgs = txg..TxgT(u32::max_value());
+        self.zones[idx].txgs = txg..TxgT(u32::MAX);
         let oz = OpenZone{start, allocated_blocks: lbas as u32};
         self.empty_zones.remove(&id);
         assert!(self.open_zones.insert(id, oz).is_none(),
@@ -542,7 +542,7 @@ impl<'a> FreeSpaceMap {
                 } else {
                     match self.open_zones.get(&z) {
                         Some(oz) => oz.allocated_blocks,
-                        None => u32::max_value()
+                        None => u32::MAX
                     }
                 };
                 let freed_blocks = if self.is_dead(z) || self.is_empty(z) {
@@ -705,7 +705,7 @@ impl Display for FreeSpaceMap {
 #[derive(Serialize, Deserialize, Debug, Hash)]
 struct ZoneOnDisk {
     /// The number of blocks that have been allocated in each Zone.  If zero,
-    /// then the zone is dead or empty.  If `u32::max_value()`, then the zone is
+    /// then the zone is dead or empty.  If `u32::MAX`, then the zone is
     /// closed.
     allocated_blocks: u32,
 

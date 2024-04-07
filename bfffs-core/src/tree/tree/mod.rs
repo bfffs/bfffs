@@ -689,7 +689,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 // larger half on the left side.
                 2 * (split_size / elem_size)
             };
-            debug_assert!(max_fanout <= usize::from(u16::max_value()));
+            debug_assert!(max_fanout <= usize::from(u16::MAX));
             let min_fanout = div_roundup(max_fanout as u16, spread);
             (min_fanout, max_fanout as u16)
         };
@@ -1412,14 +1412,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
             TreeRoot{ elem, height: 1}
         }));
         // Since there are no on-disk children, the initial TXG range is empty
-        debug_assert!(Self::INT_ELEM_SIZE < u8::max_value as usize);
+        debug_assert!(Self::INT_ELEM_SIZE < u8::MAX as usize);
         debug_assert!(Self::INT_ELEM_SIZE > 0);
         let int_ts = unsafe{
             // Safe because we checked that INT_ELEM_SIZE > 0
             NonZeroU8::new_unchecked(Self::INT_ELEM_SIZE as u8)
         };
         let int_compressor = Compression::LZ4(Some(int_ts));
-        debug_assert!(Self::LEAF_ELEM_SIZE < u8::max_value as usize);
+        debug_assert!(Self::LEAF_ELEM_SIZE < u8::MAX as usize);
         debug_assert!(Self::LEAF_ELEM_SIZE > 0);
         let leaf_ts = unsafe {
             // Safe because we checked that LEAF_ELEM_SIZE > 0

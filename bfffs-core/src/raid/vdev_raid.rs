@@ -682,7 +682,7 @@ impl VdevRaid {
         ulba: LbaT
     ) -> Result<()>
     {
-        const SENTINEL : LbaT = LbaT::max_value();
+        const SENTINEL : LbaT = LbaT::MAX;
 
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
         let n = self.children.len();
@@ -1598,7 +1598,7 @@ impl VdevRaid {
 
         // Create an SGList for each disk.
         let mut sglists = Vec::<SGList>::with_capacity(n);
-        const SENTINEL : LbaT = LbaT::max_value();
+        const SENTINEL : LbaT = LbaT::MAX;
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
         let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
         for _ in 0..n {

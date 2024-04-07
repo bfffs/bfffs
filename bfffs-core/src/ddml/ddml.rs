@@ -255,7 +255,7 @@ impl DDML {
 
         // Serialize
         let serialized = cacheref.borrow().serialize();
-        assert!(serialized.len() < u32::max_value() as usize,
+        assert!(serialized.len() < u32::MAX as usize,
             "Record exceeds maximum allowable length");
         let lsize = serialized.len();
 
