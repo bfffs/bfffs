@@ -51,7 +51,7 @@ impl SGCursor<'_> {
     /// Return the length of the next contiguous segment.
     ///
     /// This will be the length of the next segment returned by
-    /// `next(usize::max_value())`
+    /// `next(usize::MAX)`
     pub fn peek_len(&self) -> usize {
         if self.sglist_idx < self.sglist.len() {
             self.sglist[self.sglist_idx].len() - self.iovec_idx
@@ -74,7 +74,7 @@ mod tests {
     use divbuf::DivBufShared;
     use pretty_assertions::assert_eq;
     use super::*;
-    const MAX: usize = usize::max_value();
+    const MAX: usize = usize::MAX;
 
     #[test]
     pub fn test_multisegment() {

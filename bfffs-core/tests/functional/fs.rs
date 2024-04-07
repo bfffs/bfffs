@@ -1272,7 +1272,7 @@ root:
         move |extattr: &ExtAttr| {
             if ns == extattr.namespace() {
                 let name = extattr.name();
-                assert!(name.len() as u32 <= u32::from(u8::max_value()));
+                assert!(name.len() as u32 <= u32::from(u8::MAX));
                 1 + name.as_bytes().len() as u32
             } else {
                 0
@@ -1289,7 +1289,7 @@ root:
     {
         move |buf: &mut Vec<u8>, extattr: &ExtAttr| {
             if ns == extattr.namespace() {
-                assert!(extattr.name().len() <= u8::max_value() as usize);
+                assert!(extattr.name().len() <= u8::MAX as usize);
                 buf.push(extattr.name().len() as u8);
                 buf.extend_from_slice(extattr.name().as_bytes());
             }
