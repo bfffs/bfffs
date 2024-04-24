@@ -264,17 +264,23 @@ impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
     }
 }
 
+/// For YAML, use singleton_map because nested enums aren't supported by
+/// serde_yaml_ng 0.10.0
 mod node_serializer {
     use futures_locks::RwLock;
     use serde::{Deserialize, de::Deserializer, Serialize, Serializer};
+    use serde_yaml_ng::with::singleton_map::SingletonMap;
     use super::{Addr, Key, Node, NodeData, Value};
 
     pub(super) fn deserialize<'de, A, DE, K, V>(deserializer: DE)
         -> Result<Box<Node<A, K, V>>, DE::Error>
         where A: Addr, DE: Deserializer<'de>, K: Key, V: Value
     {
-        NodeData::deserialize(deserializer)
-            .map(|node_data| Box::new(Node(RwLock::new(node_data))))
+        if deserializer.is_human_readable() {
+            NodeData::deserialize(SingletonMap::new(deserializer))
+        } else {
+            NodeData::deserialize(deserializer)
+        }.map(|node_data| Box::new(Node(RwLock::new(node_data))))
     }
 
     pub(super) fn serialize<A, S, K, V>(node: &Node<A, K, V>,
@@ -282,7 +288,11 @@ mod node_serializer {
         where A: Addr, S: Serializer, K: Key, V: Value
     {
         let guard = node.0.try_read().unwrap();
-        (*guard).serialize(serializer)
+        if serializer.is_human_readable() {
+            (*guard).serialize(SingletonMap::new(serializer))
+        } else {
+            (*guard).serialize(serializer)
+        }
     }
 }
 

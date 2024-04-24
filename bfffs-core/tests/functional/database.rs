@@ -137,8 +137,8 @@ mod database {
         let mut buf = Vec::with_capacity(1024);
         db.dump_forest(&mut buf).await.unwrap();
         let forest = String::from_utf8(buf).unwrap();
-        let expected = r#"---
-limits:
+        let expected =
+r#"limits:
   min_int_fanout: 76
   max_int_fanout: 302
   min_leaf_fanout: 91
@@ -153,31 +153,28 @@ root:
     txgs:
       start: 0
       end: 1
-    ptr:
-      Addr: 2
-...
+    ptr: !Addr 2
 ---
-2:
-  Leaf:
-    credit: 0
-    items:
-      ? tree_id: 0
-        offset: 0
-      : Tree:
-          parent: ~
-          tod:
-            height: 1
-            _reserved: 0
-            limits:
-              min_int_fanout: 91
-              max_int_fanout: 364
-              min_leaf_fanout: 576
-              max_leaf_fanout: 2302
-              _max_size: 4194304
-            root: 1
-            txgs:
-              start: 0
-              end: 1
+2: !Leaf
+  credit: 0
+  items:
+    ? tree_id: 0
+      offset: 0
+    : !Tree
+      parent: null
+      tod:
+        height: 1
+        _reserved: 0
+        limits:
+          min_int_fanout: 91
+          max_int_fanout: 364
+          min_leaf_fanout: 576
+          max_leaf_fanout: 2302
+          _max_size: 4194304
+        root: 1
+        txgs:
+          start: 0
+          end: 1
 "#;
         pretty_assertions::assert_eq!(expected, forest);
     }

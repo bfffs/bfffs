@@ -56,8 +56,7 @@ async fn forest(harness: Harness) {
     txgs:
       start: 0
       end: 1
-    ptr:
-      Addr:",
+    ptr: !Addr",
         ));
 }
 #[rstest]
@@ -101,8 +100,7 @@ async fn tree(harness: Harness) {
     txgs:
       start: 0
       end: 1
-    ptr:
-      Addr: 1
+    ptr: !Addr 1
 ",
         ));
 }
