@@ -11,4 +11,3 @@ members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 resolver = "2"
 
 [patch.crates-io]
-fuse3 = { git = "https://github.com/Sherlock-Holo/fuse3.git", rev = "59d9c6e" }

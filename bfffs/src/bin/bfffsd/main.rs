@@ -338,7 +338,16 @@ impl Bfffsd {
                     rpc::Response::FsMount(Err(Error::EPERM))
                 } else {
                     match self.mount(req.name).await {
-                        Ok(_) => rpc::Response::FsMount(Ok(())),
+                        Ok(mount_handle) => {
+                            /*
+                             * free the MountHandle without dropping it so we
+                             * don't unmont the file system.  MountHandle is an
+                             * anti-feature.  See
+                             * https://github.com/Sherlock-Holo/fuse3/issues/92
+                             */
+                            std::mem::forget(mount_handle);
+                            rpc::Response::FsMount(Ok(()))
+                        },
                         Err(e) => {
                             error!("mount: {:?}", e);
                             rpc::Response::FsMount(Err(e))

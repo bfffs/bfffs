@@ -8,6 +8,7 @@
 use std::{
     collections::hash_map::HashMap,
     ffi::{OsStr, OsString},
+    num::NonZeroU32,
     os::unix::ffi::OsStrExt,
     pin::Pin,
     slice,
@@ -15,7 +16,6 @@ use std::{
     time::Duration,
 };
 
-use async_trait::async_trait;
 use bfffs_core::fs::{
     self,
     ExtAttr,
@@ -38,6 +38,7 @@ use fuse3::{
             ReplyData,
             ReplyDirectory,
             ReplyEntry,
+            ReplyInit,
             ReplyLSeek,
             ReplyStatFs,
             ReplyWrite,
@@ -247,16 +248,17 @@ impl Default for FuseFs {
     }
 }
 
-#[async_trait]
 impl Filesystem for FuseFs {
     // TODO: implement readdirplus
-    type DirEntryPlusStream =
-        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntryPlus>> + Send>>;
-    type DirEntryStream =
-        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntry>> + Send>>;
+    type DirEntryPlusStream<'a> =
+        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntryPlus>> + Send + 'a>>;
+    type DirEntryStream<'a> =
+        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntry>> + Send + 'a>>;
 
-    async fn init(&self, _req: Request) -> fuse3::Result<()> {
-        Ok(())
+    async fn init(&self, _req: Request) -> fuse3::Result<ReplyInit> {
+        Ok(ReplyInit{
+            max_write: NonZeroU32::new(1<<24).unwrap()
+        })
     }
 
     // FreeBSD's VOP_CREATE doesn't forward the open(2) flags, so the kernel
@@ -770,13 +772,13 @@ impl Filesystem for FuseFs {
         }
     }
 
-    async fn readdir(
-        &self,
+    async fn readdir<'a>(
+        &'a self,
         _req: Request,
         ino: u64,
         _fh: u64,
         soffset: i64,
-    ) -> fuse3::Result<ReplyDirectory<Self::DirEntryStream>> {
+    ) -> fuse3::Result<ReplyDirectory<Self::DirEntryStream<'a>>> {
         let fd = self
             .files
             .lock()
