@@ -1,7 +1,3 @@
-// Suppress this lint, triggered by rstest
-// https://github.com/la10736/rstest/issues/238
-#![allow(clippy::duplicated_attributes)]
-
 use bfffs_core::{
     *,
     cache::*,
