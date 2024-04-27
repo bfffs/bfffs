@@ -382,9 +382,6 @@ struct Inner {
     /// Current queue depth
     queue_depth: u32,
 
-    /// Underlying device
-    pub leaf: VdevLeaf,
-
     /// The last LBA issued an operation
     last_lba: LbaT,
 
@@ -414,7 +411,11 @@ struct Inner {
 
     /// A `Weak` pointer back to `self`.  Used for closures that require a
     /// reference to `self`, but also require `'static` lifetime.
-    weakself: Weak<RwLock<Inner>>
+    weakself: Weak<RwLock<Inner>>,
+
+    /// Underlying device
+    // Must come last, so it drops after fields containing BlockOps
+    leaf: VdevLeaf,
 }
 
 impl Inner {
@@ -534,10 +535,10 @@ impl Inner {
         // have to spawn it into the event loop manually
         let fut: Pin<Box<VdevFut>> = match block_op.cmd {
             Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
-            Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
+            Cmd::ReadAt(iovec_mut) => Box::pin(self.leaf.read_at(iovec_mut, lba)),
             Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
             Cmd::ReadSpacemap(iovec_mut, idx) =>
-                    self.leaf.read_spacemap(iovec_mut, idx),
+                    Box::pin(self.leaf.read_spacemap(iovec_mut, idx)),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
@@ -902,7 +903,7 @@ impl VdevBlock {
     // well.  However, there would be little point as FreeBSD currently doesn't
     // support cancelling operations to raw disk devices, and file-backed vdevs
     // are not intended for production file systems.
-    pub fn remove(self) -> impl Future<Output=()> + Send + Sync {
+   pub fn remove(self) -> impl Future<Output=()> + Send + Sync {
         let (sender, receiver) = oneshot::channel::<()>();
         RemoveFut {
             vdev: self,

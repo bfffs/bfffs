@@ -206,7 +206,9 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
+    fn sync_all<'a>(&'a self) -> Pin<Box<dyn futures::Future<Output = Result<()>> + Send + Sync + 'a>>
+    //fn sync_all<'a>(&'a self) ->  impl Future<Output = Result<()>> + Send + Sync + 'a
+    {
         let fut = self.file.sync_all().unwrap()
             .map_ok(drop)
             .map_err(Error::from);
@@ -440,7 +442,8 @@ impl VdevFile {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&'static self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    pub fn read_at<'a>(&'a self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output = Result<()>> + Send + Sync + 'a
+    {
         // Unlike write_at, the upper layers will never read into a buffer that
         // isn't a multiple of a block size.  DDML::read ensures that.
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
@@ -453,7 +456,7 @@ impl VdevFile {
             mem::transmute::<&mut[u8], &'static mut [u8]>(buf.as_mut())
         };
         let fut = self.file.read_at(&mut *bufaddr, off).unwrap();
-        Box::pin(ReadAt { _buf: buf, fut })
+        ReadAt { _buf: buf, fut }
     }
 
     /// Read just one of a vdev's labels
@@ -494,7 +497,7 @@ impl VdevFile {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    pub fn read_spacemap(&'static self, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    pub fn read_spacemap<'a>(&'a self, buf: IoVecMut, idx: u32) -> impl Future<Output = Result<()>> + Send + Sync + 'a
     {
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         assert!(LbaT::from(idx) < LABEL_COUNT);
@@ -684,14 +687,14 @@ impl VdevFile {
 }
 
 #[pin_project]
-struct ReadAt {
+struct ReadAt<'a> {
     // Owns the buffer used by the Future
     _buf: IoVecMut,
     #[pin]
-    fut: tokio_file::ReadAt<'static>
+    fut: tokio_file::ReadAt<'a>
 }
 
-impl Future for ReadAt {
+impl<'a> Future for ReadAt<'a> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
