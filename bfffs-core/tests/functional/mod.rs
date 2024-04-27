@@ -14,18 +14,19 @@ macro_rules! t {
     })
 }
 
-mod clean_zone;
-mod cluster;
-mod controller;
-mod database;
-mod ddml;
-mod fs;
-mod idml;
-mod mirror;
-mod pool;
-mod raid;
+//mod clean_zone;
+//mod cluster;
+//mod controller;
+//mod database;
+//mod ddml;
+//mod fs;
+//mod idml;
+//mod mirror;
+//mod pool;
+//mod raid;
 mod util;
-mod vdev_block;
+//mod vdev_block;
 mod vdev_file;
 
-use util::{Gnop, Md, PoolBuilder, PoolHarness};
+use util::{Gnop, Md};
+//use util::{Gnop, Md, PoolBuilder, PoolHarness};

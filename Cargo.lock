@@ -317,6 +317,7 @@ dependencies = [
  "mockall",
  "mockall_double",
  "nix 0.27.1",
+ "nix 0.28.0",
  "nonzero_ext",
  "num-traits",
  "num_cpus",

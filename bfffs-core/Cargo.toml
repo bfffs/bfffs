@@ -32,7 +32,7 @@ lazy_static = "1.0"
 libc = "0.2.105"
 metrohash = "1.0"
 mockall_double = "0.3.1"
-nix = { version = "0.27.0", default-features = false, features = ["feature", "fs", "ioctl", "mount", "time"] }
+nix = { version = "0.28.0", default-features = false, features = ["feature", "fs", "ioctl", "mount", "time"] }
 num_enum = "0.5.1"
 num-traits = "0.2.0"
 pin-project = "1.0.11"
@@ -61,7 +61,7 @@ histogram = "0.6"
 itertools = "0.10.0"
 mockall = "0.12.0"
 nonzero_ext = "0.3.0"
-nix = { version = "0.27.0", default-features = false, features = ["user"] }
+nix = { version = "0.28.0", default-features = false, features = ["user"] }
 num_cpus = "1"
 permutohedron = "0.2"
 pretty_assertions = "1.3"
