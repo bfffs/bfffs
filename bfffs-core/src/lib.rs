@@ -56,7 +56,7 @@ pub mod label;
 pub mod types;
 pub mod util;
 pub mod vdev;
-//pub mod vdev_block;
+pub mod vdev_block;
 pub mod vdev_file;
 //pub mod writeback;
 

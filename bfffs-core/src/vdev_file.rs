@@ -201,9 +201,6 @@ pub struct VdevFile {
     // NB: this could be Arc<atomic_enum> to eliminate the need for &mut self in
     // fn erase_zone()
     erase_method:   EraseMethod,
-    /// The preferred (not necessarily minimum) sector size for accessing
-    /// the device
-    sectorsize: usize
 }
 
 impl Vdev for VdevFile {
@@ -400,6 +397,8 @@ impl VdevFile {
             .open(pb.as_path())?;
         let md = f.metadata()?;
         let ft = md.file_type();
+        // The preferred (not necessarily minimum) sector size for accessing
+        // the device
         let sectorsize = if ft.is_block_device() || ft.is_char_device() {
             let mut sectorsize = mem::MaybeUninit::<u32>::uninit();
             let mut stripesize = mem::MaybeUninit::<nix::libc::off_t>::uninit();
@@ -427,7 +426,6 @@ impl VdevFile {
             file: f,
             lbas_per_zone,
             path: pb,
-            sectorsize,
             size,
             spacemap_space,
             uuid: Uuid::default()
