@@ -17,7 +17,6 @@ use futures::{
 };
 #[cfg(test)] use mockall::mock;
 use nix::libc::{c_int, off_t};
-use num_traits::FromPrimitive;
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use std::{
