@@ -438,7 +438,7 @@ impl VdevFile {
     /// used to construct other vdevs stacked on top of this one.
     ///
     /// * `path`    Pathname for the file.  It may be a device node.
-    pub async fn open<P: AsRef<Path>>(path: P)
+    async fn open<P: AsRef<Path>>(path: P)
         -> Result<(Self, LabelReader)>
     {
         let pb = path.as_ref().to_path_buf();
@@ -837,7 +837,7 @@ mock!{
         pub fn erase_zone(&mut self, lba: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
         #[mockall::concretize]
-        pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
+        async fn open<P>(path: P) -> Result<(Self, LabelReader)>
             where P: AsRef<Path>;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
         pub fn path(&self) -> &Path;
