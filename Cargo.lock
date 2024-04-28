@@ -267,7 +267,7 @@ dependencies = [
  "lalrpop-util",
  "libc",
  "mockall",
- "nix 0.28.0",
+ "nix",
  "predicates",
  "pretty_assertions",
  "prettytable",
@@ -316,8 +316,7 @@ dependencies = [
  "metrohash",
  "mockall",
  "mockall_double",
- "nix 0.27.1",
- "nix 0.28.0",
+ "nix",
  "nonzero_ext",
  "num-traits",
  "num_cpus",
@@ -333,6 +332,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_yaml",
+ "static_assertions",
  "tempfile",
  "test-log",
  "time",
@@ -1025,7 +1025,7 @@ dependencies = [
  "futures-channel",
  "futures-util",
  "libc",
- "nix 0.28.0",
+ "nix",
  "serde",
  "slab",
  "tokio",
@@ -1570,7 +1570,7 @@ name = "mio-aio"
 version = "0.8.0"
 dependencies = [
  "mio",
- "nix 0.28.0",
+ "nix",
  "pin-utils",
 ]
 
@@ -1618,17 +1618,6 @@ name = "new_debug_unreachable"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
-
-[[package]]
-name = "nix"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
-dependencies = [
- "bitflags 2.4.0",
- "cfg-if",
- "libc",
-]
 
 [[package]]
 name = "nix"
@@ -2393,6 +2382,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "string_cache"
 version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2615,7 +2610,8 @@ dependencies = [
  "futures",
  "mio",
  "mio-aio",
- "nix 0.28.0",
+ "nix",
+ "static_assertions",
  "tokio",
 ]
 

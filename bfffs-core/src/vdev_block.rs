@@ -38,7 +38,7 @@ pub use crate::vdev_file::Status;
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
-pub type VdevLeaf = VdevFile;
+pub type VdevLeaf<'fd> = VdevFile<'fd>;
 
 lazy_static! {
     static ref IOV_MAX: Option<NonZeroUsize> = {
@@ -414,8 +414,9 @@ struct Inner {
     weakself: Weak<RwLock<Inner>>,
 
     /// Underlying device
+    leaf: VdevLeaf<'static>,
     // Must come last, so it drops after fields containing BlockOps
-    leaf: VdevLeaf,
+    device: fs::File,
 }
 
 impl Inner {

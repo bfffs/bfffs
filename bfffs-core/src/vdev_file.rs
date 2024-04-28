@@ -28,7 +28,7 @@ use std::{
     num::NonZeroU64,
     os::unix::{
         fs::{FileTypeExt, OpenOptionsExt},
-        io::{AsRawFd, RawFd}
+        io::{AsRawFd, BorrowedFd, RawFd}
     },
     path::{Path, PathBuf},
     pin::Pin
@@ -139,31 +139,40 @@ pub struct Label {
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
 #[derive(Default)]
 pub struct Manager {
-    devices: BTreeMap<Uuid, VdevFile>,
+    devices: BTreeMap<Uuid, (PathBuf, fs::File)>,
 }
 
 impl Manager {
     /// Import a block device that is already known to exist
     pub fn import(&mut self, uuid: Uuid)
-        -> impl Future<Output=Result<(VdevFile, LabelReader)>>
+        -> impl Future<Output=Result<(fs::File, VdevFile, LabelReader)>>
     {
         future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
-            .and_then(move |vf| async move {
-                let mut lr = VdevFile::read_label(&vf.file).await?;
-                let label: Label = lr.deserialize().unwrap();
-                assert_eq!(uuid, label.uuid);
-                Ok((vf, lr))
-            })
+        .and_then(|(pb, f)| VdevFile::open2(pb, &f)
+                  .map_ok(|(vf, lr)| (f, vf, lr))
+        ).map_ok(move |(f, vf, lr)| {
+            assert_eq!(vf.uuid(), uuid);
+            (f, vf, lr)
+        })
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
     ///
-    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// If present, retain the device in the `Manager` for use as a spare or
     /// for building Pools.
     // TODO: add a method for tasting disks in parallel.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(vdev_file.uuid(), vdev_file);
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
+            .open(&p)?;
+        let pb = p.as_ref().to_path_buf();
+        //let mut vdev = Self::new(pb)?;
+        let mut reader = VdevFile::read_label(&f).await?;
+        let label: Label = reader.deserialize().unwrap();
+        //let (vdev_file, reader) = VdevFile::open(p).await?;
+        self.devices.insert(label.uuid, (pb, f));
         Ok(reader)
     }
 }
@@ -185,8 +194,9 @@ pub struct Status {
 /// I/O operations on `VdevFile` happen immediately; they are not scheduled.
 ///
 #[derive(Debug)]
-pub struct VdevFile {
+pub struct VdevFile<'fd> {
     file:           fs::File,
+    fd:             BorrowedFd<'fd>,
     /// Number of reserved LBAS in first zone for each spacemap
     spacemap_space: LbaT,
     /// Number of LBAs per simulated zone
@@ -202,7 +212,7 @@ pub struct VdevFile {
     erase_method:   EraseMethod,
 }
 
-impl Vdev for VdevFile {
+impl<'fd> Vdev for VdevFile<'fd> {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= self.reserved_space() {
             Some((lba / self.lbas_per_zone) as ZoneT)
@@ -223,9 +233,10 @@ impl Vdev for VdevFile {
     fn sync_all<'a>(&'a self) -> Pin<Box<dyn futures::Future<Output = Result<()>> + Send + Sync + 'a>>
     //fn sync_all<'a>(&'a self) ->  impl Future<Output = Result<()>> + Send + Sync + 'a
     {
-        let fut = AioFileExt::sync_all(&self.file).unwrap()
+        let fut = AioFileExt::sync_all(&self.fd).unwrap()
             .map_ok(drop)
             .map_err(Error::from);
+        //Box::pin(fut) as Pin<Box<dyn futures::Future<Output = Result<()>> + Send + Sync + 'fd>>
         Box::pin(fut)
     }
 
@@ -247,7 +258,7 @@ impl Vdev for VdevFile {
     }
 }
 
-impl VdevFile {
+impl<'fd> VdevFile<'fd> {
     /// Size of a simulated zone
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
@@ -385,51 +396,57 @@ impl VdevFile {
     
     /// Partially construct a VdevFile.
     fn new(pb: PathBuf) -> Result<Self> {
+        todo!()
         // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
         // block indefinitely.  However, using O_NONBLOCK is worse because it
         // can cause spurious failures, such as when another thread fork()s.
         // That happens frequently in the functional tests.
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
-            .open(pb.as_path())?;
-        let md = f.metadata()?;
-        let ft = md.file_type();
-        // The preferred (not necessarily minimum) sector size for accessing
-        // the device
-        let sectorsize = if ft.is_block_device() || ft.is_char_device() {
-            let mut sectorsize = mem::MaybeUninit::<u32>::uninit();
-            let mut stripesize = mem::MaybeUninit::<nix::libc::off_t>::uninit();
-            let fd = f.as_raw_fd();
-            unsafe {
-                // TODO: use stripesize if it's greater than sector size
-                diocgsectorsize(fd, sectorsize.as_mut_ptr())?;
-                diocgstripesize(fd, stripesize.as_mut_ptr())?;
-                if stripesize.assume_init() > 0 {
-                    stripesize.assume_init() as usize
-                } else {
-                    sectorsize.assume_init() as usize
-                }
-            }
-        } else {
-            1
-        };
-        let erase_method = EraseMethod::get(f.as_raw_fd())?;
-        let size = Self::devlen(&f, sectorsize)? / BYTES_PER_LBA as u64;
-        let lbas_per_zone = VdevFile::DEFAULT_LBAS_PER_ZONE;
-        let nzones = div_roundup(size, lbas_per_zone);
-        let spacemap_space = spacemap_space(nzones);
-        let vdev = VdevFile {
-            erase_method,
-            file: f,
-            lbas_per_zone,
-            path: pb,
-            size,
-            spacemap_space,
-            uuid: Uuid::default()
-        };
-        Ok(vdev)
+        //let f = OpenOptions::new()
+            //.read(true)
+            //.write(true)
+            //.custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
+            //.open(pb.as_path())?;
+        //let md = f.metadata()?;
+        //let ft = md.file_type();
+        //// The preferred (not necessarily minimum) sector size for accessing
+        //// the device
+        //let sectorsize = if ft.is_block_device() || ft.is_char_device() {
+            //let mut sectorsize = mem::MaybeUninit::<u32>::uninit();
+            //let mut stripesize = mem::MaybeUninit::<nix::libc::off_t>::uninit();
+            //let fd = f.as_raw_fd();
+            //unsafe {
+                //// TODO: use stripesize if it's greater than sector size
+                //diocgsectorsize(fd, sectorsize.as_mut_ptr())?;
+                //diocgstripesize(fd, stripesize.as_mut_ptr())?;
+                //if stripesize.assume_init() > 0 {
+                    //stripesize.assume_init() as usize
+                //} else {
+                    //sectorsize.assume_init() as usize
+                //}
+            //}
+        //} else {
+            //1
+        //};
+        //let erase_method = EraseMethod::get(f.as_raw_fd())?;
+        //let size = Self::devlen(&f, sectorsize)? / BYTES_PER_LBA as u64;
+        //let lbas_per_zone = VdevFile::DEFAULT_LBAS_PER_ZONE;
+        //let nzones = div_roundup(size, lbas_per_zone);
+        //let spacemap_space = spacemap_space(nzones);
+        //let vdev = VdevFile {
+            //erase_method,
+            //file: f,
+            //lbas_per_zone,
+            //path: pb,
+            //size,
+            //spacemap_space,
+            //uuid: Uuid::default()
+        //};
+        //Ok(vdev)
+    }
+
+    pub async fn new2(f: &'fd fs::File) -> Self
+    {
+        todo!()
     }
 
     /// Open an existing `VdevFile`
@@ -454,6 +471,12 @@ impl VdevFile {
         Ok((vdev, label_reader))
     }
 
+    pub async fn open2(pb: PathBuf, f: &fs::File)
+        -> Result<(Self, LabelReader)>
+    {
+        todo!()
+    }
+
     /// Asynchronously open the given zone.
     ///
     /// This should be called on an empty zone before writing to that zone.
@@ -474,7 +497,8 @@ impl VdevFile {
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at<'a>(&'a self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output = Result<()>> + Send + Sync + 'a
+    pub fn read_at(&'fd self, mut buf: IoVecMut, lba: LbaT) -> ReadAt<'fd>
+    //pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> impl Future<Output = Result<()>> + Send + Sync + 'fd
     {
         // Unlike write_at, the upper layers will never read into a buffer that
         // isn't a multiple of a block size.  DDML::read ensures that.
@@ -529,7 +553,8 @@ impl VdevFile {
     ///                 resized as needed.
     /// - `idx`:        Index of the spacemap to read.  It should be the same as
     ///                 whichever label is being used.
-    pub fn read_spacemap<'a>(&'a self, buf: IoVecMut, idx: u32) -> impl Future<Output = Result<()>> + Send + Sync + 'a
+    pub fn read_spacemap(&'fd self, buf: IoVecMut, idx: u32) -> ReadAt<'fd>
+    //pub fn read_spacemap(&'fd self, buf: IoVecMut, idx: u32) -> impl Future<Output = Result<()>> + Send + Sync + 'fd
     {
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         assert!(LbaT::from(idx) < LABEL_COUNT);
@@ -543,38 +568,38 @@ impl VdevFile {
     /// * `sglist   Scatter-gather list of buffers to receive data
     /// * `lba`     LBA to read from
     #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
-    pub fn readv_at(&'static self, mut sglist: SGListMut, lba: LbaT) -> BoxVdevFut
+    pub fn readv_at(&'fd self, mut sglist: SGListMut, lba: LbaT) -> ReadvAt<'fd>
     {
         for iovec in sglist.iter() {
             debug_assert_eq!(iovec.len() % BYTES_PER_LBA, 0);
         }
         let off = lba * (BYTES_PER_LBA as u64);
-        let mut slices: Box<[IoSliceMut<'static>]> = unsafe {
+        let mut slices: Box<[IoSliceMut<'fd>]> = unsafe {
             // Safe because fut's lifetime will be equal to slices's once we
             // move it into the ReadvAt struct.  Also, because sglist is already
             // heap-allocated, so moving it won't change the data's address.
             sglist.iter_mut()
             .map(|b| {
-                let sl = mem::transmute::<&mut [u8], &'static mut[u8]>(&mut b[..]);
+                let sl = mem::transmute::<&mut [u8], &'fd mut[u8]>(&mut b[..]);
                 IoSliceMut::new(sl)
             }).collect::<Vec<_>>()
             .into_boxed_slice()
         };
-        let bufs: &'static mut [IoSliceMut<'static>] = unsafe {
+        let bufs: &'fd mut [IoSliceMut<'fd>] = unsafe {
             // Safe because fut's lifetime will be equal to bufs's once we
             // move it into the ReadvAt struct.  Also, because slies is already
             // heap-allocated, so moving it won't change the data's address.
-            mem::transmute::<&mut[IoSliceMut<'static>],
-                             &'static mut [IoSliceMut<'static>]>(
+            mem::transmute::<&mut[IoSliceMut<'fd>],
+                             &'fd mut [IoSliceMut<'fd>]>(
                 &mut slices
             )
         };
-        let fut = self.file.readv_at(bufs, off).unwrap();
-        Box::pin(ReadvAt {
+        let fut = self.fd.readv_at(bufs, off).unwrap();
+        ReadvAt {
             _sglist: sglist,
             _slices: slices,
             fut
-        })
+        }
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -595,14 +620,17 @@ impl VdevFile {
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
-    pub fn write_at(&'static self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'static>>
+    pub fn write_at(&'fd self, buf: IoVec, lba: LbaT) -> WriteAt<'fd>
+    //pub fn write_at(&'fd self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'fd>>
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         self.write_at_unchecked(buf, lba)
+        //Box::pin(self.write_at_unchecked(buf, lba))
     }
 
-    fn write_at_unchecked(&'static self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync>>
+    fn write_at_unchecked(&'fd self, buf: IoVec, lba: LbaT) -> WriteAt<'fd>
+    //fn write_at_unchecked(&'fd self, buf: IoVec, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'fd>>
     {
         let off = lba * (BYTES_PER_LBA as u64);
         {
@@ -615,9 +643,12 @@ impl VdevFile {
         let sbuf: &'static [u8] = unsafe {
             mem::transmute::<&[u8], &'static [u8]>( buf.as_ref())
         };
-        let fut = self.file.write_at(sbuf, off).unwrap();
+        let fut = self.fd.write_at(sbuf, off).unwrap();
 
-        Box::pin(WriteAt { _buf: buf, fut })
+        static_assertions::assert_impl_all!(&std::os::unix::io::OwnedFd: Send);
+        static_assertions::assert_impl_all!(WriteAt: Send);
+        WriteAt { _buf:buf, fut }
+        //Box::pin(WriteAt { _buf: buf, fut })
     }
 
     //fn write_at_unchecked2(&self, buf: IoVec, lba: LbaT) -> impl Future<Output = Result<()>> + Send + Sync
@@ -642,7 +673,7 @@ impl VdevFile {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    pub fn write_label<'a>(&'a self, mut label_writer: LabelWriter) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>>
+    pub fn write_label(&'fd self, mut label_writer: LabelWriter) -> WritevAt<'fd>
     {
         let label = Label {
             uuid: self.uuid,
@@ -666,8 +697,8 @@ impl VdevFile {
     ///                 one.  It should be the same as whichever label is being
     ///                 written.
     /// - `block`:      LBA-based offset from the start of the spacemap area
-    pub fn write_spacemap<'a>(&'a self, sglist: SGList, idx: u32, block: LbaT)
-        -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>>
+    pub fn write_spacemap(&'fd self, sglist: SGList, idx: u32, block: LbaT)
+        -> WritevAt<'fd>
     {
         assert!(LbaT::from(idx) < LABEL_COUNT);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
@@ -684,14 +715,14 @@ impl VdevFile {
     ///
     /// * `sglist`  Scatter-gather list of buffers to write
     /// * `lba`     LBA to write to
-    pub fn writev_at<'a>(&'a self, sglist: SGList, lba: LbaT) -> Pin<Box<dyn Future<Output = Result<()>> + Send + Sync + 'a>>
+    pub fn writev_at(&'fd self, sglist: SGList, lba: LbaT) -> WritevAt<'fd>
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         self.writev_at_unchecked(sglist, lba)
     }
 
-    fn writev_at_unchecked<'a>(&'a self, sglist: SGList, lba: LbaT)
-        -> Pin<Box<WritevAt<'a>>>
+    fn writev_at_unchecked(&'fd self, sglist: SGList, lba: LbaT)
+        -> WritevAt<'fd>
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
@@ -710,11 +741,11 @@ impl VdevFile {
                 .into_boxed_slice();
         let fut = self.file.writev_at(&slices, off).unwrap();
 
-        Box::pin(WritevAt {
+        WritevAt {
             _sglist: sglist,
             _slices: slices,
             fut
-        })
+        }
     }
 }
 
@@ -745,14 +776,14 @@ impl<'a> Future for ReadAt<'a> {
 }
 
 #[pin_project]
-struct WriteAt {
+struct WriteAt<'fd> {
     #[pin]
-    fut: tokio_file::WriteAt<'static>,
+    fut: tokio_file::WriteAt<'fd>,
     // Owns the buffer used by the Future
     _buf: IoVec,
 }
 
-impl Future for WriteAt {
+impl<'fd> Future for WriteAt<'fd> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -771,16 +802,16 @@ impl Future for WriteAt {
 }
 
 #[pin_project]
-struct ReadvAt {
+struct ReadvAt<'fd> {
     #[pin]
-    fut: tokio_file::ReadvAt<'static>,
+    fut: tokio_file::ReadvAt<'fd>,
     // Owns the pointer array used by the Future
-    _slices: Box<[IoSliceMut<'static>]>,
+    _slices: Box<[IoSliceMut<'fd>]>,
     // Owns the buffers used by the Future
     _sglist: SGListMut,
 }
 
-impl Future for ReadvAt {
+impl<'fd> Future for ReadvAt<'fd> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like

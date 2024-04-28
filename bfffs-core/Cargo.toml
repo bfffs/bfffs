@@ -39,6 +39,8 @@ pin-project = "1.0.11"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.16"
+# XXX remove static_assertions before submitting PR
+static_assertions = "1.1.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.24.2", features = ["rt", "sync", "time"] }
 tokio-file = { path = "../../tokio-file" }
@@ -80,7 +82,7 @@ default-features = false
 features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
 
 [build-dependencies]
-nix = { version = "0.27.0", default-features = false, features = ["feature"] }
+nix = { version = "0.28.0", default-features = false, features = ["feature"] }
 
 
 [[test]]
