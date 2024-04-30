@@ -496,14 +496,9 @@ impl VdevFile {
     /// # Parameters
     /// - `buf`:        Place the still-serialized spacemap here.  `buf` will be
     ///                 resized as needed.
-    /// - `idx`:        Index of the spacemap to read.  It should be the same as
-    ///                 whichever label is being used.
-    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    /// * `lba`     LBA to read from
+    pub fn read_spacemap(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut
     {
-        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
-        assert!(LbaT::from(idx) < LABEL_COUNT);
-
-        let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         self.read_at(buf, lba)
     }
 
@@ -613,15 +608,10 @@ impl VdevFile {
     /// # Parameters
     ///
     /// - `sglist`:     Buffers of data to write
-    /// - `idx`:        Index of the spacemap area to write: there are more than
-    ///                 one.  It should be the same as whichever label is being
-    ///                 written.
-    /// - `block`:      LBA-based offset from the start of the spacemap area
-    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
+    /// * `lba`     LBA to write to
+    pub fn write_spacemap(&self, sglist: SGList, lba: LbaT)
         -> BoxVdevFut
     {
-        assert!(LbaT::from(idx) < LABEL_COUNT);
-        let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let bytes: u64 = sglist.iter()
             .map(DivBuf::len)
             .sum::<usize>() as u64;
@@ -793,14 +783,13 @@ mock!{
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
         pub fn path(&self) -> &Path;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn read_spacemap(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn spacemap_space(&self) -> LbaT;
         pub fn status(&self) -> Status;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
-        pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
-            -> BoxVdevFut;
+        pub fn write_spacemap(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
         pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
     }
     impl Vdev for VdevFile {

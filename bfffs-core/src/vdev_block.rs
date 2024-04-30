@@ -55,7 +55,7 @@ lazy_static! {
 enum Cmd {
     OpenZone,
     ReadAt(IoVecMut),
-    ReadSpacemap(IoVecMut, u32),
+    ReadSpacemap(IoVecMut),
     ReadvAt(SGListMut),
     WriteAt(IoVec),
     WritevAt(SGList),
@@ -64,7 +64,7 @@ enum Cmd {
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
     WriteLabel(LabelWriter),
-    WriteSpacemap(SGList, u32, LbaT),
+    WriteSpacemap(SGList),
     SyncAll,
 }
 
@@ -79,9 +79,9 @@ impl Cmd {
     }
 
     #[cfg(test)]
-    fn as_write_spacemap(&self) -> (&SGList, &u32, &LbaT) {
-        if let Cmd::WriteSpacemap(sglist, idx, lba) = &self {
-            (sglist, idx, lba)
+    fn as_write_spacemap(&self) -> &SGList {
+        if let Cmd::WriteSpacemap(sglist) = &self {
+            sglist
         } else {
             panic!("Not a Cmd::WriteSpacemap");
         }
@@ -102,14 +102,14 @@ impl Cmd {
         match *self {
             Cmd::OpenZone => 0,
             Cmd::ReadAt(_) => 1,
-            Cmd::ReadSpacemap(_, _) => 2,
+            Cmd::ReadSpacemap(_) => 2,
             Cmd::ReadvAt(_) => 3,
             Cmd::WriteAt(_) => 4,
             Cmd::WritevAt(_) => 5,
             Cmd::EraseZone(_) => 6,
             Cmd::FinishZone(_) => 7,
             Cmd::WriteLabel(_) => 8,
-            Cmd::WriteSpacemap(_, _, _) => 9,
+            Cmd::WriteSpacemap(_) => 9,
             Cmd::SyncAll => 10,
         }
     }
@@ -330,10 +330,10 @@ impl BlockOp {
         BlockOp { lba, cmd: Cmd::ReadAt(buf), senders: vec![sender]}
     }
 
-    pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
+    pub fn read_spacemap(buf: IoVecMut, lba: LbaT,
                          sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), senders: vec![sender]}
+        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf), senders: vec![sender]}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
@@ -355,12 +355,12 @@ impl BlockOp {
         BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), senders: vec![sender]}
     }
 
-    pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
+    pub fn write_spacemap(sglist: SGList, lba: LbaT,
                           sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
         BlockOp{
             lba,
-            cmd: Cmd::WriteSpacemap(sglist, idx, block),
+            cmd: Cmd::WriteSpacemap(sglist),
             senders: vec![sender]
         }
     }
@@ -534,15 +534,15 @@ impl Inner {
             Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
             Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
             Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
-            Cmd::ReadSpacemap(iovec_mut, idx) =>
-                    self.leaf.read_spacemap(iovec_mut, idx),
+            Cmd::ReadSpacemap(iovec_mut) =>
+                    self.leaf.read_spacemap(iovec_mut, lba),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
             Cmd::EraseZone(start) => self.leaf.erase_zone(start),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
             Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
-            Cmd::WriteSpacemap(sglist, idx, block) =>
-                self.leaf.write_spacemap(sglist, idx, block),
+            Cmd::WriteSpacemap(sglist) =>
+                self.leaf.write_spacemap(sglist, lba),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.senders, fut)
@@ -866,12 +866,10 @@ impl VdevBlock {
     #[tracing::instrument(skip(self, buf))]
     pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> VdevBlockFut
     {
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
-        // lba is for sorting purposes only.  It should sort before any other
-        // write operation, and different read_spacemap operations should sort
-        // in the same order as their true LBA order.
-        let lba = 1 + self.spacemap_space * LbaT::from(idx);
-        let block_op = BlockOp::read_spacemap(buf, lba, idx, sender);
+        let lba = LbaT::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let block_op = BlockOp::read_spacemap(buf, lba, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -934,13 +932,11 @@ impl VdevBlock {
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  VdevBlockFut
     {
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let sglist = copy_and_pad_sglist(sglist);
-        // lba is for sorting purposes only.  It should sort after write_label,
-        // but before any other write operation, and different write_spacemap
-        // operations should sort in the same order as their true LBA order.
-        let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
-        let block_op = BlockOp::write_spacemap(sglist, lba, idx, block, sender);
+        let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let block_op = BlockOp::write_spacemap(sglist, lba, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -1277,8 +1273,8 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0; 4096]);
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
-                let op0 = BlockOp::read_spacemap(rbuf0, lba0, 0, tx0);
-                let op1 = BlockOp::read_spacemap(rbuf1, lba1, 0, tx1);
+                let op0 = BlockOp::read_spacemap(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_spacemap(rbuf1, lba1, tx1);
                 assert!(!op0.can_accumulate(&op1));
             }
 
@@ -1421,10 +1417,8 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0; 4096]);
                 let wbuf0 = dbs0.try_const().unwrap();
                 let wbuf1 = dbs1.try_const().unwrap();
-                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, 0, 10,
-                                                      tx0);
-                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, 0, 11,
-                                                  tx1);
+                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, tx0);
+                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, tx1);
                 assert!(!op0.can_accumulate(&op1));
             }
 
@@ -1515,7 +1509,7 @@ mod t {
                 format!("{readv_at:?}");
             }
             {
-                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
+                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap());
                 format!("{read_spacemap:?}");
             }
             let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
@@ -1526,7 +1520,7 @@ mod t {
             let label_writer = LabelWriter::new(0);
             let write_label = Cmd::WriteLabel(label_writer);
             let write_spacemap = Cmd::WriteSpacemap(
-                vec![dbs.try_const().unwrap()], 0, 0);
+                vec![dbs.try_const().unwrap()]);
             format!("{write_at:?} {writev_at:?} {erase_zone:?} {finish_zone:?}\
  {sync_all:?} {write_label:?} {write_spacemap:?}");
         }
@@ -2489,7 +2483,7 @@ mod t {
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
                 let fut = vdev.write_spacemap(wbufs, 0, 10);
                 let op = fut.block_op.unwrap();
-                let (sglist, _, _) = op.cmd.as_write_spacemap();
+                let sglist = op.cmd.as_write_spacemap();
                 assert_eq!(sglist.len(), 2);
                 assert_eq!(&sglist[0][..], &wbuf0[..]);
                 assert_eq!(&sglist[1][..3072], &wbuf1[..]);
