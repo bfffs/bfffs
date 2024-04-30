@@ -26,9 +26,12 @@ use std::{
     io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
     num::NonZeroU64,
-    os::unix::{
-        fs::{FileTypeExt, OpenOptionsExt},
-        io::{AsRawFd, BorrowedFd, RawFd}
+    os::{
+        fd::AsFd,
+        unix::{
+            fs::{FileTypeExt, OpenOptionsExt},
+            io::{AsRawFd, BorrowedFd, RawFd}
+        },
     },
     path::{Path, PathBuf},
     pin::Pin
@@ -156,23 +159,11 @@ impl Manager {
         })
     }
 
-    /// Taste the device identified by `p` for a BFFFS label.
-    ///
-    /// If present, retain the device in the `Manager` for use as a spare or
-    /// for building Pools.
+    /// Taste the device for a BFFFS label.
     // TODO: add a method for tasting disks in parallel.
-    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
-            .open(&p)?;
-        let pb = p.as_ref().to_path_buf();
-        //let mut vdev = Self::new(pb)?;
-        let mut reader = VdevFile::read_label(&f).await?;
+    pub async fn taste<F: AsFd>(&self, f: &F) -> Result<LabelReader> {
+        let mut reader = VdevFile::read_label(f).await?;
         let label: Label = reader.deserialize().unwrap();
-        //let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(label.uuid, (pb, f));
         Ok(reader)
     }
 }

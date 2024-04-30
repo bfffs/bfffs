@@ -4,6 +4,7 @@ use futures::{
     Future,
     FutureExt,
     channel::oneshot,
+    future,
     task::{Context, Poll}
 };
 #[cfg(not(test))] use futures::TryFutureExt;
@@ -12,11 +13,16 @@ use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
 use std::{
     cmp::Ordering,
-    collections::BinaryHeap,
+    collections::{BinaryHeap, BTreeMap},
     collections::VecDeque,
+    fs::{self, OpenOptions},
     io,
     mem,
     num::{NonZeroU64, NonZeroUsize},
+    os::{
+        fd::AsFd,
+        unix::fs::OpenOptionsExt
+    },
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, RwLock, Weak},
@@ -1006,7 +1012,10 @@ impl Vdev for VdevBlock {
 
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
 #[derive(Default)]
-pub struct Manager(crate::vdev_file::Manager);
+pub struct Manager {
+    vfm: crate::vdev_file::Manager,
+    devices: BTreeMap<Uuid, (PathBuf, fs::File)>,
+}
 
 impl Manager {
     /// Import a block device that is already known to exist
@@ -1014,8 +1023,15 @@ impl Manager {
     pub fn import(&mut self, uuid: Uuid)
         -> impl Future<Output=Result<(VdevBlock, LabelReader)>>
     {
-        self.0.import(uuid)
-            .map_ok(|(vf, lr)| (VdevBlock::new(vf), lr))
+        future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
+        .and_then(|(pb, f)| VdevFile::open2(pb, &f)
+                  .map_ok(|(vf, lr)| (f, vf, lr))
+        ).map_ok(move |(f, vf, lr)| {
+            assert_eq!(vf.uuid(), uuid);
+            (VdevBlock::new(f, vf), lr)
+        })
+        //self.0.import(uuid)
+            //.map_ok(|(vf, lr)| (VdevBlock::new(vf), lr))
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
@@ -1023,7 +1039,15 @@ impl Manager {
     /// If present, retain the device in the `DevManager` for use as a spare or
     /// for building Pools.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        self.0.taste(p).await
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
+            .open(&p)?;
+        let lr = self.vfm.taste(&f).await?;
+        let pb = p.as_ref().to_path_buf();
+        self.devices.insert(lr.uuid, (pb, f));
+        Ok(lr)
     }
 }
 
