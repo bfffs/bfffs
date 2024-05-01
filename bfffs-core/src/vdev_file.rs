@@ -301,13 +301,14 @@ impl VdevFile {
     ///
     /// # Parameters
     ///
-    /// -`lba`: The first LBA of the zone to erase
+    /// - `lba`: The first LBA of the zone to erase
+    /// - `end`: The last LBA of the zone to erase
     // There isn't (yet) a way to asynchronously trim, so use a synchronous
     // method in a blocking_task
-    pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
+    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
         let fd = self.file.as_raw_fd();
-        let off = lba as off_t * (BYTES_PER_LBA as off_t);
-        let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
+        let off = start as off_t * (BYTES_PER_LBA as off_t);
+        let len = (end + 1 - start) as off_t * BYTES_PER_LBA as off_t;
         let em = self.erase_method.load(Ordering::Relaxed);
         match em {
             EraseMethod::None => Box::pin(future::ok(())),
@@ -775,7 +776,7 @@ mock!{
         pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path>;
-        pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
+        pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
         #[mockall::concretize]
         pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>

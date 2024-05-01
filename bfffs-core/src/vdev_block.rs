@@ -537,7 +537,7 @@ impl Inner {
             Cmd::ReadSpacemap(iovec_mut) =>
                     self.leaf.read_spacemap(iovec_mut, lba),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
-            Cmd::EraseZone(start) => self.leaf.erase_zone(start),
+            Cmd::EraseZone(start) => self.leaf.erase_zone(start, lba),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
             Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
@@ -1869,13 +1869,15 @@ mod t {
         #[rstest]
         #[tokio::test]
         async fn erase_zone(mut leaf: MockVdevFile) {
+            let start = 1;
+            let end = (1 << 16) - 1;
             leaf.expect_erase_zone()
-                .with(eq(1))
-                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+                .with(eq(start), eq(end))
+                .returning(|_,_| Box::pin(future::ok::<(), Error>(())));
 
             let vdev = VdevBlock::new(leaf);
 
-            vdev.erase_zone(1, (1 << 16) - 1).await.unwrap();
+            vdev.erase_zone(start, end).await.unwrap();
         }
 
         #[rstest]

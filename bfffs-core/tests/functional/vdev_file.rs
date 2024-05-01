@@ -79,7 +79,8 @@ mod basic {
             assert_eq!(rbuf, wbuf.deref());
         }
 
-        harness.vdev.erase_zone(0).await.unwrap();
+        let zl = harness.vdev.zone_limits(0);
+        harness.vdev.erase_zone(0, zl.1 - 1).await.unwrap();
 
         // verify that it got erased, if fspacectl is supported here
         #[cfg(have_fspacectl)]
@@ -112,8 +113,8 @@ mod basic {
         }
 
         // Now erase both zones.
-        harness.vdev.erase_zone(0).await.unwrap();
-        harness.vdev.erase_zone(1).await.unwrap();
+        harness.vdev.erase_zone(0, vd.zone_limits(0).1 - 1).await.unwrap();
+        harness.vdev.erase_zone(1, vd.zone_limits(1).1 - 1).await.unwrap();
 
         // verify that they got erased.
         let expected = vec![0u8; 4096];
@@ -306,7 +307,10 @@ mod basic {
 /// Tests that use a device file
 mod dev {
     use crate::{require_root, Md};
-    use bfffs_core::vdev_file::*;
+    use bfffs_core::{
+        vdev::Vdev,
+        vdev_file::*
+    };
     use divbuf::DivBufShared;
     use function_name::named;
     use pretty_assertions::assert_eq;
@@ -319,7 +323,7 @@ mod dev {
 
     fn harness() -> io::Result<(VdevFile, Md)> {
         let md = Md::new()?;
-        let zones_per_lba = NonZeroU64::new(8192); // 32 MB zones
+        let zones_per_lba = NonZeroU64::new(8192);  // 32 MB zones
         let vd = VdevFile::create(md.as_path(), zones_per_lba).unwrap();
         Ok((vd, md))
     }
@@ -345,7 +349,7 @@ mod dev {
         }
 
         // Actually erase the zone
-        vd.erase_zone(0).await.unwrap();
+        vd.erase_zone(0, vd.zone_limits(0).1 - 1).await.unwrap();
 
         // verify that it got erased
         {
