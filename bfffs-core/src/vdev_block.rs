@@ -842,7 +842,7 @@ impl VdevBlock {
     /// * `uuid`:          XXX Temporary
     /// * `size`:          TODO describe
     /// * `lbas_per_zone`: Number of LBAs per simulated zone
-    pub fn new(
+    fn new(
         leaf: VdevLeaf,
         path: PathBuf,
         uuid: Uuid,
@@ -1155,7 +1155,7 @@ mock! {
             where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
-        pub fn new(leaf: VdevLeaf) -> Self;
+        fn new(leaf: VdevLeaf) -> Self;
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn path(&self) -> PathBuf;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
