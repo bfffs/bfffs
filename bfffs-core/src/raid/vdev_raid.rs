@@ -1835,10 +1835,6 @@ impl Vdev for VdevRaid {
         Box::pin(fut)
     }
 
-    fn uuid(&self) -> Uuid {
-        self.uuid
-    }
-
     // Zones don't necessarily line up with repetition boundaries.  So we don't
     // know the disk where a given zone begins.  Worse, declustered RAID is
     // usually not monotonic across all disks.  That is, RAID LBA X may
@@ -2184,6 +2180,10 @@ impl VdevRaidApi for VdevRaid {
             mirrors,
             uuid: self.uuid
         }
+    }
+
+    fn uuid(&self) -> Uuid {
+        self.uuid
     }
 
     fn write_at(&self, buf: IoVec, zone: ZoneT, mut lba: LbaT) -> BoxVdevFut

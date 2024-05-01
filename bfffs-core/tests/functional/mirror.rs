@@ -7,7 +7,7 @@ use std::{
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
-    vdev::{Health, Vdev},
+    vdev::Health,
     Error,
     LbaT,
     Uuid,

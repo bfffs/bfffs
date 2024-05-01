@@ -220,7 +220,6 @@ mock!{
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
         fn sync_all(&self) -> BoxVdevFut;
-        fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
@@ -237,6 +236,7 @@ mock!{
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
         fn status(&self) -> Status;
+        fn uuid(&self) -> Uuid;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
         fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
         fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

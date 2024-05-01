@@ -90,10 +90,6 @@ pub trait Vdev {
     /// storage.
     fn sync_all(&self) -> BoxVdevFut;
 
-    /// Return the UUID for this vdev.  It is the persistent, unique identifier
-    /// for each vdev.
-    fn uuid(&self) -> Uuid;
-
     /// Return the first and last LBAs of a zone.
     ///
     /// The end LBA is *exclusive*; it is the first LBA that is *not* in the

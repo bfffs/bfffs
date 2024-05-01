@@ -90,10 +90,6 @@ impl Vdev for NullRaid {
         self.mirror.sync_all()
     }
 
-    fn uuid(&self) -> Uuid {
-        self.uuid
-    }
-
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.mirror.zone_limits(zone)
     }
@@ -163,6 +159,10 @@ impl VdevRaidApi for NullRaid {
             mirrors: vec![child],
             uuid: self.uuid
         }
+    }
+
+    fn uuid(&self) -> Uuid {
+        self.uuid
     }
 
     fn write_at(&self, buf: IoVec, _zone: ZoneT, lba: LbaT) -> BoxVdevFut

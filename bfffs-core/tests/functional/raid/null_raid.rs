@@ -3,7 +3,7 @@
 use bfffs_core::{
     label::*,
     mirror::Mirror,
-    vdev::{Health, Vdev},
+    vdev::Health,
     raid::{Manager, NullRaid, VdevRaidApi},
     Uuid,
     Error

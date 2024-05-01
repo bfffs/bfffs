@@ -20,10 +20,8 @@ use futures::{
 use nix::libc::{c_int, off_t};
 use num_traits::FromPrimitive;
 use pin_project::pin_project;
-use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
     fs::OpenOptions,
     io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
@@ -32,7 +30,7 @@ use std::{
         fs::OpenOptionsExt,
         io::{AsRawFd, RawFd}
     },
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     sync::atomic::Ordering
 };
@@ -112,58 +110,6 @@ mod ffi {
 
 use ffi::{diocgdelete, diocgattr, diocgattr_arg};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Label {
-    /// Vdev UUID, fixed at format time
-    uuid:           Uuid,
-    /// Number of LBAs per simulated zone
-    lbas_per_zone:  LbaT,
-    /// Number of LBAs that were present at format time
-    lbas:           LbaT,
-    /// LBAs in the first zone reserved for storing each spacemap.
-    spacemap_space: LbaT,
-}
-
-/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
-#[derive(Default)]
-pub struct Manager {
-    devices: BTreeMap<Uuid, VdevFile>,
-}
-
-impl Manager {
-    /// Import a block device that is already known to exist
-    pub fn import(&mut self, uuid: Uuid)
-        -> impl Future<Output=Result<(VdevFile, LabelReader)>>
-    {
-        future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
-            .and_then(move |vf| async move {
-                let mut lr = VdevFile::read_label(&vf.file).await?;
-                let label: Label = lr.deserialize().unwrap();
-                assert_eq!(uuid, label.uuid);
-                Ok((vf, lr))
-            })
-    }
-
-    /// Taste the device identified by `p` for a BFFFS label.
-    ///
-    /// If present, retain the device in the `DevManager` for use as a spare or
-    /// for building Pools.
-    // TODO: add a method for tasting disks in parallel.
-    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(vdev_file.uuid(), vdev_file);
-        Ok(reader)
-    }
-}
-
-/// Return value of [`VdevFile::status`]
-#[derive(Clone, Debug)]
-pub struct Status {
-    pub health: Health,
-    pub path: PathBuf,
-    pub uuid: Uuid
-}
-
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
@@ -174,16 +120,13 @@ pub struct Status {
 ///
 #[derive(Debug)]
 pub struct VdevFile {
-    file:           File,
+    // XXX remove the pub after updating tokio_file to use AioFileExt
+    pub file:           File,
     /// Number of reserved LBAS in first zone for each spacemap
     spacemap_space: LbaT,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
-    /// The name used to open this Vdev.  It may change if the pool is exported
-    /// and reimported.
-    path:           PathBuf,
     size:           LbaT,
-    uuid:           Uuid,
     /// How does the underlying file deallocate data?
     erase_method:   AtomicEraseMethod
 }
@@ -211,10 +154,6 @@ impl Vdev for VdevFile {
             .map_ok(drop)
             .map_err(Error::from);
         Box::pin(fut)
-    }
-
-    fn uuid(&self) -> Uuid {
-        self.uuid
     }
 
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
@@ -263,7 +202,6 @@ impl VdevFile {
         -> io::Result<Self>
         where P: AsRef<Path>
     {
-        let pb = path.as_ref().to_path_buf();
         // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
         // block indefinitely.  However, using O_NONBLOCK is worse because it
         // can cause spurious failures, such as when another thread fork()s.
@@ -282,14 +220,11 @@ impl VdevFile {
         let size = f.len().unwrap() / BYTES_PER_LBA as u64;
         let nzones = div_roundup(size, lpz);
         let spacemap_space = spacemap_space(nzones);
-        let uuid = Uuid::new_v4();
         Ok(VdevFile{
             file: f,
             spacemap_space,
             lbas_per_zone: lpz,
-            path: pb,
             size,
-            uuid,
             erase_method
         })
     }
@@ -376,53 +311,38 @@ impl VdevFile {
         Box::pin(future::ok(()))
     }
 
-    /// Open an existing `VdevFile`
+    pub fn lbas_per_zone(&self) -> LbaT{
+        self.lbas_per_zone
+    }
+
+    /// Open a Vdev, backed by a file.
     ///
-    /// Returns both a new `VdevFile` object, and a `LabelReader` that may be
-    /// used to construct other vdevs stacked on top of this one.
-    ///
-    /// * `path`    Pathname for the file.  It may be a device node.
-    pub async fn open<P: AsRef<Path>>(path: P)
-        -> Result<(Self, LabelReader)>
-    {
-        let pb = path.as_ref().to_path_buf();
+    /// * `path`:           Pathname for the file.  It may be a device node.
+    pub async fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
         // block indefinitely.  However, using O_NONBLOCK is worse because it
         // can cause spurious failures, such as when another thread fork()s.
         // That happens frequently in the functional tests.
-        let file = OpenOptions::new()
+        let stdfile = OpenOptions::new()
             .read(true)
             .write(true)
             .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
             .open(path)
-            .map(File::new)
-            .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
-        match file {
-            Ok(f) => {
-                match VdevFile::read_label(&f).await {
-                    Err(e) => Err(e),
-                    Ok(mut label_reader) => {
-                        let fd = f.as_raw_fd();
-                        let erase_method = AtomicEraseMethod::initial(fd)?;
-                        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
-                        let label: Label = label_reader.deserialize().unwrap();
-                        assert!(size >= label.lbas,
-                                "Vdev has shrunk since creation");
-                        let vdev = VdevFile {
-                            file: f,
-                            spacemap_space: label.spacemap_space,
-                            lbas_per_zone: label.lbas_per_zone,
-                            path: pb,
-                            size: label.lbas,
-                            uuid: label.uuid,
-                            erase_method
-                        };
-                        Ok((vdev, label_reader))
-                    }
-                }
-            },
-            Err(e) => Err(e)
-        }
+            .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap())?;
+        let f = File::new(stdfile);
+        let lbas_per_zone = VdevFile::DEFAULT_LBAS_PER_ZONE;
+        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
+        let nzones = div_roundup(size, lbas_per_zone);
+        let spacemap_space = spacemap_space(nzones);
+        let erase_method = AtomicEraseMethod::initial(f.as_raw_fd())?;
+        let vdev = VdevFile {
+            file: f,
+            spacemap_space,
+            lbas_per_zone,
+            size,
+            erase_method
+        };
+        Ok(vdev)
     }
 
     /// Asynchronously open the given zone.
@@ -435,11 +355,6 @@ impl VdevFile {
     pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut {
         // ordinary files don't have Zone operations
         Box::pin(future::ok(()))
-    }
-
-    /// The pathname most recently used to open this device.
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -459,37 +374,6 @@ impl VdevFile {
         };
         let fut = self.file.read_at(&mut *bufaddr, off).unwrap();
         Box::pin(ReadAt { _buf: buf, fut })
-    }
-
-    /// Read just one of a vdev's labels
-    async fn read_label(f: &File) -> Result<LabelReader>
-    {
-        let mut r = Err(Error::EDOOFUS);    // Will get overridden
-
-        for label in 0..2 {
-            let lba = LabelReader::lba(label);
-            let offset = lba * BYTES_PER_LBA as u64;
-            // TODO: figure out how to use mem::MaybeUninit with File::read_at
-            let mut rbuf = vec![0; LABEL_SIZE];
-            match f.read_at(&mut rbuf[..], offset).unwrap().await {
-                Ok(_aio_result) => {
-                    match LabelReader::new(rbuf) {
-                        Ok(lr) => {
-                            r = Ok(lr);
-                            break
-                        }
-                        Err(e) => {
-                            // If this is the first label, try the second.
-                            r = Err(e);
-                        }
-                    }
-                },
-                Err(e) => {
-                    r = Err(Error::from(e));
-                }
-            }
-        }
-        r
     }
 
     /// Read one of the spacemaps from disk.
@@ -551,12 +435,16 @@ impl VdevFile {
         self.spacemap_space
     }
 
-    pub fn status(&self) -> Status {
-        Status {
-            health: Health::Online,
-            path: self.path.clone(),
-            uuid: self.uuid
-        }
+    /// Set certain properties that are stored in the label
+    ///
+    /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
+    ///                     simulated zones on devices that don't have native
+    ///                     zones.
+    pub fn set(&mut self, size: LbaT, lbas_per_zone: LbaT) {
+        self.size = size;
+        let nzones = div_roundup(size, lbas_per_zone);
+        self.spacemap_space = spacemap_space(nzones);
+        self.lbas_per_zone = lbas_per_zone;
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
@@ -589,15 +477,8 @@ impl VdevFile {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&self, label_writer: LabelWriter) -> BoxVdevFut
     {
-        let label = Label {
-            uuid: self.uuid,
-            spacemap_space: self.spacemap_space,
-            lbas_per_zone: self.lbas_per_zone,
-            lbas: self.size
-        };
-        label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
         let sglist = copy_and_pad_sglist(sglist);
@@ -778,16 +659,15 @@ mock!{
             where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
+        pub fn lbas_per_zone(&self) -> LbaT;
         #[mockall::concretize]
-        pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
-            where P: AsRef<Path>;
+        pub async fn open<P>(path: P) -> Result<Self> where P: AsRef<Path>;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        pub fn path(&self) -> &Path;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn set(&mut self, size: LbaT);
         pub fn spacemap_space(&self) -> LbaT;
-        pub fn status(&self) -> Status;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
         pub fn write_spacemap(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
@@ -798,29 +678,8 @@ mock!{
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
         fn sync_all(&self) -> BoxVdevFut;
-        fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
-}
-
-#[cfg(test)]
-mod t {
-    use super::*;
-
-mod label {
-    use super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let label = Label{ uuid: Uuid::new_v4(),
-            lbas_per_zone: 0,
-            lbas: 0,
-            spacemap_space: 0
-        };
-        format!("{label:?}");
-    }
-}
 }
 // LCOV_EXCL_STOP
