@@ -58,7 +58,7 @@ mod basic {
     #[rstest]
     #[tokio::test]
     async fn erase_zone(harness: Harness) {
-        let (mut vd, pb, _tempdir) = harness;
+        let (vd, pb, _tempdir) = harness;
         let mut f = fs::File::open(pb).unwrap();
         let mut rbuf = vec![0u8; 4096];
 
@@ -91,7 +91,7 @@ mod basic {
     #[rstest]
     #[tokio::test]
     async fn erase_zone_twice(harness: Harness) {
-        let (mut vd, pb, _tempdir) = harness;
+        let (vd, pb, _tempdir) = harness;
         let mut f = fs::File::open(pb).unwrap();
         let mut rbuf = vec![0u8; 4096];
 
@@ -318,7 +318,7 @@ mod dev {
     async fn erase_zone() {
         require_root!();
 
-        let (mut vd, md) = harness().unwrap();
+        let (vd, md) = harness().unwrap();
         let mut rbuf = vec![0u8; 4096];
         let mut f = t!(fs::File::open(&md.0));
 

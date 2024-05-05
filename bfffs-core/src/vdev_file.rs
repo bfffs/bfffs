@@ -6,6 +6,7 @@ use crate::{
     util::*,
     vdev::*
 };
+use atomic_enum::atomic_enum;
 use cfg_if::cfg_if;
 use divbuf::DivBuf;
 use futures::{
@@ -32,13 +33,14 @@ use std::{
         io::{AsRawFd, RawFd}
     },
     path::{Path, PathBuf},
-    pin::Pin
+    pin::Pin,
+    sync::atomic::Ordering
 };
 use tokio_file::File;
 use tokio::task;
 
 /// How does this device deallocate sectors?
-#[derive(Clone, Copy, Debug)]
+#[atomic_enum]
 enum EraseMethod {
     None,
     Diocgdelete,
@@ -48,20 +50,20 @@ enum EraseMethod {
     MaybeFspacectl,
 }
 
-impl EraseMethod {
+impl AtomicEraseMethod {
     /// Get the initial erase method.
-    fn get(fd: RawFd) -> Result<Self> {
+    fn initial(fd: RawFd) -> Result<Self> {
         if VdevFile::candelete(fd)? {
             // The file supports DIOCGDELETE.
-            Ok(EraseMethod::Diocgdelete)
+            Ok(AtomicEraseMethod::new(EraseMethod::Diocgdelete))
         } else {
             cfg_if! {
                 if #[cfg(have_fspacectl)] {
                     // The file does not support DIOCGDELETE.  Optimistically
                     // guess that it supports fspacectl.
-                    Ok(EraseMethod::MaybeFspacectl)
+                    Ok(AtomicEraseMethod::new(EraseMethod::MaybeFspacectl))
                 } else {
-                    Ok(EraseMethod::None)
+                    Ok(AtomicEraseMethod::new(EraseMethod::None))
                 }
             }
         }
@@ -183,9 +185,7 @@ pub struct VdevFile {
     size:           LbaT,
     uuid:           Uuid,
     /// How does the underlying file deallocate data?
-    // NB: this could be Arc<atomic_enum> to eliminate the need for &mut self in
-    // fn erase_zone()
-    erase_method:   EraseMethod
+    erase_method:   AtomicEraseMethod
 }
 
 impl Vdev for VdevFile {
@@ -278,7 +278,7 @@ impl VdevFile {
             None => VdevFile::DEFAULT_LBAS_PER_ZONE,
             Some(x) => x.get()
         };
-        let erase_method = EraseMethod::get(f.as_raw_fd()).unwrap();
+        let erase_method = AtomicEraseMethod::initial(f.as_raw_fd()).unwrap();
         let size = f.len().unwrap() / BYTES_PER_LBA as u64;
         let nzones = div_roundup(size, lpz);
         let spacemap_space = spacemap_space(nzones);
@@ -304,11 +304,11 @@ impl VdevFile {
     /// -`lba`: The first LBA of the zone to erase
     // There isn't (yet) a way to asynchronously trim, so use a synchronous
     // method in a blocking_task
-    pub fn erase_zone(&mut self, lba: LbaT) -> BoxVdevFut {
+    pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
         let fd = self.file.as_raw_fd();
         let off = lba as off_t * (BYTES_PER_LBA as off_t);
         let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
-        let em = self.erase_method;
+        let em = self.erase_method.load(Ordering::Relaxed);
         match em {
             EraseMethod::None => Box::pin(future::ok(())),
             EraseMethod::Diocgdelete => {
@@ -330,17 +330,20 @@ impl VdevFile {
                 match fspacectl_all(fd, off, len) {
                     Err(nix::Error::ENOSYS) =>  {
                         // fspacectl is not supported by the running system
-                        self.erase_method = EraseMethod::None;
+                        self.erase_method.store(EraseMethod::None,
+                                                Ordering::Relaxed);
                         Box::pin(future::ok(()))
                     },
                     Err(nix::Error::ENODEV) => {
                         // fspacectl is not supported by this file
-                        self.erase_method = EraseMethod::None;
+                        self.erase_method.store(EraseMethod::None,
+                                                Ordering::Relaxed);
                         Box::pin(future::ok(()))
                     },
                     Ok(()) => {
                         // fspacectl is definitely supported
-                        self.erase_method = EraseMethod::Fspacectl;
+                        self.erase_method.store(EraseMethod::Fspacectl,
+                                                Ordering::Relaxed);
                         Box::pin(future::ok(()))
                     },
                     Err(e) => Box::pin(future::err(e.into()))
@@ -398,7 +401,8 @@ impl VdevFile {
                 match VdevFile::read_label(&f).await {
                     Err(e) => Err(e),
                     Ok(mut label_reader) => {
-                        let erase_method = EraseMethod::get(f.as_raw_fd())?;
+                        let fd = f.as_raw_fd();
+                        let erase_method = AtomicEraseMethod::initial(fd)?;
                         let size = f.len().unwrap() / BYTES_PER_LBA as u64;
                         let label: Label = label_reader.deserialize().unwrap();
                         assert!(size >= label.lbas,
@@ -781,7 +785,7 @@ mock!{
         pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path>;
-        pub fn erase_zone(&mut self, lba: LbaT) -> BoxVdevFut;
+        pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
         #[mockall::concretize]
         pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>

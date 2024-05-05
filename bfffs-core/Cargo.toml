@@ -13,6 +13,7 @@ nightly = [ "mockall/nightly" ]
 
 [dependencies]
 async-trait = "0.1.40"
+atomic_enum = "0.2.0"
 bincode = { version = "1.0.1", features = ["i128"] }
 bitfield = "0.13.1"
 blosc = "0.2.0"
