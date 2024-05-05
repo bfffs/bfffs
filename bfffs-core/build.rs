@@ -3,6 +3,7 @@ use nix::sys::utsname::uname;
 fn main() {
     // Avoid unnecessary re-building.
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo::rustc-check-cfg=cfg(have_fspacectl)");
 
     let utsname = uname().unwrap();
     // XXX: this only checks kernel version, so it doesn't work properly in a
