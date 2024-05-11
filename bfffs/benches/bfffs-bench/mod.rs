@@ -11,7 +11,6 @@ use std::{
 };
 
 use assert_cmd::prelude::*;
-use async_trait::async_trait;
 use clap::{crate_version, Parser};
 use freebsd_libgeom as geom;
 use nix::{
@@ -31,12 +30,18 @@ use util::{bfffsd, waitfor, Bfffsd};
 mod fs_create;
 mod fs_destroy;
 
-#[async_trait]
+#[enum_dispatch::enum_dispatch(BenchmarkImpl)]
 trait Benchmark {
     async fn setup(&mut self, harness: &Harness);
     async fn run(&mut self, harness: &Harness);
     //async fn teardown(&mut self);
     fn print(&self, elapsed: &Duration);
+}
+
+#[enum_dispatch::enum_dispatch]
+enum BenchmarkImpl {
+    FsCreate(fs_create::FsCreate),
+    FsDestroy(fs_destroy::FsDestroy),
 }
 
 /// The standard test harness used by all benchmarks that need bfffsd
@@ -184,7 +189,7 @@ where
 async fn bench_one<'a>(
     flamegraph: Option<&'a PathBuf>,
     geom_regex: &'a Option<Regex>,
-    mut benchmark: Box<dyn Benchmark>,
+    mut benchmark: BenchmarkImpl,
     harness: &'a Harness,
 ) {
     benchmark.setup(harness).await;
@@ -234,10 +239,12 @@ async fn bench_one<'a>(
 
 async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
     for benchmark in [
-        Box::new(fs_create::Cli::parse_from::<_, OsString>([]).build())
-            as Box<dyn Benchmark>,
-        Box::new(fs_destroy::Cli::parse_from::<_, OsString>([]).build())
-            as Box<dyn Benchmark>,
+        BenchmarkImpl::FsCreate(
+            fs_create::Cli::parse_from::<_, OsString>([]).build(),
+        ),
+        BenchmarkImpl::FsDestroy(
+            fs_destroy::Cli::parse_from::<_, OsString>([]).build(),
+        ),
     ] {
         bench_one(None, geom_regex, benchmark, harness).await
     }
@@ -267,9 +274,13 @@ async fn main() {
     };
 
     let harness = Harness::new(cli.devices, cli.options);
-    let benchmark: Box<dyn Benchmark> = match cli.subcommand {
-        Some(SubCommand::FsCreate(subcmd)) => Box::new(subcmd.build()),
-        Some(SubCommand::FsDestroy(subcmd)) => Box::new(subcmd.build()),
+    let benchmark = match cli.subcommand {
+        Some(SubCommand::FsCreate(subcmd)) => {
+            BenchmarkImpl::FsCreate(subcmd.build())
+        }
+        Some(SubCommand::FsDestroy(subcmd)) => {
+            BenchmarkImpl::FsDestroy(subcmd.build())
+        }
         None => {
             if cli.flamegraph.is_some() {
                 eprintln!(

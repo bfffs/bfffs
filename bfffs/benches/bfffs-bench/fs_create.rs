@@ -1,7 +1,6 @@
 #! vim: tw=80
 use std::time::Duration;
 
-use async_trait::async_trait;
 use bfffs::Bfffs;
 use clap::{crate_version, Parser};
 
@@ -38,7 +37,6 @@ pub struct FsCreate {
     count: usize,
 }
 
-#[async_trait]
 impl Benchmark for FsCreate {
     async fn setup(&mut self, harness: &Harness) {
         self.bfffs = Some(Bfffs::new(&harness.sockpath).await.unwrap());
