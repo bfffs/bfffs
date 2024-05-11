@@ -19,32 +19,39 @@ mod basic {
     };
     use tempfile::{Builder, TempDir};
 
-    type Harness = (VdevFile, PathBuf, TempDir);
+    struct Harness {
+        vdev: VdevFile,
+        path: PathBuf,
+        _tempdir: TempDir
+    }
 
     #[fixture]
     fn harness() -> Harness {
         let len = 1 << 26;  // 64MB
-        let tempdir =
-            t!(Builder::new().prefix("test_vdev_file_basic").tempdir());
+        let tempdir = Builder::new()
+            .prefix("test_vdev_file_basic")
+            .tempdir()
+            .unwrap();
         let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
+        let file = fs::File::create(&filename).unwrap();
+        file.set_len(len).unwrap();
         let pb = filename.to_path_buf();
         let vdev = VdevFile::create(filename, None).unwrap();
-        (vdev, pb, tempdir)
+        Harness{vdev, path: pb, _tempdir: tempdir}
     }
 
     // pet kcov
     #[rstest]
     fn debug(harness: Harness) {
-        format!("{:?}", harness.0);
+        format!("{:?}", harness.vdev);
     }
 
     #[test]
     fn create_enoent() {
-        let dir = t!(
-            Builder::new().prefix("test_read_at").tempdir()
-        );
+        let dir = Builder::new()
+            .prefix("test_create_enoent")
+            .tempdir()
+            .unwrap();
         let path = dir.path().join("vdev");
         let e = VdevFile::create(path, None)
             .err()
@@ -58,22 +65,21 @@ mod basic {
     #[rstest]
     #[tokio::test]
     async fn erase_zone(harness: Harness) {
-        let (vd, pb, _tempdir) = harness;
-        let mut f = fs::File::open(pb).unwrap();
+        let mut f = fs::File::open(harness.path).unwrap();
         let mut rbuf = vec![0u8; 4096];
 
         // First, write a record
         {
             let dbs = DivBufShared::from(vec![42u8; 4096]);
             let wbuf = dbs.try_const().unwrap();
-            vd.write_at(wbuf.clone(), 10).await
+            harness.vdev.write_at(wbuf.clone(), 10).await
             .unwrap();
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
             f.read_exact(&mut rbuf).unwrap();
             assert_eq!(rbuf, wbuf.deref());
         }
 
-        vd.erase_zone(0).await.unwrap();
+        harness.vdev.erase_zone(0).await.unwrap();
 
         // verify that it got erased, if fspacectl is supported here
         #[cfg(have_fspacectl)]
@@ -91,29 +97,28 @@ mod basic {
     #[rstest]
     #[tokio::test]
     async fn erase_zone_twice(harness: Harness) {
-        let (vd, pb, _tempdir) = harness;
-        let mut f = fs::File::open(pb).unwrap();
+        let mut f = fs::File::open(harness.path).unwrap();
         let mut rbuf = vec![0u8; 4096];
 
         // First, write some data to two zones.
         {
             let dbs = DivBufShared::from(vec![42u8; 4096]);
             for zone in 0..2 {
-                let zl = vd.zone_limits(zone);
+                let zl = harness.vdev.zone_limits(zone);
                 let wbuf = dbs.try_const().unwrap();
-                vd.write_at(wbuf.clone(), zl.0).await
+                harness.vdev.write_at(wbuf.clone(), zl.0).await
                 .unwrap();
             }
         }
 
         // Now erase both zones.
-        vd.erase_zone(0).await.unwrap();
-        vd.erase_zone(1).await.unwrap();
+        harness.vdev.erase_zone(0).await.unwrap();
+        harness.vdev.erase_zone(1).await.unwrap();
 
         // verify that they got erased.
         let expected = vec![0u8; 4096];
         for zone in 0..2 {
-            let zl = vd.zone_limits(zone);
+            let zl = harness.vdev.zone_limits(zone);
             f.seek(SeekFrom::Start(zl.0 * BYTES_PER_LBA as u64)).unwrap();
             f.read_exact(&mut rbuf).unwrap();
             assert_eq!(rbuf, expected);
@@ -124,40 +129,41 @@ mod basic {
 
     #[rstest]
     fn lba2zone(harness: Harness) {
-        assert_eq!(harness.0.lba2zone(0), None);
-        assert_eq!(harness.0.lba2zone(9), None);
-        assert_eq!(harness.0.lba2zone(10), Some(0));
-        assert_eq!(harness.0.lba2zone((1 << 16) - 1), Some(0));
-        assert_eq!(harness.0.lba2zone(1 << 16), Some(1));
+        assert_eq!(harness.vdev.lba2zone(0), None);
+        assert_eq!(harness.vdev.lba2zone(9), None);
+        assert_eq!(harness.vdev.lba2zone(10), Some(0));
+        assert_eq!(harness.vdev.lba2zone((1 << 16) - 1), Some(0));
+        assert_eq!(harness.vdev.lba2zone(1 << 16), Some(1));
     }
 
     #[rstest]
     fn path(harness: Harness) {
-        assert_eq!(harness.0.path(), harness.1.as_path());
+        assert_eq!(harness.vdev.path(), harness.path.as_path());
     }
 
     #[rstest]
     fn size(harness: Harness) {
-        assert_eq!(harness.0.size(), 16_384);
+        assert_eq!(harness.vdev.size(), 16_384);
     }
 
     #[rstest]
     fn zone_limits(harness: Harness) {
-        assert_eq!(harness.0.zone_limits(0), (10, 1 << 16));
-        assert_eq!(harness.0.zone_limits(1), (1 << 16, 2 << 16));
+        assert_eq!(harness.vdev.zone_limits(0), (10, 1 << 16));
+        assert_eq!(harness.vdev.zone_limits(1), (1 << 16, 2 << 16));
     }
 
     #[rstest]
     fn zones(harness: Harness) {
-        assert_eq!(harness.0.zones(), 1);
+        assert_eq!(harness.vdev.zones(), 1);
     }
 
     #[rstest]
     #[tokio::test]
     async fn open_enoent() {
-        let dir = t!(
-            Builder::new().prefix("test_read_at").tempdir()
-        );
+        let dir = Builder::new()
+            .prefix("test_open_enoent")
+            .tempdir()
+            .unwrap();
         let path = dir.path().join("vdev");
         let e = VdevFile::open(path).await
             .err()
@@ -169,14 +175,17 @@ mod basic {
     #[tokio::test]
     async fn read_at() {
         // Create the initial file
-        let dir = t!(Builder::new().prefix("test_read_at").tempdir());
+        let dir = Builder::new()
+            .prefix("test_read_at")
+            .tempdir()
+            .unwrap();
         let path = dir.path().join("vdev");
         let wbuf = vec![42u8; 4096];
         {
-            let mut f = t!(fs::File::create(&path));
+            let mut f = fs::File::create(&path).unwrap();
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the labels
-            t!(f.write_all(wbuf.as_slice()));
-            t!(f.set_len(1 << 26));
+            f.write_all(wbuf.as_slice()).unwrap();
+            f.set_len(1 << 26).unwrap();
         }
 
         // Run the test
@@ -191,16 +200,19 @@ mod basic {
     #[tokio::test]
     async fn readv_at() {
         // Create the initial file
-        let dir = t!(Builder::new().prefix("test_readv_at").tempdir());
+        let dir = Builder::new()
+            .prefix("test_readv_at")
+            .tempdir()
+            .unwrap();
         let path = dir.path().join("vdev");
         let wbuf = (0..8192)
             .map(|i| (i / 16) as u8)
             .collect::<Vec<_>>();
         {
-            let mut f = t!(fs::File::create(&path));
+            let mut f = fs::File::create(&path).unwrap();
             f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)).unwrap();
-            t!(f.write_all(wbuf.as_slice()));
-            t!(f.set_len(1 << 26));
+            f.write_all(wbuf.as_slice()).unwrap();
+            f.set_len(1 << 26).unwrap();
         }
 
         // Run the test
@@ -222,10 +234,10 @@ mod basic {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        harness.0.write_at(wbuf.clone(), 10).await.unwrap();
-        let mut f = t!(fs::File::open(harness.1));
+        harness.vdev.write_at(wbuf.clone(), 10).await.unwrap();
+        let mut f = fs::File::open(harness.path).unwrap();
         f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
-        t!(f.read_exact(&mut rbuf));
+        f.read_exact(&mut rbuf).unwrap();
         assert_eq!(rbuf, wbuf.deref());
     }
 
@@ -235,7 +247,7 @@ mod basic {
     async fn write_at_overwrite_label(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        harness.0.write_at(wbuf, 0).await.unwrap();
+        harness.vdev.write_at(wbuf, 0).await.unwrap();
     }
 
     #[should_panic(expected = "Don't overwrite the labels!")]
@@ -244,7 +256,7 @@ mod basic {
     async fn writev_at_overwrite_label(harness: Harness) {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
-        harness.0.writev_at(vec![wbuf], 0).await.unwrap();
+        harness.vdev.writev_at(vec![wbuf], 0).await.unwrap();
     }
 
     #[rstest]
@@ -253,10 +265,10 @@ mod basic {
         let dbs = DivBufShared::from(vec![42u8; 4096]);
         let wbuf = dbs.try_const().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        harness.0.write_at(wbuf.clone(), 11).await.unwrap();
-        let mut f = t!(fs::File::open(harness.1));
-        t!(f.seek(SeekFrom::Start(11 * 4096)));
-        t!(f.read_exact(&mut rbuf));
+        harness.vdev.write_at(wbuf.clone(), 11).await.unwrap();
+        let mut f = fs::File::open(harness.path).unwrap();
+        f.seek(SeekFrom::Start(11 * 4096)).unwrap();
+        f.read_exact(&mut rbuf).unwrap();
         assert_eq!(rbuf, wbuf.deref());
     }
 
@@ -269,10 +281,10 @@ mod basic {
         let wbuf1 = dbs1.try_const().unwrap();
         let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
         let mut rbuf = vec![0u8; 8192];
-        harness.0.writev_at(wbufs, 10).await.unwrap();
-        let mut f = t!(fs::File::open(harness.1));
-        t!(f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)));
-        t!(f.read_exact(&mut rbuf));
+        harness.vdev.writev_at(wbufs, 10).await.unwrap();
+        let mut f = fs::File::open(harness.path).unwrap();
+        f.seek(SeekFrom::Start(10 * BYTES_PER_LBA as u64)).unwrap();
+        f.read_exact(&mut rbuf).unwrap();
         assert_eq!(&rbuf[0..4096], wbuf0.deref());
         assert_eq!(&rbuf[4096..8192], wbuf1.deref());
     }
@@ -280,7 +292,7 @@ mod basic {
     #[rstest]
     #[tokio::test]
     async fn read_after_write(harness: Harness) {
-        let vd = harness.0;
+        let vd = harness.vdev;
         let dbsw = DivBufShared::from(vec![1u8; 4096]);
         let wbuf = dbsw.try_const().unwrap();
         let dbsr = DivBufShared::from(vec![0u8; 4096]);
@@ -320,7 +332,7 @@ mod dev {
 
         let (vd, md) = harness().unwrap();
         let mut rbuf = vec![0u8; 4096];
-        let mut f = t!(fs::File::open(&md.0));
+        let mut f = fs::File::open(&md.0).unwrap();
 
         // First, write a record
         {
@@ -328,7 +340,7 @@ mod dev {
             let wbuf = dbs.try_const().unwrap();
             vd.write_at(wbuf.clone(), 10).await.unwrap();
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
-            t!(f.read_exact(&mut rbuf));
+            f.read_exact(&mut rbuf).unwrap();
             assert_eq!(rbuf, wbuf.deref());
         }
 
@@ -339,7 +351,7 @@ mod dev {
         {
             let expected = vec![0u8; 4096];
             f.seek(SeekFrom::Start(10 * 4096)).unwrap();   // Skip the label
-            t!(f.read_exact(&mut rbuf));
+            f.read_exact(&mut rbuf).unwrap();
             assert_eq!(rbuf, expected);
         }
 
@@ -386,18 +398,22 @@ mod persistence {
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
-    type Harness = (PathBuf, TempDir);
+    struct Harness {
+        path: PathBuf,
+        _tempdir: TempDir
+    }
 
     #[fixture]
     fn harness() -> Harness {
         let len = 1 << 26;  // 64MB
-        let tempdir = t!(
-            Builder::new().prefix("test_vdev_file_persistence").tempdir()
-        );
+        let tempdir = Builder::new()
+            .prefix("test_vdev_file_persistence")
+            .tempdir()
+            .unwrap();
         let filename = tempdir.path().join("vdev");
-        let file = t!(fs::File::create(&filename));
-        t!(file.set_len(len));
-        (filename, tempdir)
+        let file = fs::File::create(&filename).unwrap();
+        file.set_len(len).unwrap();
+        Harness{path: filename, _tempdir: tempdir}
     }
 
     /// Open the golden master label
@@ -409,16 +425,15 @@ mod persistence {
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(harness.0.clone()).unwrap();
+                .open(harness.path.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        let (vdev, _label_reader) = VdevFile::open(harness.0).await.unwrap();
+        let (vdev, _label_reader) = VdevFile::open(harness.path).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = harness.1;
     }
 
     // Open a device with only corrupted labels
@@ -428,7 +443,7 @@ mod persistence {
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(harness.0.clone()).unwrap();
+                .open(harness.path.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
@@ -438,7 +453,7 @@ mod persistence {
             f.write_all_at(&zeros, offset0 + 16).unwrap();
             f.write_all_at(&zeros, offset1 + 16).unwrap();
         }
-        let e = VdevFile::open(harness.0).await
+        let e = VdevFile::open(harness.path).await
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::EINTEGRITY);
@@ -453,21 +468,20 @@ mod persistence {
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(harness.0.clone()).unwrap();
+                .open(harness.path.clone()).unwrap();
             let offset0 = 0;
             f.write_all_at(&GOLDEN, offset0).unwrap();
         }
-        let (vdev, _label_reader) = VdevFile::open(harness.0).await.unwrap();
+        let (vdev, _label_reader) = VdevFile::open(harness.path).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = harness.1;
     }
 
     // Open a device without a valid label
     #[rstest]
     #[tokio::test]
     async fn open_invalid(harness: Harness) {
-        let e = VdevFile::open(harness.0).await
+        let e = VdevFile::open(harness.path).await
             .err()
             .expect("Opening the file should've failed");
         assert_eq!(e, Error::EINVAL);
@@ -482,14 +496,13 @@ mod persistence {
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
-                .open(harness.0.clone()).unwrap();
+                .open(harness.path.clone()).unwrap();
             let offset1 = 4 * BYTES_PER_LBA as u64;
             f.write_all_at(&GOLDEN, offset1).unwrap();
         }
-        let (vdev, _label_reader) = VdevFile::open(harness.0).await.unwrap();
+        let (vdev, _label_reader) = VdevFile::open(harness.path).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
         assert_eq!(vdev.uuid(), golden_uuid);
-        let _ = harness.1;
     }
 
     // Write the label, and compare to a golden master
@@ -497,12 +510,12 @@ mod persistence {
     #[tokio::test]
     async fn write_label(harness: Harness) {
         let lbas_per_zone = NonZeroU64::new(0xdead_beef_1a7e_babe);
-        let vdev = VdevFile::create(harness.0.clone(), lbas_per_zone)
+        let vdev = VdevFile::create(harness.path.clone(), lbas_per_zone)
             .unwrap();
         let label_writer = LabelWriter::new(0);
         vdev.write_label(label_writer).await.unwrap();
 
-        let mut f = std::fs::File::open(harness.0).unwrap();
+        let mut f = std::fs::File::open(harness.path).unwrap();
         let mut v = vec![0; 4096];
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
