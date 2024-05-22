@@ -53,7 +53,7 @@ macro_rules! assert_bufeq {
                 .set_show_lines(false)
                 .names(stringify!($left), stringify!($right))
                 ;
-            lines.prettytable();
+            let _ = lines.write_prettytable(&mut std::io::stderr());
             panic!("Miscompare!");
         }
     }
