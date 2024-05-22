@@ -34,7 +34,7 @@ libc = "0.2.105"
 metrohash = "1.0"
 mockall_double = "0.3.1"
 nix = { version = "0.27.0", default-features = false, features = ["feature", "fs", "ioctl", "mount", "time"] }
-num_enum = "0.5.1"
+num_enum = "0.7.0"
 num-traits = "0.2.0"
 pin-project = "1.0.11"
 serde = "1.0.60"
