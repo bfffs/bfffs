@@ -30,7 +30,7 @@ tabular = "0.2.0"
 time = { version = "0.3.0", default-features = false }
 tokio = { version = "1.27.0", features = ["rt-multi-thread"], default-features = false }
 tokio-seqpacket = "0.5.4"
-tracing = { default-features = false, version = "0.1.5" }
+tracing = { default-features = false, version = "0.1.40" }
 
 [dependencies.clap]
 version = "4.0"
