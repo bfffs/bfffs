@@ -29,7 +29,7 @@ task:
     # Use stable features
     - name: cargo test (stable)
       env:
-        VERSION: 1.70.0
+        VERSION: 1.71.0
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
         image: freebsd-13-3-release-amd64
