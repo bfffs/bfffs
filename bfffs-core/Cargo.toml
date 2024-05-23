@@ -22,9 +22,9 @@ cfg-if = "1.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "deb99e3"}
 downcast = "0.11.0"
 enum_dispatch = "0.3.12"
-enum-primitive-derive = "0.2.2"
+enum-primitive-derive = "0.3.0"
 fixedbitset = "0.4.0"
-futures = "0.3.0"
+futures = "0.3.30"
 futures-locks = "0.7.0"
 itertools = "0.10.0"
 hexdump = "0.1.1"
@@ -34,16 +34,16 @@ libc = "0.2.105"
 metrohash = "1.0"
 mockall_double = "0.3.1"
 nix = { version = "0.27.0", default-features = false, features = ["feature", "fs", "ioctl", "mount", "time"] }
-num_enum = "0.5.1"
+num_enum = "0.7.0"
 num-traits = "0.2.0"
-pin-project = "1.0.11"
+pin-project = "1.1.0"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml = "0.8.16"
 time = { version = "0.3.0", features = [ "formatting" ] }
-tokio = { version = "1.24.2", features = ["rt", "sync", "time"] }
+tokio = { version = "1.27.0", features = ["rt", "sync", "time"] }
 tokio-file = "0.9.0"
-tracing = "0.1.5"
+tracing = "0.1.40"
 tracing-futures = "0.2.4"
 uuid = { version = "1.6.1", features = ["v4", "std"], default-features = false }
 
@@ -56,7 +56,7 @@ features=  [ "derive", "wrap_help" ]
 dashmap = "5"
 criterion = "0.5"
 function_name = "0.3.0"
-futures-test = "0.3.7"
+futures-test = "0.3.30"
 glob = "0.3"
 histogram = "0.6"
 itertools = "0.10.0"
@@ -69,11 +69,11 @@ pretty_assertions = "1.3"
 prettydiff = { version = "0.7.0", default-features = false, features = ["prettytable-rs"] }
 rand = "0.8"
 rand_xorshift = "0.3"
-rstest = "0.17.0"
-rstest_reuse = "0.2.0"
+rstest = "0.19.0"
+rstest_reuse = "0.6.0"
 tempfile = "3.8"
-test-log = { version = "0.2.12", default-features = false, features = ["trace"] }
-tokio = { version = "1.24.2", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
+test-log = { version = "0.2.13", default-features = false, features = ["trace"] }
+tokio = { version = "1.27.0", features = ["macros", "rt", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies.tracing-subscriber]
 version = "0.3.16"

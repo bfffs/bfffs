@@ -183,18 +183,16 @@ mod get_prop {
     }
 
     #[template]
-    #[rstest(propname,
-        case(PropertyName::Atime),
-        case(PropertyName::RecordSize),
-        case(PropertyName::Mountpoint)
-    )]
+    #[rstest]
+    #[case(PropertyName::Atime)]
+    #[case(PropertyName::RecordSize)]
+    #[case(PropertyName::Mountpoint)]
     fn all_props(#[case] propname: PropertyName) {}
 
     #[template]
-    #[rstest(propname,
-        case(PropertyName::Atime),
-        case(PropertyName::RecordSize)
-    )]
+    #[rstest]
+    #[case(PropertyName::Atime)]
+    #[case(PropertyName::RecordSize)]
     fn inheritable_props(#[case] propname: PropertyName) {}
 
     async fn test(
