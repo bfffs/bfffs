@@ -411,12 +411,13 @@ checksum = "b4682ae6287fcf752ecaabbfcc7b6f9b72aa33933dc23a554d853aea8eea8635"
 
 [[package]]
 name = "blosc"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35aa1ac22858b0fa4f4e74d96c84d93b86a27093989a3f2b812b00ff7c6d2fe"
+checksum = "b60b176e1785436142a3ece7e8c5acd75a2d67e5a57e67fcf365eb08b6eb4d18"
 dependencies = [
  "blosc-sys",
  "libc",
+ "thiserror",
 ]
 
 [[package]]
