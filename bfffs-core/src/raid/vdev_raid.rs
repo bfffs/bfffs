@@ -421,10 +421,10 @@ pub struct VdevRaid {
 ///
 /// # Examples
 ///
-/// ```no_run
+/// ```ignore
 /// let v = Vec::<IoVec>::with_capacity(4);
 /// let lba = 0;
-/// let fut = issue_1stripe_writes!(self, v, lba, false, write_at)
+/// let fut = issue_1stripe_writes!(self, v, lba, false, write_at);
 /// ```
 macro_rules! issue_1stripe_writes {
     ( $self:ident, $buf:expr, $lba:expr, $parity:expr, $func:ident) => {
