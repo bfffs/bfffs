@@ -244,6 +244,7 @@ dependencies = [
  "clap",
  "console-subscriber",
  "divbuf",
+ "enum_dispatch",
  "freebsd-libgeom",
  "function_name",
  "fuse3",

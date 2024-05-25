@@ -6,7 +6,6 @@ use std::{
 };
 
 use assert_cmd::prelude::*;
-use async_trait::async_trait;
 use clap::{crate_version, Parser};
 use si_scale::helpers::bibytes;
 
@@ -50,7 +49,6 @@ pub struct FsDestroy {
     properties: Option<String>,
 }
 
-#[async_trait]
 impl Benchmark for FsDestroy {
     async fn setup(&mut self, harness: &Harness) {
         const BSIZE: usize = 1 << 17;

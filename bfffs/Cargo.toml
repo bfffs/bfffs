@@ -48,6 +48,7 @@ lalrpop = "0.19.7"
 [dev-dependencies]
 assert_cmd = "2.0"
 divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "deb99e3"}
+enum_dispatch = "0.3.12"
 freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
 mockall = "0.12.0"
