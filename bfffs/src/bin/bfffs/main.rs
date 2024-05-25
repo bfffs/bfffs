@@ -665,7 +665,6 @@ mod pool {
 
     use lalrpop_util::lalrpop_mod;
     lalrpop_mod!(
-        #[allow(clippy::just_underscores_and_digits)]
         #[allow(dead_code)]
         pub pool_create_parser
     );
