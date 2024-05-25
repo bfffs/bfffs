@@ -6,23 +6,26 @@ use futures::{
     channel::oneshot,
     task::{Context, Poll}
 };
-#[cfg(not(test))] use futures::TryFutureExt;
+use futures::{TryFutureExt, future};
 use lazy_static::lazy_static;
 use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
+use serde_derive::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
-    collections::BinaryHeap,
-    collections::VecDeque,
+    collections::{BinaryHeap, BTreeMap, VecDeque},
+    fs::{self, OpenOptions},
     io,
     mem,
     num::{NonZeroU64, NonZeroUsize},
+    os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{Arc, RwLock, Weak},
     ops,
     time,
 };
+use tokio_file::AioFileExt;
 #[cfg(test)] use mockall::*;
 
 use crate::{
@@ -33,12 +36,10 @@ use crate::{
     vdev_file::*,
 };
 
-pub use crate::vdev_file::Status;
-
 #[cfg(test)]
 pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
-pub type VdevLeaf = VdevFile;
+pub type VdevLeaf<'fd> = VdevFile<'fd>;
 
 lazy_static! {
     static ref IOV_MAX: Option<NonZeroUsize> = {
@@ -55,7 +56,7 @@ lazy_static! {
 enum Cmd {
     OpenZone,
     ReadAt(IoVecMut),
-    ReadSpacemap(IoVecMut, u32),
+    ReadSpacemap(IoVecMut),
     ReadvAt(SGListMut),
     WriteAt(IoVec),
     WritevAt(SGList),
@@ -64,7 +65,7 @@ enum Cmd {
     // The extra LBA is the zone's starting LBA
     FinishZone(LbaT),
     WriteLabel(LabelWriter),
-    WriteSpacemap(SGList, u32, LbaT),
+    WriteSpacemap(SGList),
     SyncAll,
 }
 
@@ -79,9 +80,9 @@ impl Cmd {
     }
 
     #[cfg(test)]
-    fn as_write_spacemap(&self) -> (&SGList, &u32, &LbaT) {
-        if let Cmd::WriteSpacemap(sglist, idx, lba) = &self {
-            (sglist, idx, lba)
+    fn as_write_spacemap(&self) -> &SGList {
+        if let Cmd::WriteSpacemap(sglist) = &self {
+            sglist
         } else {
             panic!("Not a Cmd::WriteSpacemap");
         }
@@ -102,14 +103,14 @@ impl Cmd {
         match *self {
             Cmd::OpenZone => 0,
             Cmd::ReadAt(_) => 1,
-            Cmd::ReadSpacemap(_, _) => 2,
+            Cmd::ReadSpacemap(_) => 2,
             Cmd::ReadvAt(_) => 3,
             Cmd::WriteAt(_) => 4,
             Cmd::WritevAt(_) => 5,
             Cmd::EraseZone(_) => 6,
             Cmd::FinishZone(_) => 7,
             Cmd::WriteLabel(_) => 8,
-            Cmd::WriteSpacemap(_, _, _) => 9,
+            Cmd::WriteSpacemap(_) => 9,
             Cmd::SyncAll => 10,
         }
     }
@@ -330,10 +331,10 @@ impl BlockOp {
         BlockOp { lba, cmd: Cmd::ReadAt(buf), senders: vec![sender]}
     }
 
-    pub fn read_spacemap(buf: IoVecMut, lba: LbaT, idx: u32,
+    pub fn read_spacemap(buf: IoVecMut, lba: LbaT,
                          sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
-        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf, idx), senders: vec![sender]}
+        BlockOp { lba, cmd: Cmd::ReadSpacemap(buf), senders: vec![sender]}
     }
 
     pub fn readv_at(bufs: SGListMut, lba: LbaT,
@@ -355,12 +356,12 @@ impl BlockOp {
         BlockOp { lba: 0, cmd: Cmd::WriteLabel(labeller), senders: vec![sender]}
     }
 
-    pub fn write_spacemap(sglist: SGList, lba: LbaT, idx: u32, block: LbaT,
+    pub fn write_spacemap(sglist: SGList, lba: LbaT,
                           sender: oneshot::Sender<Result<()>>) -> BlockOp
     {
         BlockOp{
             lba,
-            cmd: Cmd::WriteSpacemap(sglist, idx, block),
+            cmd: Cmd::WriteSpacemap(sglist),
             senders: vec![sender]
         }
     }
@@ -381,9 +382,6 @@ struct Inner {
 
     /// Current queue depth
     queue_depth: u32,
-
-    /// Underlying device
-    pub leaf: VdevLeaf,
 
     /// The last LBA issued an operation
     last_lba: LbaT,
@@ -414,7 +412,17 @@ struct Inner {
 
     /// A `Weak` pointer back to `self`.  Used for closures that require a
     /// reference to `self`, but also require `'static` lifetime.
-    weakself: Weak<RwLock<Inner>>
+    weakself: Weak<RwLock<Inner>>,
+
+    /// Underlying device.
+    #[cfg(not(test))]
+    leaf: VdevLeaf<'static>,
+    #[cfg(test)]
+    leaf: VdevLeaf,
+
+    /// Underlying device file. Must not be changed during Self's lifetime!
+    // Must come last, so it drops after fields containing BlockOps
+    _device: fs::File,
 }
 
 impl Inner {
@@ -433,7 +441,16 @@ impl Inner {
                 {
                     op = op.accumulate(self.pop_op().unwrap());
                 }
-                self.make_fut(op)
+                let (senders, fut) = self.make_fut(op);
+                // Safe because Inner::device never changes and we always drop
+                // all unpolled futures derived from it before we drop it
+                // itself.
+                // XXX it would be nice to have some type-safety guarantee that
+                // Inner::device never changes.
+                let fut = unsafe{
+                    mem::transmute::<VdevFileFut, Pin<Box<VdevFut>>>(fut)
+                };
+                (senders, fut)
             } else {
                 // Ran out of pending operations
                 break;
@@ -500,6 +517,8 @@ impl Inner {
             },
             Poll::Pending => {
                 let schfut = self.reschedule();
+                // TODO: consider rewriting wih JoinHandles instead of oneshots.
+                // Tokio 0.1.0 did not return JoinHandles from spawn.
                 tokio::spawn( async move {
                     let r = fut.await;
                     for sender in senders{
@@ -522,27 +541,31 @@ impl Inner {
     }
 
     /// Create a future from a BlockOp, but don't spawn it yet
-    fn make_fut(&mut self, block_op: BlockOp)
-        -> (Vec<oneshot::Sender<Result<()>>>, Pin<Box<VdevFut>>) {
+    fn make_fut<'a>(&'a mut self, block_op: BlockOp)
+        -> (
+            Vec<oneshot::Sender<Result<()>>>,
+            Pin<Box<dyn Future<Output=Result<()>> + Send + Sync + 'a>>
+            )
+    {
 
         self.queue_depth += 1;
         let lba = block_op.lba;
 
         // In the context where this is called, we can't return a future.  So we
         // have to spawn it into the event loop manually
-        let fut: Pin<Box<VdevFut>> = match block_op.cmd {
+        let fut: VdevFileFut = match block_op.cmd {
             Cmd::WriteAt(iovec) => self.leaf.write_at(iovec, lba),
             Cmd::ReadAt(iovec_mut) => self.leaf.read_at(iovec_mut, lba),
             Cmd::WritevAt(sglist) => self.leaf.writev_at(sglist, lba),
-            Cmd::ReadSpacemap(iovec_mut, idx) =>
-                    self.leaf.read_spacemap(iovec_mut, idx),
+            Cmd::ReadSpacemap(iovec_mut) =>
+                    self.leaf.read_spacemap(iovec_mut, lba),
             Cmd::ReadvAt(sglist_mut) => self.leaf.readv_at(sglist_mut, lba),
-            Cmd::EraseZone(start) => self.leaf.erase_zone(start),
+            Cmd::EraseZone(start) => self.leaf.erase_zone(start, lba),
             Cmd::FinishZone(start) => self.leaf.finish_zone(start),
             Cmd::OpenZone => self.leaf.open_zone(lba),
             Cmd::WriteLabel(labeller) => self.leaf.write_label(labeller),
-            Cmd::WriteSpacemap(sglist, idx, block) =>
-                self.leaf.write_spacemap(sglist, idx, block),
+            Cmd::WriteSpacemap(sglist) =>
+                self.leaf.write_spacemap(sglist, lba),
             Cmd::SyncAll => self.leaf.sync_all(),
         };
         (block_op.senders, fut)
@@ -697,11 +720,19 @@ impl Future for RemoveFut {
 pub struct VdevBlock {
     inner: Arc<RwLock<Inner>>,
 
+    /// Number of LBAs per zone.  May be simulated.
+    lbas_per_zone:  LbaT,
+
     /// Usable size of the vdev, in LBAs
     size:   LbaT,
 
     /// Size of a single spacemap as stored in the leaf vdev
-    spacemap_space:  LbaT
+    spacemap_space:  LbaT,
+
+    /// Last known path for this Vdev
+    path: PathBuf,
+
+    uuid:           Uuid,
 }
 
 impl VdevBlock {
@@ -731,8 +762,82 @@ impl VdevBlock {
         -> io::Result<Self>
         where P: AsRef<Path>
     {
-        let leaf = VdevLeaf::create(path, lbas_per_zone)?;
-        Ok(VdevBlock::new(leaf))
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
+        let device = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
+            .open(&path)?;
+        let sref: &'static fs::File = unsafe { mem::transmute(&device) };
+        let mut leaf = VdevLeaf::new(sref)?;
+        let lbas_per_zone = if let Some(lpz) = lbas_per_zone {
+            leaf.set(leaf.size(), lpz.get());
+            lpz.get()
+        } else {
+            leaf.lbas_per_zone()
+        };
+        let size = leaf.size();
+        let uuid = Uuid::new_v4();
+        let spacemap_space = leaf.spacemap_space();
+        let inner = Arc::new(RwLock::new(Inner {
+            delayed: None,
+            optimum_queue_depth: leaf.optimum_queue_depth(),
+            queue_depth: 0,
+            last_lba: 0,
+            remover: None,
+            syncing: false,
+            after_sync: VecDeque::new(),
+            ahead: BinaryHeap::new(),
+            behind: BinaryHeap::new(),
+            weakself: Weak::new(),
+            leaf,
+            _device: device
+        }));
+        inner.write().unwrap().weakself = Arc::downgrade(&inner);
+        Ok(VdevBlock {
+            inner,
+            size,
+            spacemap_space,
+            lbas_per_zone,
+            uuid,
+            path: path.as_ref().to_owned()
+        })
+    }
+
+    /// Constructor from a mock VdevLeaf, for unit testing
+    #[cfg(test)]
+    fn from_leaf(leaf: MockVdevFile) -> Self {
+        let device = fs::File::open("/dev/null").unwrap();
+        let lbas_per_zone = leaf.lbas_per_zone();
+        let size = leaf.size();
+        let uuid = Uuid::new_v4();
+        let spacemap_space = leaf.spacemap_space();
+        let inner = Arc::new(RwLock::new(Inner {
+            delayed: None,
+            optimum_queue_depth: leaf.optimum_queue_depth(),
+            queue_depth: 0,
+            last_lba: 0,
+            remover: None,
+            syncing: false,
+            after_sync: VecDeque::new(),
+            ahead: BinaryHeap::new(),
+            behind: BinaryHeap::new(),
+            weakself: Weak::new(),
+            leaf,
+            _device: device
+        }));
+        inner.write().unwrap().weakself = Arc::downgrade(&inner);
+        VdevBlock {
+            inner,
+            size,
+            spacemap_space,
+            lbas_per_zone,
+            uuid,
+            path: PathBuf::new()
+        }
     }
 
     /// Asynchronously erase a zone on a block device
@@ -817,36 +922,56 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
-    /// Instantiate a new VdevBlock from an existing VdevLeaf
+    /// Instantiate a new VdevBlock from an already formatted VdevLeaf.
+    /// The caller must provide some information found in the label.
     ///
-    /// * `leaf`    An already-open underlying VdevLeaf
-    pub fn new(leaf: VdevLeaf) -> Self {
-        let size = leaf.size();
+    /// * `path`:          Path at which this Leaf was last found.
+    /// * `device`:        The raw open device file
+    /// * `uuid`:          UUID as recorded in the label
+    /// * `size`:          device size in LBAs as recorded in the label
+    /// * `lbas_per_zone`: Number of LBAs per simulated zone
+    fn new(
+        device: fs::File,
+        path: PathBuf,
+        uuid: Uuid,
+        size: LbaT,
+        lbas_per_zone: LbaT
+    ) -> Self
+    {
+        // Safe because the Drop impl ensures that any futures based on leaf
+        // will be dropped before device gets dropped.
+        let sref: &'static fs::File = unsafe { mem::transmute(&device) };
+        let mut leaf = VdevLeaf::new(sref).unwrap();
+        leaf.set(size, lbas_per_zone);
         let spacemap_space = leaf.spacemap_space();
         let inner = Arc::new(RwLock::new(Inner {
             delayed: None,
             optimum_queue_depth: leaf.optimum_queue_depth(),
             queue_depth: 0,
-            leaf,
             last_lba: 0,
             remover: None,
             syncing: false,
             after_sync: VecDeque::new(),
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
-            weakself: Weak::new()
+            weakself: Weak::new(),
+            leaf,
+            _device: device
         }));
         inner.write().unwrap().weakself = Arc::downgrade(&inner);
         VdevBlock {
             inner,
             size,
-            spacemap_space
+            spacemap_space,
+            lbas_per_zone,
+            uuid,
+            path
         }
     }
 
     /// The pathname most recently used to open this device.
-    pub fn path(&self) -> PathBuf {
-        self.inner.read().unwrap().leaf.path().to_path_buf()
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     /// Asynchronously read a contiguous portion of the vdev.
@@ -866,12 +991,10 @@ impl VdevBlock {
     #[tracing::instrument(skip(self, buf))]
     pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> VdevBlockFut
     {
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
-        // lba is for sorting purposes only.  It should sort before any other
-        // write operation, and different read_spacemap operations should sort
-        // in the same order as their true LBA order.
-        let lba = 1 + self.spacemap_space * LbaT::from(idx);
-        let block_op = BlockOp::read_spacemap(buf, lba, idx, sender);
+        let lba = LbaT::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let block_op = BlockOp::read_spacemap(buf, lba, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -910,7 +1033,23 @@ impl VdevBlock {
     }
 
     pub fn status(&self) -> Status {
-        self.inner.read().unwrap().leaf.status()
+        Status {
+            health: Health::Online,
+            path: self.path.clone(),
+            uuid: self.uuid
+        }
+    }
+
+    /// Asynchronously sync the underlying device, ensuring that all data
+    /// reaches stable storage
+    pub fn sync_all(&self) -> BoxVdevFut {
+        let (sender, receiver) = oneshot::channel::<Result<()>>();
+        let block_op = BlockOp::sync_all(sender);
+        Box::pin(self.new_fut(block_op, receiver))
+    }
+
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
@@ -924,8 +1063,15 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
-    pub fn write_label(&self, labeller: LabelWriter) -> VdevBlockFut
+    pub fn write_label(&self, mut labeller: LabelWriter) -> VdevBlockFut
     {
+        let label = Label {
+            uuid: self.uuid,
+            spacemap_space: self.spacemap_space,
+            lbas_per_zone: self.lbas_per_zone,
+            lbas: self.size
+        };
+        labeller.serialize(&label).unwrap();
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_label(labeller, sender);
         self.new_fut(block_op, receiver)
@@ -934,13 +1080,11 @@ impl VdevBlock {
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         ->  VdevBlockFut
     {
+        assert!(LbaT::from(idx) < LABEL_COUNT);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let sglist = copy_and_pad_sglist(sglist);
-        // lba is for sorting purposes only.  It should sort after write_label,
-        // but before any other write operation, and different write_spacemap
-        // operations should sort in the same order as their true LBA order.
-        let lba = 1 + self.spacemap_space * LbaT::from(idx) + block;
-        let block_op = BlockOp::write_spacemap(sglist, lba, idx, block, sender);
+        let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
+        let block_op = BlockOp::write_spacemap(sglist, lba, sender);
         self.new_fut(block_op, receiver)
     }
 
@@ -979,18 +1123,6 @@ impl Vdev for VdevBlock {
         self.size
     }
 
-    /// Asynchronously sync the underlying device, ensuring that all data
-    /// reaches stable storage
-    fn sync_all(&self) -> BoxVdevFut {
-        let (sender, receiver) = oneshot::channel::<Result<()>>();
-        let block_op = BlockOp::sync_all(sender);
-        Box::pin(self.new_fut(block_op, receiver))
-    }
-
-    fn uuid(&self) -> Uuid {
-        self.inner.read().unwrap().leaf.uuid()
-    }
-
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         self.inner.read().unwrap().leaf.zone_limits(zone)
     }
@@ -1000,27 +1132,108 @@ impl Vdev for VdevBlock {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Label {
+    /// Vdev UUID, fixed at format time
+    uuid:           Uuid,
+    /// Number of LBAs per simulated zone
+    lbas_per_zone:  LbaT,
+    /// Number of LBAs that were present at format time
+    lbas:           LbaT,
+    /// LBAs in the first zone reserved for storing each spacemap.
+    spacemap_space: LbaT,
+}
+
+/// Holds a VdevLeaf that has already been tasted
+struct ImportableLeaf {
+    file: fs::File,
+    /// The path at which this leaf was last seen.  It may change.
+    path: PathBuf
+}
+
 /// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
 #[derive(Default)]
-pub struct Manager(crate::vdev_file::Manager);
+pub struct Manager {
+    devices: BTreeMap<Uuid, ImportableLeaf>,
+}
 
 impl Manager {
     /// Import a block device that is already known to exist
-    #[cfg(not(test))]
     pub fn import(&mut self, uuid: Uuid)
         -> impl Future<Output=Result<(VdevBlock, LabelReader)>>
     {
-        self.0.import(uuid)
-            .map_ok(|(vf, lr)| (VdevBlock::new(vf), lr))
+        future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
+            .and_then(move |rec| async move {
+                let mut lr = Self::read_label(&rec.file).await?;
+                let label: Label = lr.deserialize().unwrap();
+                assert_eq!(uuid, label.uuid);
+                let vb = VdevBlock::new(rec.file, rec.path, uuid,
+                    label.lbas, label.lbas_per_zone);
+                Ok((vb, lr))
+            })
+    }
+
+    /// Read just one of a vdev's labels
+    async fn read_label(f: &fs::File) -> Result<LabelReader>
+    {
+        let mut r = Err(Error::EDOOFUS);    // Will get overridden
+
+        for label in 0..2 {
+            let lba = LabelReader::lba(label);
+            let offset = lba * BYTES_PER_LBA as u64;
+            // TODO: figure out how to use mem::MaybeUninit with File::read_at
+            let mut rbuf = vec![0; LABEL_SIZE];
+            match f.read_at(&mut rbuf[..], offset).unwrap().await {
+                Ok(_aio_result) => {
+                    match LabelReader::new(rbuf) {
+                        Ok(lr) => {
+                            r = Ok(lr);
+                            break
+                        }
+                        Err(e) => {
+                            // If this is the first label, try the second.
+                            r = Err(e);
+                        }
+                    }
+                },
+                Err(e) => {
+                    r = Err(Error::from(e));
+                }
+            }
+        }
+        r
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
     ///
-    /// If present, retain the device in the `DevManager` for use as a spare or
+    /// If present, retain the device in the `Manager` for use as a spare or
     /// for building Pools.
+    // TODO: add a method for tasting disks in parallel.
     pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        self.0.taste(p).await
+        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
+        // block indefinitely.  However, using O_NONBLOCK is worse because it
+        // can cause spurious failures, such as when another thread fork()s.
+        // That happens frequently in the functional tests.
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
+            .open(&p)?;
+        let mut lr = Self::read_label(&file).await?;
+        let label: Label = lr.deserialize().unwrap();
+        let path = p.as_ref().to_path_buf();
+        let importable = ImportableLeaf{file, path};
+        self.devices.insert(label.uuid, importable);
+        Ok(lr)
     }
+}
+
+/// Return value of [`VdevBlock::status`]
+#[derive(Clone, Debug)]
+pub struct Status {
+    pub health: Health,
+    pub path: PathBuf,
+    pub uuid: Uuid
 }
 
 // LCOV_EXCL_START
@@ -1033,13 +1246,15 @@ mock! {
             where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
-        pub fn new(leaf: VdevLeaf) -> Self;
+        fn new(leaf: VdevLeaf) -> Self;
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn path(&self) -> PathBuf;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn status(&self) -> Status;
+        pub fn sync_all(&self) -> BoxVdevFut;
+        pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -1050,8 +1265,6 @@ mock! {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> BoxVdevFut;
-        fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
@@ -1277,8 +1490,8 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0; 4096]);
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
-                let op0 = BlockOp::read_spacemap(rbuf0, lba0, 0, tx0);
-                let op1 = BlockOp::read_spacemap(rbuf1, lba1, 0, tx1);
+                let op0 = BlockOp::read_spacemap(rbuf0, lba0, tx0);
+                let op1 = BlockOp::read_spacemap(rbuf1, lba1, tx1);
                 assert!(!op0.can_accumulate(&op1));
             }
 
@@ -1421,10 +1634,8 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0; 4096]);
                 let wbuf0 = dbs0.try_const().unwrap();
                 let wbuf1 = dbs1.try_const().unwrap();
-                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, 0, 10,
-                                                      tx0);
-                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, 0, 11,
-                                                  tx1);
+                let op0 = BlockOp::write_spacemap(vec![wbuf0], lba0, tx0);
+                let op1 = BlockOp::write_spacemap(vec![wbuf1], lba1, tx1);
                 assert!(!op0.can_accumulate(&op1));
             }
 
@@ -1515,7 +1726,7 @@ mod t {
                 format!("{readv_at:?}");
             }
             {
-                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap(), 0);
+                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap());
                 format!("{read_spacemap:?}");
             }
             let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
@@ -1526,7 +1737,7 @@ mod t {
             let label_writer = LabelWriter::new(0);
             let write_label = Cmd::WriteLabel(label_writer);
             let write_spacemap = Cmd::WriteSpacemap(
-                vec![dbs.try_const().unwrap()], 0, 0);
+                vec![dbs.try_const().unwrap()]);
             format!("{write_at:?} {writev_at:?} {erase_zone:?} {finish_zone:?}\
  {sync_all:?} {write_label:?} {write_spacemap:?}");
         }
@@ -1576,13 +1787,15 @@ mod t {
         }
 
         fn partial_leaf() -> MockVdevFile {
-            let mut leaf = MockVdevFile::new();
+            let mut leaf = MockVdevFile::default();
             leaf.expect_size()
                 .once()
                 .return_const(262_144u64);
             leaf.expect_lba2zone()
                 .with(ge(1).and(lt(1<<16)))
                 .return_const(Some(0));
+            leaf.expect_lbas_per_zone()
+                .return_const(1u64 << 16);
             leaf.expect_spacemap_space()
                 .return_const(1u64);
             leaf.expect_zone_limits()
@@ -1645,7 +1858,7 @@ mod t {
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
                 let rbuf2 = dbs2.try_mut().unwrap();
-                let vdev = VdevBlock::new(leaf1);
+                let vdev = VdevBlock::from_leaf(leaf1);
 
                 let mut ctx = noop_context();
                 // VdevBlock will issue the first operation immediately.
@@ -1713,7 +1926,7 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0u8; 4096]);
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
 
                 let f0 = vdev.read_at(rbuf0, 1);
                 let f1 = vdev.read_at(rbuf1, 3);
@@ -1748,7 +1961,7 @@ mod t {
                     });
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
                 let rbuf = dbs.try_mut().unwrap();
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
 
                 vdev.read_at(rbuf, 1).await.unwrap();
             }
@@ -1780,7 +1993,7 @@ mod t {
                 let dbs1 = DivBufShared::from(vec![0u8; 4096]);
                 let rbuf0 = dbs0.try_mut().unwrap();
                 let rbuf1 = dbs1.try_mut().unwrap();
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
 
                 let f0 = vdev.read_at(rbuf0, 1);
                 let f1 = vdev.read_at(rbuf1, 3);
@@ -1828,7 +2041,7 @@ mod t {
                     .return_once(|_, _| Box::pin(penultimate_fut));
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
                 let wbuf = dbs.try_const().unwrap();
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
 
                 let mut ctx = noop_context();
                 // First schedule all operations.  There are too many to
@@ -1875,13 +2088,15 @@ mod t {
         #[rstest]
         #[tokio::test]
         async fn erase_zone(mut leaf: MockVdevFile) {
+            let start = 1;
+            let end = (1 << 16) - 1;
             leaf.expect_erase_zone()
-                .with(eq(1))
-                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+                .with(eq(start), eq(end))
+                .returning(|_,_| Box::pin(future::ok::<(), Error>(())));
 
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
-            vdev.erase_zone(1, (1 << 16) - 1).await.unwrap();
+            vdev.erase_zone(start, end).await.unwrap();
         }
 
         #[rstest]
@@ -1891,7 +2106,7 @@ mod t {
                 .with(eq(1))
                 .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.finish_zone(1, (1 << 16) - 1).await.unwrap();
         }
@@ -1903,7 +2118,7 @@ mod t {
                 .with(eq(1))
                 .returning(|_| Box::pin(future::ok::<(), Error>(())));
 
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.open_zone(1).await.unwrap();
         }
@@ -1918,7 +2133,7 @@ mod t {
 
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = dbs0.try_mut().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.read_at(rbuf0, 2).await.unwrap();
         }
@@ -1933,7 +2148,7 @@ mod t {
 
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = dbs0.try_mut().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             assert_eq!(vdev.read_at(rbuf0, 2).await.unwrap_err(), Error::EIO);
         }
@@ -1958,7 +2173,7 @@ mod t {
 
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = dbs0.try_mut().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             assert_eq!(vdev.read_at(rbuf0, 2).await.unwrap_err(), Error::EIO);
         }
@@ -1973,7 +2188,7 @@ mod t {
 
             let dbs0 = DivBufShared::from(vec![0u8; 4096]);
             let rbuf0 = vec![dbs0.try_mut().unwrap()];
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.readv_at(rbuf0, 2).await.unwrap();
         }
@@ -1995,7 +2210,7 @@ mod t {
                 let mut ctx = noop_context();
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
                 let wbuf = dbs.try_const().unwrap();
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
 
                 // The first operation does not return immediately
                 let mut f0 = pin!(vdev.write_at(wbuf, 1));
@@ -2016,7 +2231,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn no_backlog(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 vdev.remove().await;
             }
 
@@ -2042,7 +2257,7 @@ mod t {
 
                 let mut ctx = noop_context();
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
-                let vdev = VdevBlock::new(leaf1);
+                let vdev = VdevBlock::from_leaf(leaf1);
 
                 // The first operation does not return immediately
                 let mut f0 = pin!(vdev.write_at(dbs.try_const().unwrap(), 1));
@@ -2098,7 +2313,7 @@ mod t {
 
                 let mut ctx = noop_context();
                 let dbs = DivBufShared::from(vec![0u8; 4096]);
-                let vdev = VdevBlock::new(leaf1);
+                let vdev = VdevBlock::from_leaf(leaf1);
 
                 // The first operation does not return immediately
                 let mut f0 = pin!(vdev.write_at(dbs.try_const().unwrap(), 1));
@@ -2134,7 +2349,7 @@ mod t {
             // to highest, then start over at lowest)
             #[rstest]
             fn data(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let mut inner = vdev.inner.write().unwrap();
                 let dummy_dbs = DivBufShared::from(vec![0; 4096]);
                 let dummy_buffer = dummy_dbs.try_const().unwrap();
@@ -2187,7 +2402,7 @@ mod t {
             // that zone
             #[rstest]
             fn erase_zone(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let mut inner = vdev.inner.write().unwrap();
                 let dummy_dbs = DivBufShared::from(vec![0; 12288]);
                 let mut dummy = dummy_dbs.try_mut().unwrap();
@@ -2237,7 +2452,7 @@ mod t {
             // that zone
             #[rstest]
             fn finish_zone(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let mut inner = vdev.inner.write().unwrap();
                 let dummy_dbs = DivBufShared::from(vec![0; 4096]);
                 let dummy = dummy_dbs.try_const().unwrap();
@@ -2289,7 +2504,7 @@ mod t {
             // that zone
             #[rstest]
             fn open_zone(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let mut inner = vdev.inner.write().unwrap();
                 let dummy_dbs = DivBufShared::from(vec![0; 4096]);
                 let dummy = dummy_dbs.try_const().unwrap();
@@ -2344,7 +2559,7 @@ mod t {
             // after all previous commands and before all subsequent commands
             #[rstest]
             fn sync_all(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let mut inner = vdev.inner.write().unwrap();
                 let dummy_dbs = DivBufShared::from(vec![0; 4096]);
                 let dummy_buffer = dummy_dbs.try_const().unwrap();
@@ -2392,7 +2607,7 @@ mod t {
             leaf.expect_sync_all()
                 .returning(|| Box::pin(future::ok::<(), Error>(())));
 
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.sync_all().await.unwrap();
         }
@@ -2408,7 +2623,7 @@ mod t {
 
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = dbs.try_const().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.write_at(wbuf, 1).await.unwrap();
         }
@@ -2424,7 +2639,7 @@ mod t {
 
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = dbs.try_const().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             assert_eq!(Err(Error::ENXIO), vdev.write_at(wbuf, 1).await);
         }
@@ -2452,7 +2667,7 @@ mod t {
 
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = dbs.try_const().unwrap();
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             assert_eq!(Err(Error::ENXIO), vdev.write_at(wbuf, 1).await);
         }
@@ -2467,7 +2682,7 @@ mod t {
 
             let dbs = DivBufShared::from(vec![0u8; 4096]);
             let wbuf = vec![dbs.try_const().unwrap()];
-            let vdev = VdevBlock::new(leaf);
+            let vdev = VdevBlock::from_leaf(leaf);
 
             vdev.writev_at(wbuf, 1).await.unwrap();
         }
@@ -2481,7 +2696,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn pad_small_tail(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 4096]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let wbuf0 = dbs0.try_const().unwrap();
@@ -2489,7 +2704,7 @@ mod t {
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
                 let fut = vdev.write_spacemap(wbufs, 0, 10);
                 let op = fut.block_op.unwrap();
-                let (sglist, _, _) = op.cmd.as_write_spacemap();
+                let sglist = op.cmd.as_write_spacemap();
                 assert_eq!(sglist.len(), 2);
                 assert_eq!(&sglist[0][..], &wbuf0[..]);
                 assert_eq!(&sglist[1][..3072], &wbuf1[..]);
@@ -2506,13 +2721,13 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn copy_two_iovecs(leaf: MockVdevFile) {
-                let vd = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 1024]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let wbuf0 = dbs0.try_const().unwrap();
                 let wbuf1 = dbs1.try_const().unwrap();
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-                let fut = vd.writev_at(wbufs, 10);
+                let fut = vdev.writev_at(wbufs, 10);
                 let op = fut.block_op.unwrap();
                 let sglist = op.cmd.as_writev_at();
                 assert_eq!(sglist.len(), 1);
@@ -2525,7 +2740,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn copy_three_iovecs(leaf: MockVdevFile) {
-                let vd = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 1024]);
                 let dbs1 = DivBufShared::from(vec![1u8; 2050]);
                 let dbs2 = DivBufShared::from(vec![2u8; 1022]);
@@ -2533,7 +2748,7 @@ mod t {
                 let wbuf1 = dbs1.try_const().unwrap();
                 let wbuf2 = dbs2.try_const().unwrap();
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-                let fut = vd.writev_at(wbufs, 10);
+                let fut = vdev.writev_at(wbufs, 10);
                 let op = fut.block_op.unwrap();
                 let sglist = op.cmd.as_writev_at();
                 assert_eq!(sglist.len(), 1);
@@ -2547,7 +2762,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn copy_first_two_iovecs(leaf: MockVdevFile) {
-                let vd = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 1024]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let dbs2 = DivBufShared::from(vec![2u8; 4096]);
@@ -2556,7 +2771,7 @@ mod t {
                 let wbuf2 = dbs2.try_const().unwrap();
                 let wptr2 = &wbuf2[0] as *const _;
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-                let fut = vd.writev_at(wbufs, 10);
+                let fut = vdev.writev_at(wbufs, 10);
                 let op = fut.block_op.unwrap();
                 let sglist = op.cmd.as_writev_at();
                 assert_eq!(sglist.len(), 2);
@@ -2571,7 +2786,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn copy_last_two_iovecs(leaf: MockVdevFile) {
-                let vd = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 4096]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let dbs2 = DivBufShared::from(vec![2u8; 1024]);
@@ -2580,7 +2795,7 @@ mod t {
                 let wbuf1 = dbs1.try_const().unwrap();
                 let wbuf2 = dbs2.try_const().unwrap();
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone(), wbuf2.clone()];
-                let fut = vd.writev_at(wbufs, 10);
+                let fut = vdev.writev_at(wbufs, 10);
                 let op = fut.block_op.unwrap();
                 let sglist = op.cmd.as_writev_at();
                 assert_eq!(sglist.len(), 2);
@@ -2595,14 +2810,14 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn copy_tail_of_iovec(leaf: MockVdevFile) {
-                let vd = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 5120]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let wbuf0 = dbs0.try_const().unwrap();
                 let wptr0 = &wbuf0[0] as *const _;
                 let wbuf1 = dbs1.try_const().unwrap();
                 let wbufs = vec![wbuf0.clone(), wbuf1.clone()];
-                let fut = vd.writev_at(wbufs, 10);
+                let fut = vdev.writev_at(wbufs, 10);
                 let op = fut.block_op.unwrap();
                 let sglist = op.cmd.as_writev_at();
                 assert_eq!(sglist.len(), 2);
@@ -2618,7 +2833,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn pad_large_tail(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 4096]);
                 let dbs1 = DivBufShared::from(vec![1u8; 7168]);
                 let wbuf0 = dbs0.try_const().unwrap();
@@ -2643,7 +2858,7 @@ mod t {
             #[rstest]
             #[tokio::test]
             async fn pad_small_tail(leaf: MockVdevFile) {
-                let vdev = VdevBlock::new(leaf);
+                let vdev = VdevBlock::from_leaf(leaf);
                 let dbs0 = DivBufShared::from(vec![0u8; 4096]);
                 let dbs1 = DivBufShared::from(vec![1u8; 3072]);
                 let wbuf0 = dbs0.try_const().unwrap();

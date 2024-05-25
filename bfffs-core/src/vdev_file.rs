@@ -18,25 +18,23 @@ use futures::{
 };
 #[cfg(test)] use mockall::mock;
 use nix::libc::{c_int, off_t};
-use num_traits::FromPrimitive;
 use pin_project::pin_project;
-use serde_derive::{Deserialize, Serialize};
 use std::{
     borrow::Borrow,
-    collections::BTreeMap,
-    fs::OpenOptions,
+    fs,
     io::{self, IoSlice, IoSliceMut},
     mem::{self, MaybeUninit},
-    num::NonZeroU64,
-    os::unix::{
-        fs::OpenOptionsExt,
-        io::{AsRawFd, RawFd}
+    os::{
+        fd::AsFd,
+        unix::{
+            fs::FileTypeExt,
+            io::{AsRawFd, BorrowedFd, RawFd}
+        },
     },
-    path::{Path, PathBuf},
     pin::Pin,
     sync::atomic::Ordering
 };
-use tokio_file::File;
+use tokio_file::AioFileExt;
 use tokio::task;
 
 /// How does this device deallocate sectors?
@@ -52,7 +50,7 @@ enum EraseMethod {
 
 impl AtomicEraseMethod {
     /// Get the initial erase method.
-    fn initial(fd: RawFd) -> Result<Self> {
+    fn initial(fd: RawFd) -> io::Result<Self> {
         if VdevFile::candelete(fd)? {
             // The file supports DIOCGDELETE.
             Ok(AtomicEraseMethod::new(EraseMethod::Diocgdelete))
@@ -102,68 +100,34 @@ mod ffi {
         diocgattr, b'd', 142, diocgattr_arg
     }
 
+    nix::ioctl_read! {
+        /// get the size of the entire device in bytes.  this should be a
+        /// multiple of the sector size.
+        diocgmediasize, 'd', 129, nix::libc::off_t
+    }
+
     ioctl_write_ptr! {
         /// FreeBSD's catch-all ioctl for hole-punching, TRIM, UNMAP,
         /// Deallocate, and EraseWritePointer of GEOM devices.
         #[doc(hidden)]
         diocgdelete, b'd', 136, [off_t; 2]
     }
-}
 
-use ffi::{diocgdelete, diocgattr, diocgattr_arg};
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Label {
-    /// Vdev UUID, fixed at format time
-    uuid:           Uuid,
-    /// Number of LBAs per simulated zone
-    lbas_per_zone:  LbaT,
-    /// Number of LBAs that were present at format time
-    lbas:           LbaT,
-    /// LBAs in the first zone reserved for storing each spacemap.
-    spacemap_space: LbaT,
-}
-
-/// Manage BFFFS-formatted disks that aren't yet part of an imported pool.
-#[derive(Default)]
-pub struct Manager {
-    devices: BTreeMap<Uuid, VdevFile>,
-}
-
-impl Manager {
-    /// Import a block device that is already known to exist
-    pub fn import(&mut self, uuid: Uuid)
-        -> impl Future<Output=Result<(VdevFile, LabelReader)>>
-    {
-        future::ready(self.devices.remove(&uuid).ok_or(Error::ENOENT))
-            .and_then(move |vf| async move {
-                let mut lr = VdevFile::read_label(&vf.file).await?;
-                let label: Label = lr.deserialize().unwrap();
-                assert_eq!(uuid, label.uuid);
-                Ok((vf, lr))
-            })
+    nix::ioctl_read! {
+        diocgsectorsize, 'd', 128, nix::libc::c_uint
     }
 
-    /// Taste the device identified by `p` for a BFFFS label.
-    ///
-    /// If present, retain the device in the `DevManager` for use as a spare or
-    /// for building Pools.
-    // TODO: add a method for tasting disks in parallel.
-    pub async fn taste<P: AsRef<Path>>(&mut self, p: P) -> Result<LabelReader> {
-        let (vdev_file, reader) = VdevFile::open(p).await?;
-        self.devices.insert(vdev_file.uuid(), vdev_file);
-        Ok(reader)
+    nix::ioctl_read! {
+        diocgstripesize, 'd', 139, nix::libc::off_t
     }
+
 }
 
-/// Return value of [`VdevFile::status`]
-#[derive(Clone, Debug)]
-pub struct Status {
-    pub health: Health,
-    pub path: PathBuf,
-    pub uuid: Uuid
-}
+use ffi::{diocgdelete, diocgattr, diocgattr_arg, diocgmediasize, diocgsectorsize, diocgstripesize};
 
+
+pub type VdevFileFut<'a> =
+    Pin<Box<dyn Future<Output=Result<()>> + Send + Sync + 'a>>;
 
 /// `VdevFile`: File-backed implementation of `VdevBlock`
 ///
@@ -173,22 +137,18 @@ pub struct Status {
 /// I/O operations on `VdevFile` happen immediately; they are not scheduled.
 ///
 #[derive(Debug)]
-pub struct VdevFile {
-    file:           File,
+pub struct VdevFile<'fd> {
+    fd:             BorrowedFd<'fd>,
     /// Number of reserved LBAS in first zone for each spacemap
     spacemap_space: LbaT,
     /// Number of LBAs per simulated zone
     lbas_per_zone:  LbaT,
-    /// The name used to open this Vdev.  It may change if the pool is exported
-    /// and reimported.
-    path:           PathBuf,
     size:           LbaT,
-    uuid:           Uuid,
     /// How does the underlying file deallocate data?
-    erase_method:   AtomicEraseMethod
+    erase_method:   AtomicEraseMethod,
 }
 
-impl Vdev for VdevFile {
+impl<'fd> Vdev for VdevFile<'fd> {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= self.reserved_space() {
             Some((lba / self.lbas_per_zone) as ZoneT)
@@ -206,17 +166,6 @@ impl Vdev for VdevFile {
         self.size
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
-        let fut = self.file.sync_all().unwrap()
-            .map_ok(drop)
-            .map_err(Error::from);
-        Box::pin(fut)
-    }
-
-    fn uuid(&self) -> Uuid {
-        self.uuid
-    }
-
     fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT) {
         if zone == 0 {
             (self.reserved_space(), self.lbas_per_zone)
@@ -231,11 +180,11 @@ impl Vdev for VdevFile {
     }
 }
 
-impl VdevFile {
+impl<'fd> VdevFile<'fd> {
     /// Size of a simulated zone
     const DEFAULT_LBAS_PER_ZONE: LbaT = 1 << 16;  // 256 MB
 
-    fn candelete(fd: RawFd) -> Result<bool> {
+    fn candelete(fd: RawFd) -> io::Result<bool> {
         let mut arg = MaybeUninit::<diocgattr_arg>::uninit();
         let r = unsafe {
             let p = arg.as_mut_ptr();
@@ -249,49 +198,8 @@ impl VdevFile {
             // DIOCGDELETE either.
             Ok(false)
         } else {
-            r
+            r.map_err(|e| io::Error::from_raw_os_error(e.into()))
         }
-    }
-
-    /// Create a new Vdev, backed by a file
-    ///
-    /// * `path`:           Pathname for the file.  It may be a device node.
-    /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
-    ///                     simulated zones on devices that don't have native
-    ///                     zones.
-    pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
-        -> io::Result<Self>
-        where P: AsRef<Path>
-    {
-        let pb = path.as_ref().to_path_buf();
-        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
-        // block indefinitely.  However, using O_NONBLOCK is worse because it
-        // can cause spurious failures, such as when another thread fork()s.
-        // That happens frequently in the functional tests.
-        let f = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
-            .open(path)
-            .map(File::new)?;
-        let lpz = match lbas_per_zone {
-            None => VdevFile::DEFAULT_LBAS_PER_ZONE,
-            Some(x) => x.get()
-        };
-        let erase_method = AtomicEraseMethod::initial(f.as_raw_fd()).unwrap();
-        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
-        let nzones = div_roundup(size, lpz);
-        let spacemap_space = spacemap_space(nzones);
-        let uuid = Uuid::new_v4();
-        Ok(VdevFile{
-            file: f,
-            spacemap_space,
-            lbas_per_zone: lpz,
-            path: pb,
-            size,
-            uuid,
-            erase_method
-        })
     }
 
     /// Asynchronously erase the given zone.
@@ -301,17 +209,18 @@ impl VdevFile {
     ///
     /// # Parameters
     ///
-    /// -`lba`: The first LBA of the zone to erase
+    /// - `lba`: The first LBA of the zone to erase
+    /// - `end`: The last LBA of the zone to erase
     // There isn't (yet) a way to asynchronously trim, so use a synchronous
     // method in a blocking_task
-    pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut {
-        let fd = self.file.as_raw_fd();
-        let off = lba as off_t * (BYTES_PER_LBA as off_t);
-        let len = self.lbas_per_zone as off_t * BYTES_PER_LBA as off_t;
+    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
+        let off = start as off_t * (BYTES_PER_LBA as off_t);
+        let len = (end + 1 - start) as off_t * BYTES_PER_LBA as off_t;
         let em = self.erase_method.load(Ordering::Relaxed);
         match em {
             EraseMethod::None => Box::pin(future::ok(())),
             EraseMethod::Diocgdelete => {
+                let fd = self.fd.as_raw_fd();
                 let t = task::spawn_blocking(move || {
                     let args = [off, len];
                     unsafe {
@@ -327,7 +236,7 @@ impl VdevFile {
 
                 // The first time erasing a zone, do it synchronously so we can
                 // change the erase_method.
-                match fspacectl_all(fd, off, len) {
+                match fspacectl_all(self.fd.as_raw_fd(), off, len) {
                     Err(nix::Error::ENOSYS) =>  {
                         // fspacectl is not supported by the running system
                         self.erase_method.store(EraseMethod::None,
@@ -353,6 +262,7 @@ impl VdevFile {
             EraseMethod::Fspacectl => {
                 use nix::fcntl::fspacectl_all;
 
+                let fd = self.fd.as_raw_fd();
                 let t = task::spawn_blocking(move || {
                     fspacectl_all(fd, off, len)
                 }).map(std::result::Result::unwrap)
@@ -375,53 +285,65 @@ impl VdevFile {
         Box::pin(future::ok(()))
     }
 
-    /// Open an existing `VdevFile`
-    ///
-    /// Returns both a new `VdevFile` object, and a `LabelReader` that may be
-    /// used to construct other vdevs stacked on top of this one.
-    ///
-    /// * `path`    Pathname for the file.  It may be a device node.
-    pub async fn open<P: AsRef<Path>>(path: P)
-        -> Result<(Self, LabelReader)>
-    {
-        let pb = path.as_ref().to_path_buf();
-        // NB: Annoyingly, using O_EXLOCK without O_NONBLOCK means that we can
-        // block indefinitely.  However, using O_NONBLOCK is worse because it
-        // can cause spurious failures, such as when another thread fork()s.
-        // That happens frequently in the functional tests.
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_DIRECT | libc::O_EXLOCK)
-            .open(path)
-            .map(File::new)
-            .map_err(|e| Error::from_i32(e.raw_os_error().unwrap()).unwrap());
-        match file {
-            Ok(f) => {
-                match VdevFile::read_label(&f).await {
-                    Err(e) => Err(e),
-                    Ok(mut label_reader) => {
-                        let fd = f.as_raw_fd();
-                        let erase_method = AtomicEraseMethod::initial(fd)?;
-                        let size = f.len().unwrap() / BYTES_PER_LBA as u64;
-                        let label: Label = label_reader.deserialize().unwrap();
-                        assert!(size >= label.lbas,
-                                "Vdev has shrunk since creation");
-                        let vdev = VdevFile {
-                            file: f,
-                            spacemap_space: label.spacemap_space,
-                            lbas_per_zone: label.lbas_per_zone,
-                            path: pb,
-                            size: label.lbas,
-                            uuid: label.uuid,
-                            erase_method
-                        };
-                        Ok((vdev, label_reader))
-                    }
-                }
-            },
-            Err(e) => Err(e)
+    pub fn lbas_per_zone(&self) -> LbaT{
+        self.lbas_per_zone
+    }
+
+    /// Get the file's size in bytes, whether it's a device file or a regular
+    /// file
+    fn devlen(f: &fs::File, sectorsize: usize) -> io::Result<u64> {
+        let md = f.metadata()?;
+        if sectorsize > 1 {
+            let mut mediasize = mem::MaybeUninit::<nix::libc::off_t>::uninit();
+            // This ioctl is always safe
+            unsafe {
+                diocgmediasize(f.as_raw_fd(), mediasize.as_mut_ptr())
+            }.map_err(|_| io::Error::from_raw_os_error(nix::errno::Errno::last_raw()))?;
+            // Safe because we know the ioctl succeeded
+            unsafe { Ok(mediasize.assume_init() as u64) }
+        } else {
+            Ok(md.len())
         }
+    }
+
+    /// Construct a new VdevFile, with default values for all parameters.  If
+    /// there is a label, some of these parameters may need to be overwritten by
+    /// [`VdevFile::set`].
+    pub fn new(f: &'fd fs::File) -> io::Result<Self>
+    {
+        let md = f.metadata()?;
+        let ft = md.file_type();
+        // The preferred (not necessarily minimum) sector size for accessing
+        // the device
+        let sectorsize = if ft.is_block_device() || ft.is_char_device() {
+            let mut sectorsize = mem::MaybeUninit::<u32>::uninit();
+            let mut stripesize = mem::MaybeUninit::<nix::libc::off_t>::uninit();
+            let fd = f.as_raw_fd();
+            unsafe {
+                // TODO: use stripesize if it's greater than sector size
+                diocgsectorsize(fd, sectorsize.as_mut_ptr())?;
+                diocgstripesize(fd, stripesize.as_mut_ptr())?;
+                if stripesize.assume_init() > 0 {
+                    stripesize.assume_init() as usize
+                } else {
+                    sectorsize.assume_init() as usize
+                }
+            }
+        } else {
+            1
+        };
+        let erase_method = AtomicEraseMethod::initial(f.as_raw_fd())?;
+        let size = Self::devlen(f, sectorsize)? / BYTES_PER_LBA as u64;
+        let lbas_per_zone = VdevFile::DEFAULT_LBAS_PER_ZONE;
+        let nzones = div_roundup(size, lbas_per_zone);
+        let spacemap_space = spacemap_space(nzones);
+        Ok(VdevFile {
+            fd: f.as_fd(),
+            spacemap_space,
+            lbas_per_zone,
+            size,
+            erase_method
+        })
     }
 
     /// Asynchronously open the given zone.
@@ -436,15 +358,11 @@ impl VdevFile {
         Box::pin(future::ok(()))
     }
 
-    /// The pathname most recently used to open this device.
-    pub fn path(&self) -> &Path {
-        self.path.as_path()
-    }
-
     /// Asynchronously read a contiguous portion of the vdev.
     ///
     /// Return the number of bytes actually read.
-    pub fn read_at(&self, mut buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    pub fn read_at(&'fd self, mut buf: IoVecMut, lba: LbaT) -> VdevFileFut<'fd>
+    {
         // Unlike write_at, the upper layers will never read into a buffer that
         // isn't a multiple of a block size.  DDML::read ensures that.
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
@@ -456,39 +374,8 @@ impl VdevFile {
             // heap-allocated, moving it won't change the data's address.
             mem::transmute::<&mut[u8], &'static mut [u8]>(buf.as_mut())
         };
-        let fut = self.file.read_at(&mut *bufaddr, off).unwrap();
+        let fut = self.fd.read_at(&mut *bufaddr, off).unwrap();
         Box::pin(ReadAt { _buf: buf, fut })
-    }
-
-    /// Read just one of a vdev's labels
-    async fn read_label(f: &File) -> Result<LabelReader>
-    {
-        let mut r = Err(Error::EDOOFUS);    // Will get overridden
-
-        for label in 0..2 {
-            let lba = LabelReader::lba(label);
-            let offset = lba * BYTES_PER_LBA as u64;
-            // TODO: figure out how to use mem::MaybeUninit with File::read_at
-            let mut rbuf = vec![0; LABEL_SIZE];
-            match f.read_at(&mut rbuf[..], offset).unwrap().await {
-                Ok(_aio_result) => {
-                    match LabelReader::new(rbuf) {
-                        Ok(lr) => {
-                            r = Ok(lr);
-                            break
-                        }
-                        Err(e) => {
-                            // If this is the first label, try the second.
-                            r = Err(e);
-                        }
-                    }
-                },
-                Err(e) => {
-                    r = Err(Error::from(e));
-                }
-            }
-        }
-        r
     }
 
     /// Read one of the spacemaps from disk.
@@ -496,14 +383,10 @@ impl VdevFile {
     /// # Parameters
     /// - `buf`:        Place the still-serialized spacemap here.  `buf` will be
     ///                 resized as needed.
-    /// - `idx`:        Index of the spacemap to read.  It should be the same as
-    ///                 whichever label is being used.
-    pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut
+    /// * `lba`     LBA to read from
+    pub fn read_spacemap(&'fd self, buf: IoVecMut, lba: LbaT)
+        -> VdevFileFut<'fd>
     {
-        debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
-        assert!(LbaT::from(idx) < LABEL_COUNT);
-
-        let lba = u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         self.read_at(buf, lba)
     }
 
@@ -512,7 +395,8 @@ impl VdevFile {
     /// * `sglist   Scatter-gather list of buffers to receive data
     /// * `lba`     LBA to read from
     #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
-    pub fn readv_at(&self, mut sglist: SGListMut, lba: LbaT) -> BoxVdevFut
+    pub fn readv_at(&'fd self, mut sglist: SGListMut, lba: LbaT)
+        -> VdevFileFut<'fd>
     {
         for iovec in sglist.iter() {
             debug_assert_eq!(iovec.len() % BYTES_PER_LBA, 0);
@@ -529,21 +413,17 @@ impl VdevFile {
             }).collect::<Vec<_>>()
             .into_boxed_slice()
         };
-        let bufs: &'static mut [IoSliceMut<'static>] = unsafe {
+        let bufs: &'fd mut [IoSliceMut<'fd>] = unsafe {
             // Safe because fut's lifetime will be equal to bufs's once we
-            // move it into the ReadvAt struct.  Also, because slies is already
+            // move it into the ReadvAt struct.  Also, because slices is already
             // heap-allocated, so moving it won't change the data's address.
             mem::transmute::<&mut[IoSliceMut<'static>],
-                             &'static mut [IoSliceMut<'static>]>(
+                             &'fd mut [IoSliceMut<'fd>]>(
                 &mut slices
             )
         };
-        let fut = self.file.readv_at(bufs, off).unwrap();
-        Box::pin(ReadvAt {
-            _sglist: sglist,
-            _slices: slices,
-            fut
-        })
+        let fut = self.fd.readv_at(bufs, off).unwrap();
+        Box::pin(ReadvAt { _sglist: sglist, _slices: slices, fut })
     }
 
     fn reserved_space(&self) -> LbaT {
@@ -555,23 +435,40 @@ impl VdevFile {
         self.spacemap_space
     }
 
-    pub fn status(&self) -> Status {
-        Status {
-            health: Health::Online,
-            path: self.path.clone(),
-            uuid: self.uuid
-        }
+    /// Set certain properties that are stored in the label
+    ///
+    /// * `lbas_per_zone`:  If specified, this many LBAs will be assigned to
+    ///                     simulated zones on devices that don't have native
+    ///                     zones.
+    pub fn set(&mut self, size: LbaT, lbas_per_zone: LbaT) {
+        self.size = size;
+        let nzones = div_roundup(size, lbas_per_zone);
+        self.spacemap_space = spacemap_space(nzones);
+        self.lbas_per_zone = lbas_per_zone;
+    }
+
+    /// Sync the `Vdev`, ensuring that all data written so far reaches stable
+    /// storage.
+    pub fn sync_all(&self) -> VdevFileFut
+    {
+        let fut = AioFileExt::sync_all(&self.fd).unwrap()
+            .map_ok(drop)
+            .map_err(Error::from);
+        Box::pin(fut)
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
-    pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
+    pub fn write_at(&'fd self, buf: IoVec, lba: LbaT) -> VdevFileFut<'fd>
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         self.write_at_unchecked(buf, lba)
     }
 
-    fn write_at_unchecked(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
+    // NB: functions like this don't submit to the kernel immediately with
+    // aio_write.  They don't do that until polled.  So the return value's
+    // lifetime must include both that of the BorrowedFd and self.
+    fn write_at_unchecked(&'fd self, buf: IoVec, lba: LbaT) -> VdevFileFut<'fd>
     {
         let off = lba * (BYTES_PER_LBA as u64);
         {
@@ -584,7 +481,7 @@ impl VdevFile {
         let sbuf: &'static [u8] = unsafe {
             mem::transmute::<&[u8], &'static [u8]>( buf.as_ref())
         };
-        let fut = self.file.write_at(sbuf, off).unwrap();
+        let fut = self.fd.write_at(sbuf, off).unwrap();
 
         Box::pin(WriteAt { _buf: buf, fut })
     }
@@ -593,15 +490,8 @@ impl VdevFile {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&'fd self, label_writer: LabelWriter) -> VdevFileFut<'fd>
     {
-        let label = Label {
-            uuid: self.uuid,
-            spacemap_space: self.spacemap_space,
-            lbas_per_zone: self.lbas_per_zone,
-            lbas: self.size
-        };
-        label_writer.serialize(&label).unwrap();
         let lba = label_writer.lba();
         let sglist = label_writer.into_sglist();
         let sglist = copy_and_pad_sglist(sglist);
@@ -613,15 +503,9 @@ impl VdevFile {
     /// # Parameters
     ///
     /// - `sglist`:     Buffers of data to write
-    /// - `idx`:        Index of the spacemap area to write: there are more than
-    ///                 one.  It should be the same as whichever label is being
-    ///                 written.
-    /// - `block`:      LBA-based offset from the start of the spacemap area
-    pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
-        -> BoxVdevFut
+    /// * `lba`     LBA to write to
+    pub fn write_spacemap(&'fd self, sglist: SGList, lba: LbaT) -> VdevFileFut
     {
-        assert!(LbaT::from(idx) < LABEL_COUNT);
-        let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let bytes: u64 = sglist.iter()
             .map(DivBuf::len)
             .sum::<usize>() as u64;
@@ -635,14 +519,13 @@ impl VdevFile {
     ///
     /// * `sglist`  Scatter-gather list of buffers to write
     /// * `lba`     LBA to write to
-    pub fn writev_at(&self, sglist: SGList, lba: LbaT) -> BoxVdevFut
+    pub fn writev_at(&'fd self, sglist: SGList, lba: LbaT) -> VdevFileFut<'fd>
     {
         assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
         self.writev_at_unchecked(sglist, lba)
     }
 
-    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT)
-        -> Pin<Box<WritevAt>>
+    fn writev_at_unchecked(&'fd self, sglist: SGList, lba: LbaT) -> VdevFileFut
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
@@ -659,7 +542,7 @@ impl VdevFile {
                     IoSlice::new(sb)
                 }).collect::<Vec<_>>()
                 .into_boxed_slice();
-        let fut = self.file.writev_at(&slices, off).unwrap();
+        let fut = self.fd.writev_at(&slices, off).unwrap();
 
         Box::pin(WritevAt {
             _sglist: sglist,
@@ -670,14 +553,14 @@ impl VdevFile {
 }
 
 #[pin_project]
-struct ReadAt {
+struct ReadAt<'a> {
     // Owns the buffer used by the Future
     _buf: IoVecMut,
     #[pin]
-    fut: tokio_file::ReadAt<'static>
+    fut: tokio_file::ReadAt<'a>
 }
 
-impl Future for ReadAt {
+impl<'a> Future for ReadAt<'a> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -696,14 +579,14 @@ impl Future for ReadAt {
 }
 
 #[pin_project]
-struct WriteAt {
+struct WriteAt<'fd> {
     #[pin]
-    fut: tokio_file::WriteAt<'static>,
+    fut: tokio_file::WriteAt<'fd>,
     // Owns the buffer used by the Future
     _buf: IoVec,
 }
 
-impl Future for WriteAt {
+impl<'fd> Future for WriteAt<'fd> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -722,16 +605,16 @@ impl Future for WriteAt {
 }
 
 #[pin_project]
-struct ReadvAt {
+struct ReadvAt<'fd> {
     #[pin]
-    fut: tokio_file::ReadvAt<'static>,
+    fut: tokio_file::ReadvAt<'fd>,
     // Owns the pointer array used by the Future
-    _slices: Box<[IoSliceMut<'static>]>,
+    _slices: Box<[IoSliceMut<'fd>]>,
     // Owns the buffers used by the Future
     _sglist: SGListMut,
 }
 
-impl Future for ReadvAt {
+impl<'fd> Future for ReadvAt<'fd> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -750,16 +633,16 @@ impl Future for ReadvAt {
 }
 
 #[pin_project]
-struct WritevAt{
+struct WritevAt<'a> {
     #[pin]
-    fut: tokio_file::WritevAt<'static>,
+    fut: tokio_file::WritevAt<'a>,
     // Owns the pointer array used by the Future
     _slices: Box<[IoSlice<'static>]>,
     // Owns the buffers used by the Future
     _sglist: SGList,
 }
 
-impl Future for WritevAt {
+impl<'a> Future for WritevAt<'a> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -781,56 +664,28 @@ impl Future for WritevAt {
 #[cfg(test)]
 mock!{
     pub VdevFile {
-        #[mockall::concretize]
-        pub fn create<P>(path: P, lbas_per_zone: Option<NonZeroU64>)
-            -> io::Result<Self>
-            where P: AsRef<Path>;
-        pub fn erase_zone(&self, lba: LbaT) -> BoxVdevFut;
+        pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        #[mockall::concretize]
-        pub async fn open<P>(path: P) -> Result<(Self, LabelReader)>
-            where P: AsRef<Path>;
+        pub fn lbas_per_zone(&self) -> LbaT;
+        pub fn new(f: &fs::File) -> io::Result<Self>;
         pub fn open_zone(&self, _lba: LbaT) -> BoxVdevFut;
-        pub fn path(&self) -> &Path;
         pub fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
-        pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
+        pub fn read_spacemap(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn set(&mut self, size: LbaT, lbas_per_zone: LbaT);
         pub fn spacemap_space(&self) -> LbaT;
-        pub fn status(&self) -> Status;
+        pub fn sync_all<'a>(&'a self) -> VdevFileFut<'a>;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, mut label_writer: LabelWriter) -> BoxVdevFut;
-        pub fn write_spacemap(&self, buf: SGList, idx: u32, block: LbaT)
-            -> BoxVdevFut;
+        pub fn write_spacemap(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
         pub fn writev_at(&self, buf: SGList, lba: LbaT) -> BoxVdevFut;
     }
     impl Vdev for VdevFile {
         fn lba2zone(&self, lba: LbaT) -> Option<ZoneT>;
         fn optimum_queue_depth(&self) -> u32;
         fn size(&self) -> LbaT;
-        fn sync_all(&self) -> BoxVdevFut;
-        fn uuid(&self) -> Uuid;
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
-}
-
-#[cfg(test)]
-mod t {
-    use super::*;
-
-mod label {
-    use super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let label = Label{ uuid: Uuid::new_v4(),
-            lbas_per_zone: 0,
-            lbas: 0,
-            spacemap_space: 0
-        };
-        format!("{label:?}");
-    }
-}
 }
 // LCOV_EXCL_STOP
