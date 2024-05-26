@@ -39,7 +39,7 @@ num-traits = "0.2.0"
 pin-project = "1.1.0"
 serde = "1.0.60"
 serde_derive = "1.0"
-serde_yaml = "0.8.16"
+serde_yaml_ng = "0.10.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.27.0", features = ["rt", "sync", "time"] }
 tokio-file = "0.10.0"
@@ -53,7 +53,7 @@ default-features = true
 features=  [ "derive", "wrap_help" ]
 
 [dev-dependencies]
-dashmap = "5"
+dashmap = "5.5"
 criterion = "0.5"
 function_name = "0.3.0"
 futures-test = "0.3.30"

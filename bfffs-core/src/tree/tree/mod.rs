@@ -752,7 +752,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
         //   extend its parent's representation.
         // * Last of all, print the root's representation.
         let bf = Box::new(f) as Box<dyn io::Write>;
-        let ser = serde_yaml::Serializer::new(bf);
+        let ser = serde_yaml_ng::Serializer::new(bf);
         let rrf = Rc::new(RefCell::new(ser));
         let rrf2 = rrf.clone();
         let rrf3 = rrf.clone();
@@ -779,7 +779,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     fn dump_r<'a>(
         dml: Arc<D>,
         node: TreeReadGuard<A, K, V>,
-        ser: Rc<RefCell<serde_yaml::Serializer<Box<dyn io::Write + 'a>>>>
+        ser: Rc<RefCell<serde_yaml_ng::Serializer<Box<dyn io::Write + 'a>>>>
     ) -> Pin<Box<dyn Future<
             Output=Result<TreeReadGuard<A, K, V>>> + 'a
         >>
@@ -1089,7 +1089,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     #[cfg(test)]
     pub fn from_str(dml: Arc<D>, seq: bool, s: &str) -> Self {
-        let il: InnerLiteral<A, K, V> = serde_yaml::from_str(s).unwrap();
+        let il: InnerLiteral<A, K, V> = serde_yaml_ng::from_str(s).unwrap();
         Tree::new(dml, il.limits, seq, Some(il.root))
     }
 
@@ -2301,7 +2301,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 #[cfg(test)]
 impl<A: Addr, D: DML<Addr=A>, K: Key, V: Value> Display for Tree<A, D, K, V> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.write_str(&serde_yaml::to_string(&self).unwrap())
+        f.write_str(&serde_yaml_ng::to_string(&self).unwrap())
     }
 }
 

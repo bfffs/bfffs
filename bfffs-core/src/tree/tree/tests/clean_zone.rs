@@ -97,7 +97,6 @@ fn basic() {
         .returning(mem::forget);
     let ddml = Arc::new(mock);
     let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
----
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -111,94 +110,86 @@ root:
     txgs:
       start: 8
       end: 42
-    ptr:
-      Mem:
-        Int:
-          children:
-            - key: 0
-              txgs:
-                start: 8
-                end: 9
-              ptr:
-                Addr:
+    ptr: !Mem
+      Int:
+        children:
+        - key: 0
+          txgs:
+            start: 8
+            end: 9
+          ptr: !Addr
+            pba:
+              cluster: 0
+              lba: 2
+            compressed: false
+            lsize: 0
+            csize: 0
+            checksum: 0
+        - key: 4
+          txgs:
+            start: 20
+            end: 32
+          ptr: !Addr
+            pba:
+              cluster: 0
+              lba: 4
+            compressed: false
+            lsize: 0
+            csize: 0
+            checksum: 0
+        - key: 8
+          txgs:
+            start: 8
+            end: 24
+          ptr: !Addr
+            pba:
+              cluster: 0
+              lba: 101
+            compressed: false
+            lsize: 0
+            csize: 0
+            checksum: 0
+        - key: 12
+          txgs:
+            start: 21
+            end: 42
+          ptr: !Mem
+            Int: # In-memory Int node with a child in the target zone
+              children:
+              - key: 12
+                txgs:
+                  start: 41
+                  end: 42
+                ptr: !Mem
+                  Leaf:
+                    credit: 32
+                    items:
+                      6: 6.0
+                      7: 7.0
+              - key: 16
+                txgs:
+                  start: 21
+                  end: 22
+                ptr: !Addr
                   pba:
                     cluster: 0
-                    lba: 2
+                    lba: 102
                   compressed: false
                   lsize: 0
                   csize: 0
                   checksum: 0
-            - key: 4
-              txgs:
-                start: 20
-                end: 32
-              ptr:
-                Addr:
+              - key: 20   # Leaf node in TXG range but not in PBA range
+                txgs:
+                  start: 29
+                  end: 30
+                ptr: !Addr
                   pba:
                     cluster: 0
-                    lba: 4
+                    lba: 200
                   compressed: false
                   lsize: 0
                   csize: 0
                   checksum: 0
-            - key: 8
-              txgs:
-                start: 8
-                end: 24
-              ptr:
-                Addr:
-                  pba:
-                    cluster: 0
-                    lba: 101
-                  compressed: false
-                  lsize: 0
-                  csize: 0
-                  checksum: 0
-            - key: 12
-              txgs:
-                start: 21
-                end: 42
-              ptr:
-                Mem:  # In-memory Int node with a child in the target zone
-                  Int:
-                    children:
-                      - key: 12
-                        txgs:
-                          start: 41
-                          end: 42
-                        ptr:
-                          Mem:
-                            Leaf:
-                              credit: 32
-                              items:
-                                6: 6.0
-                                7: 7.0
-                      - key: 16
-                        txgs:
-                          start: 21
-                          end: 22
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 0
-                              lba: 102
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
-                      - key: 20   # Leaf node in TXG range but not in PBA range
-                        txgs:
-                          start: 29
-                          end: 30
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 0
-                              lba: 200
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
 "#));
 
     let start = PBA::new(0, 100);
@@ -209,8 +200,7 @@ root:
     .unwrap();
     let clean_tree = format!("{tree}");
     assert_eq!(clean_tree,
-r#"---
-limits:
+r#"limits:
   min_int_fanout: 2
   max_int_fanout: 5
   min_leaf_fanout: 2
@@ -223,115 +213,105 @@ root:
     txgs:
       start: 8
       end: 43
-    ptr:
-      Mem:
-        Int:
-          children:
-            - key: 0
-              txgs:
-                start: 8
-                end: 9
-              ptr:
-                Addr:
+    ptr: !Mem
+      Int:
+        children:
+        - key: 0
+          txgs:
+            start: 8
+            end: 9
+          ptr: !Addr
+            pba:
+              cluster: 0
+              lba: 2
+            compressed: false
+            lsize: 0
+            csize: 0
+            checksum: 0
+        - key: 4
+          txgs:
+            start: 20
+            end: 43
+          ptr: !Mem
+            Int:
+              children:
+              - key: 4
+                txgs:
+                  start: 31
+                  end: 32
+                ptr: !Addr
                   pba:
                     cluster: 0
-                    lba: 2
+                    lba: 3
                   compressed: false
                   lsize: 0
                   csize: 0
                   checksum: 0
-            - key: 4
-              txgs:
-                start: 20
-                end: 43
-              ptr:
-                Mem:
-                  Int:
-                    children:
-                      - key: 4
-                        txgs:
-                          start: 31
-                          end: 32
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 0
-                              lba: 3
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
-                      - key: 6
-                        txgs:
-                          start: 42
-                          end: 43
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 1
-                              lba: 0
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
-            - key: 8
-              txgs:
-                start: 8
-                end: 43
-              ptr:
-                Addr:
+              - key: 6
+                txgs:
+                  start: 42
+                  end: 43
+                ptr: !Addr
                   pba:
                     cluster: 1
-                    lba: 2
+                    lba: 0
                   compressed: false
                   lsize: 0
                   csize: 0
                   checksum: 0
-            - key: 12
-              txgs:
-                start: 21
-                end: 43
-              ptr:
-                Mem:
-                  Int:
-                    children:
-                      - key: 12
-                        txgs:
-                          start: 41
-                          end: 42
-                        ptr:
-                          Mem:
-                            Leaf:
-                              credit: 32
-                              items:
-                                6: 6.0
-                                7: 7.0
-                      - key: 16
-                        txgs:
-                          start: 42
-                          end: 43
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 1
-                              lba: 1
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
-                      - key: 20
-                        txgs:
-                          start: 29
-                          end: 30
-                        ptr:
-                          Addr:
-                            pba:
-                              cluster: 0
-                              lba: 200
-                            compressed: false
-                            lsize: 0
-                            csize: 0
-                            checksum: 0
+        - key: 8
+          txgs:
+            start: 8
+            end: 43
+          ptr: !Addr
+            pba:
+              cluster: 1
+              lba: 2
+            compressed: false
+            lsize: 0
+            csize: 0
+            checksum: 0
+        - key: 12
+          txgs:
+            start: 21
+            end: 43
+          ptr: !Mem
+            Int:
+              children:
+              - key: 12
+                txgs:
+                  start: 41
+                  end: 42
+                ptr: !Mem
+                  Leaf:
+                    credit: 32
+                    items:
+                      6: 6.0
+                      7: 7.0
+              - key: 16
+                txgs:
+                  start: 42
+                  end: 43
+                ptr: !Addr
+                  pba:
+                    cluster: 1
+                    lba: 1
+                  compressed: false
+                  lsize: 0
+                  csize: 0
+                  checksum: 0
+              - key: 20
+                txgs:
+                  start: 29
+                  end: 30
+                ptr: !Addr
+                  pba:
+                    cluster: 0
+                    lba: 200
+                  compressed: false
+                  lsize: 0
+                  csize: 0
+                  checksum: 0
 "#);
 }
 
@@ -379,7 +359,6 @@ fn dirty_root() {
         });
     let ddml = Arc::new(mock);
     let tree = Arc::new(Tree::<DRP, DDML, u32, f32>::from_str(ddml, false, r#"
----
 limits:
   min_int_fanout: 2
   max_int_fanout: 5
@@ -393,15 +372,14 @@ root:
     txgs:
       start: 0
       end: 42
-    ptr:
-      Addr:
-        pba:
-          cluster: 0
-          lba: 100
-        compressed: false
-        lsize: 0
-        csize: 0
-        checksum: 0
+    ptr: !Addr
+      pba:
+        cluster: 0
+        lba: 100
+      compressed: false
+      lsize: 0
+      csize: 0
+      checksum: 0
   "#));
 
     let start = PBA::new(0, 100);

@@ -855,8 +855,8 @@ mod fs {
         h.fs.dump_fs(&mut buf).await.unwrap();
 
         let fs_tree = String::from_utf8(buf).unwrap();
-        let expected = r#"---
-limits:
+        let expected =
+r#"limits:
   min_int_fanout: 91
   max_int_fanout: 364
   min_leaf_fanout: 576
@@ -869,38 +869,32 @@ root:
     txgs:
       start: 1
       end: 2
-    ptr:
-      Addr: 3
-...
+    ptr: !Addr 3
 ---
-3:
-  Leaf:
-    credit: 0
-    items:
-      1-0-706caad497db23:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name: ".."
-      1-0-9b56c722640a46:
-        DirEntry:
-          ino: 1
-          dtype: 4
-          name: "."
-      1-1-00000000000000:
-        Inode:
-          size: 0
-          bytes: 0
-          nlink: 1
-          flags: 0
-          atime: "1970-01-01T00:00:00Z"
-          mtime: "1970-01-01T00:00:00Z"
-          ctime: "1970-01-01T00:00:00Z"
-          birthtime: "1970-01-01T00:00:00Z"
-          uid: 0
-          gid: 0
-          perm: 493
-          file_type: Dir
+3: !Leaf
+  credit: 0
+  items:
+    1-0-706caad497db23: !DirEntry
+      ino: 1
+      dtype: 4
+      name: ..
+    1-0-9b56c722640a46: !DirEntry
+      ino: 1
+      dtype: 4
+      name: .
+    1-1-00000000000000: !Inode
+      size: 0
+      bytes: 0
+      nlink: 1
+      flags: 0
+      atime: 1970-01-01T00:00:00Z
+      mtime: 1970-01-01T00:00:00Z
+      ctime: 1970-01-01T00:00:00Z
+      birthtime: 1970-01-01T00:00:00Z
+      uid: 0
+      gid: 0
+      perm: 493
+      file_type: Dir
 "#;
         pretty_assertions::assert_eq!(expected, fs_tree);
     }
