@@ -19,6 +19,7 @@ use bfffs_core::{
 };
 use clap::{crate_version, ArgAction, Parser};
 use futures::{future, TryFutureExt, TryStreamExt};
+use thiserror::Error;
 use tracing_subscriber::EnvFilter;
 
 mod pool_create_ast;
@@ -233,14 +234,9 @@ mod fs {
         }
     }
 
-    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    pub struct FromStrError {}
-    impl fmt::Display for FromStrError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "Invalid column name")
-        }
-    }
-    impl std::error::Error for FromStrError {}
+    #[derive(Clone, Debug, Error, Eq, PartialEq)]
+    #[error("Invalid column name {0}")]
+    pub struct FromStrError(String);
 
     impl FromStr for GetField {
         type Err = FromStrError;
@@ -251,7 +247,7 @@ mod fs {
                 "property" => Ok(GetField::Property),
                 "value" => Ok(GetField::Value),
                 "source" => Ok(GetField::Source),
-                _ => Err(FromStrError {}),
+                _ => Err(FromStrError(s.to_owned())),
             }
         }
     }

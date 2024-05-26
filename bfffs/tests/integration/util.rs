@@ -1,11 +1,11 @@
 use std::{
-    fmt,
     process::{Child, Command},
     thread::sleep,
     time::{Duration, Instant},
 };
 
 use assert_cmd::prelude::*;
+use thiserror::Error;
 
 pub fn bfffs() -> Command {
     Command::cargo_bin("bfffs").unwrap()
@@ -79,16 +79,9 @@ macro_rules! require_fusefs {
     };
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Error)]
+#[error("timeout waiting for condition")]
 pub struct WaitForError;
-
-impl fmt::Display for WaitForError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "timeout waiting for condition")
-    }
-}
-
-impl std::error::Error for WaitForError {}
 
 /// Wait for a limited amount of time for the given condition to be true.
 pub fn waitfor<C>(timeout: Duration, condition: C) -> Result<(), WaitForError>

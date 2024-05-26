@@ -273,6 +273,7 @@ dependencies = [
  "sysctl",
  "tabular",
  "tempfile",
+ "thiserror",
  "time",
  "tokio",
  "tokio-seqpacket",
