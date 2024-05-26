@@ -40,6 +40,7 @@ pin-project = "1.1.0"
 serde = "1.0.60"
 serde_derive = "1.0"
 serde_yaml_ng = "0.10.0"
+thiserror = "1.0"
 time = { version = "0.3.0", features = [ "formatting" ] }
 tokio = { version = "1.27.0", features = ["rt", "sync", "time"] }
 tokio-file = "0.10.0"
