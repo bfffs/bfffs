@@ -85,5 +85,5 @@ async fn enoent(harness: Harness) {
         .args(["pool", "clean", "does_not_exist_pool"])
         .assert()
         .failure()
-        .stderr("Error: ENOENT\n");
+        .stderr("No such file or directory\n");
 }

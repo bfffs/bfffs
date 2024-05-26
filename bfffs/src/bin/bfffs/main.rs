@@ -435,7 +435,7 @@ mod fs {
                     sort_indices.push(i);
                 } else {
                     eprintln!("Cannot sort by a property that isn't listed");
-                    return Err(Error::EINVAL);
+                    return Err(Error::from(bfffs_core::Error::EINVAL));
                 }
             }
 
@@ -988,13 +988,13 @@ struct Cli {
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+async fn main() {
     tracing_subscriber::fmt()
         .pretty()
         .with_env_filter(EnvFilter::from_default_env())
         .init();
     let cli: Cli = Cli::parse();
-    match cli.cmd {
+    let r = match cli.cmd {
         SubCommand::Check(check) => check.main().await,
         SubCommand::Fs(fs::FsCmd::Create(create)) => {
             create.main(&cli.sock).await
@@ -1024,6 +1024,10 @@ async fn main() -> Result<()> {
         SubCommand::Pool(pool::PoolCmd::Status(status)) => {
             status.main(&cli.sock).await
         }
+    };
+    if let Err(e) = r {
+        eprintln!("{}", e);
+        std::process::exit(1);
     }
 }
 
