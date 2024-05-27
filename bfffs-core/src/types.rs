@@ -10,6 +10,7 @@ use serde::{
     de::{Deserialize, Deserializer},
     ser::SerializeTuple
 };
+use thiserror::Error;
 use std::{
     fmt::{self, Display, Formatter},
     io,
@@ -57,108 +58,206 @@ pub type IoVecMut = DivBufMut;
 pub type LbaT = u64;
 
 /// BFFFS's error type.  Basically just an errno
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Primitive, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Error, Eq, PartialEq, Primitive, Serialize)]
 pub enum Error {
     // Standard errnos
+    #[error("Operation not permitted")]
     EPERM           = libc::EPERM as isize,
+    #[error("No such file or directory")]
     ENOENT          = libc::ENOENT as isize,
+    #[error("No such process")]
     ESRCH           = libc::ESRCH as isize,
+    #[error("Interrupted system call")]
     EINTR           = libc::EINTR as isize,
+    #[error("Input/output error")]
     EIO             = libc::EIO as isize,
+    #[error("Device not configured")]
     ENXIO           = libc::ENXIO as isize,
+    #[error("Argument list too long")]
     E2BIG           = libc::E2BIG as isize,
+    #[error("Exec format error")]
     ENOEXEC         = libc::ENOEXEC as isize,
+    #[error("Bad file descriptor")]
     EBADF           = libc::EBADF as isize,
+    #[error("No child processes")]
     ECHILD          = libc::ECHILD as isize,
+    #[error("Resource deadlock avoided")]
     EDEADLK         = libc::EDEADLK as isize,
+    #[error("Cannot allocate memory")]
     ENOMEM          = libc::ENOMEM as isize,
+    #[error("Permission denied")]
     EACCES          = libc::EACCES as isize,
+    #[error("Bad address")]
     EFAULT          = libc::EFAULT as isize,
+    #[error("Block device required")]
     ENOTBLK         = libc::ENOTBLK as isize,
+    #[error("Device busy")]
     EBUSY           = libc::EBUSY as isize,
+    #[error("File exists")]
     EEXIST          = libc::EEXIST as isize,
+    #[error("Cross-device link")]
     EXDEV           = libc::EXDEV as isize,
+    #[error("Operation not supported by device")]
     ENODEV          = libc::ENODEV as isize,
+    #[error("Not a directory")]
     ENOTDIR         = libc::ENOTDIR as isize,
+    #[error("Is a directory")]
     EISDIR          = libc::EISDIR as isize,
+    #[error("Invalid argument")]
     EINVAL          = libc::EINVAL as isize,
+    #[error("Too many open files in system")]
     ENFILE          = libc::ENFILE as isize,
+    #[error("Too many open files")]
     EMFILE          = libc::EMFILE as isize,
+    #[error("Inappropriate ioctl for device")]
     ENOTTY          = libc::ENOTTY as isize,
+    #[error("Text file busy")]
     ETXTBSY         = libc::ETXTBSY as isize,
+    #[error("File too large")]
     EFBIG           = libc::EFBIG as isize,
+    #[error("No space left on device")]
     ENOSPC          = libc::ENOSPC as isize,
+    #[error("Illegal seek")]
     ESPIPE          = libc::ESPIPE as isize,
+    #[error("Read-only file system")]
     EROFS           = libc::EROFS as isize,
+    #[error("Too many links")]
     EMLINK          = libc::EMLINK as isize,
+    #[error("Broken pipe")]
     EPIPE           = libc::EPIPE as isize,
+    #[error("Numerical argument out of domain")]
     EDOM            = libc::EDOM as isize,
+    #[error("Result too large")]
     ERANGE          = libc::ERANGE as isize,
+    #[error("Resource temporarily unavailable")]
     EAGAIN          = libc::EAGAIN as isize,
+    #[error("Operation now in progress")]
     EINPROGRESS     = libc::EINPROGRESS as isize,
+    #[error("Operation already in progress")]
     EALREADY        = libc::EALREADY as isize,
+    #[error("Socket operation on non-socket")]
     ENOTSOCK        = libc::ENOTSOCK as isize,
+    #[error("Destination address required")]
     EDESTADDRREQ    = libc::EDESTADDRREQ as isize,
+    #[error("Message too long")]
     EMSGSIZE        = libc::EMSGSIZE as isize,
+    #[error("Protocol wrong type for socket")]
     EPROTOTYPE      = libc::EPROTOTYPE as isize,
+    #[error("Protocol not available")]
     ENOPROTOOPT     = libc::ENOPROTOOPT as isize,
+    #[error("Protocol not supported")]
     EPROTONOSUPPORT = libc::EPROTONOSUPPORT as isize,
+    #[error("Socket type not supported")]
     ESOCKTNOSUPPORT = libc::ESOCKTNOSUPPORT as isize,
+    #[error("Operation not supported")]
     EOPNOTSUPP      = libc::EOPNOTSUPP as isize,
+    #[error("Protocol family not supported")]
     EPFNOSUPPORT    = libc::EPFNOSUPPORT as isize,
+    #[error("Address family not supported by protocol family")]
     EAFNOSUPPORT    = libc::EAFNOSUPPORT as isize,
+    #[error("Address already in use")]
     EADDRINUSE      = libc::EADDRINUSE as isize,
+    #[error("Can't assign requested address")]
     EADDRNOTAVAIL   = libc::EADDRNOTAVAIL as isize,
+    #[error("Network is down")]
     ENETDOWN        = libc::ENETDOWN as isize,
+    #[error("Network is unreachable")]
     ENETUNREACH     = libc::ENETUNREACH as isize,
+    #[error("Network dropped connection on reset")]
     ENETRESET       = libc::ENETRESET as isize,
+    #[error("Software caused connection abort")]
     ECONNABORTED    = libc::ECONNABORTED as isize,
+    #[error("Connection reset by peer")]
     ECONNRESET      = libc::ECONNRESET as isize,
+    #[error("No buffer space available")]
     ENOBUFS         = libc::ENOBUFS as isize,
+    #[error("Socket is already connected")]
     EISCONN         = libc::EISCONN as isize,
+    #[error("Socket is not connected")]
     ENOTCONN        = libc::ENOTCONN as isize,
+    #[error("Can't send after socket shutdown")]
     ESHUTDOWN       = libc::ESHUTDOWN as isize,
+    #[error("Too many references: can't splice")]
     ETOOMANYREFS    = libc::ETOOMANYREFS as isize,
+    #[error("Operation timed out")]
     ETIMEDOUT       = libc::ETIMEDOUT as isize,
+    #[error("Connection refused")]
     ECONNREFUSED    = libc::ECONNREFUSED as isize,
+    #[error("Too many levels of symbolic links")]
     ELOOP           = libc::ELOOP as isize,
+    #[error("File name too long")]
     ENAMETOOLONG    = libc::ENAMETOOLONG as isize,
+    #[error("Host is down")]
     EHOSTDOWN       = libc::EHOSTDOWN as isize,
+    #[error("No route to host")]
     EHOSTUNREACH    = libc::EHOSTUNREACH as isize,
+    #[error("Directory not empty")]
     ENOTEMPTY       = libc::ENOTEMPTY as isize,
+    #[error("Too many processes")]
     EPROCLIM        = libc::EPROCLIM as isize,
+    #[error("Too many users")]
     EUSERS          = libc::EUSERS as isize,
+    #[error("Disc quota exceeded")]
     EDQUOT          = libc::EDQUOT as isize,
+    #[error("Stale NFS file handle")]
     ESTALE          = libc::ESTALE as isize,
+    #[error("Too many levels of remote in path")]
     EREMOTE         = libc::EREMOTE as isize,
+    #[error("RPC struct is bad")]
     EBADRPC         = libc::EBADRPC as isize,
+    #[error("RPC version wrong")]
     ERPCMISMATCH    = libc::ERPCMISMATCH as isize,
+    #[error("RPC prog. not avail")]
     EPROGUNAVAIL    = libc::EPROGUNAVAIL as isize,
+    #[error("Program version wrong")]
     EPROGMISMATCH   = libc::EPROGMISMATCH as isize,
+    #[error("Bad procedure for program")]
     EPROCUNAVAIL    = libc::EPROCUNAVAIL as isize,
+    #[error("No locks available")]
     ENOLCK          = libc::ENOLCK as isize,
+    #[error("Function not implemented")]
     ENOSYS          = libc::ENOSYS as isize,
+    #[error("Inappropriate file type or format")]
     EFTYPE          = libc::EFTYPE as isize,
+    #[error("Authentication error")]
     EAUTH           = libc::EAUTH as isize,
+    #[error("Need authenticator.")]
     ENEEDAUTH       = libc::ENEEDAUTH as isize,
+    #[error("Identifier removed")]
     EIDRM           = libc::EIDRM as isize,
+    #[error("No message of desired type")]
     ENOMSG          = libc::ENOMSG as isize,
+    #[error("Value too large to be stored in data type")]
     EOVERFLOW       = libc::EOVERFLOW as isize,
+    #[error("Operation canceled")]
     ECANCELED       = libc::ECANCELED as isize,
+    #[error("Illegal byte sequence")]
     EILSEQ          = libc::EILSEQ as isize,
+    #[error("Attribute not found")]
     ENOATTR         = libc::ENOATTR as isize,
+    #[error("Programming error")]
     EDOOFUS         = libc::EDOOFUS as isize,
+    #[error("Bad message")]
     EBADMSG         = libc::EBADMSG as isize,
+    #[error("Multihop attempted")]
     EMULTIHOP       = libc::EMULTIHOP as isize,
+    #[error("Link has been severed")]
     ENOLINK         = libc::ENOLINK as isize,
+    #[error("Protocol error")]
     EPROTO          = libc::EPROTO as isize,
+    #[error("Capabilities insufficient")]
     ENOTCAPABLE     = libc::ENOTCAPABLE as isize,
+    #[error("Not permitted in capability mode")]
     ECAPMODE        = libc::ECAPMODE as isize,
+    #[error("State not recoverable")]
     ENOTRECOVERABLE = libc::ENOTRECOVERABLE as isize,
+    #[error("Previous owner died")]
     EOWNERDEAD      = libc::EOWNERDEAD as isize,
+    #[error("Integrity check failed")]
     EINTEGRITY      = libc::EINTEGRITY as isize,
 
     //// BFFFS custom error types below
+    #[error("Unknown error")]
     EUNKNOWN        = 256,
 }
 

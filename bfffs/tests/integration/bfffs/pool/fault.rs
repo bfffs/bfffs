@@ -95,7 +95,7 @@ async fn enoent() {
         ])
         .assert()
         .failure()
-        .stderr("Error: ENOENT\n");
+        .stderr("No such file or directory\n");
 }
 
 #[tokio::test]

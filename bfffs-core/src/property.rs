@@ -5,6 +5,7 @@ use std::{
     str::FromStr
 };
 use serde_derive::*;
+use thiserror::Error;
 
 /// All dataset properties are associated with this fake inode number.
 pub const PROPERTY_OBJECT: u64 = 0;
@@ -125,26 +126,17 @@ impl fmt::Display for Property {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ParsePropertyError {
+    #[error("Does not contain an '=' character")]
     NoEquals,
+    #[error("{0}")]
     Name(ParsePropertyNameError),
+    #[error("This property is read-only")]
     ReadOnly,
+    #[error("Not a valid value for this property")]
     Value(String)
 }
-
-impl fmt::Display for ParsePropertyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NoEquals => write!(f, "Must contain an '=' character"),
-            Self::Name(e) => e.fmt(f),
-            Self::ReadOnly => write!(f, "This property is read-only"),
-            Self::Value(s) =>
-                write!(f, "{s} is not a valid value for this property")
-        }
-    }
-}
-impl std::error::Error for ParsePropertyError {}
 
 impl FromStr for Property {
     type Err = ParsePropertyError;
@@ -234,14 +226,9 @@ impl fmt::Display for PropertyName {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParsePropertyNameError{}
-impl fmt::Display for ParsePropertyNameError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Not a valid property name")
-    }
-}
-impl std::error::Error for ParsePropertyNameError {}
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("Not a valid property name")]
+pub struct ParsePropertyNameError;
 
 impl FromStr for PropertyName {
     type Err = ParsePropertyNameError;
@@ -302,14 +289,9 @@ impl fmt::Display for PropertySource {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParsePropertySourceError{}
-impl fmt::Display for ParsePropertySourceError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Not a valid property source")
-    }
-}
-impl std::error::Error for ParsePropertySourceError {}
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
+#[error("Not a valid property source")]
+pub struct ParsePropertySourceError;
 
 impl FromStr for PropertySource {
     type Err = ParsePropertySourceError;

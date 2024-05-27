@@ -6,18 +6,39 @@
 
 use std::{
     collections::VecDeque,
+    io,
     path::{Path, PathBuf},
 };
 
 pub use bfffs_core::{
     controller::TreeID,
     property::{Property, PropertyName},
-    Error,
-    Result,
 };
 use bfffs_core::{rpc, Uuid};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
+use thiserror::Error as ThisError;
 use tokio_seqpacket::UnixSeqpacket;
+
+#[derive(Clone, Debug, ThisError, Eq, PartialEq)]
+pub enum Error {
+    #[error("Corrupt response from server")]
+    CorruptResponse,
+    #[error("No such device")]
+    NoDevice,
+    #[error("Server did not send response")]
+    NoResponse,
+    #[error("Server sent unexpectedly large response {0} bytes")]
+    TooLarge(usize),
+    #[error(transparent)]
+    Other(#[from] bfffs_core::Error),
+}
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        Self::Other(e.into())
+    }
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 /// Represents a single BFFFS vdev.  Could be a either a leaf device, or a
 /// Mirror, or a Raid, or a Cluster.
@@ -37,7 +58,7 @@ impl Device {
                 }
             }
         }
-        Err(Error::ENOENT)
+        Err(Error::NoDevice)
     }
 }
 
@@ -68,7 +89,10 @@ impl Bfffs {
     /// Drop all in-memory caches, for testing or debugging purposes
     pub async fn drop_cache(&self) -> Result<()> {
         let req = rpc::Request::DebugDropCache;
-        self.call(req).await.unwrap().into_debug_drop_cache()
+        self.call(req)
+            .await?
+            .into_debug_drop_cache()
+            .map_err(Error::from)
     }
 
     /// Create a new file system
@@ -83,7 +107,7 @@ impl Bfffs {
         props: Vec<Property>,
     ) -> Result<TreeID> {
         let req = rpc::fs::create(fsname, props);
-        self.call(req).await.unwrap().into_fs_create()
+        self.call(req).await?.into_fs_create().map_err(Error::from)
     }
 
     /// Destroy a file system
@@ -93,7 +117,7 @@ impl Bfffs {
     /// `fsname`    -   Name of the file system, including the pool
     pub async fn fs_destroy(&self, fsname: String) -> Result<()> {
         let req = rpc::fs::destroy(fsname);
-        self.call(req).await.unwrap().into_fs_destroy()
+        self.call(req).await?.into_fs_destroy().map_err(Error::from)
     }
 
     /// List the given dataset and all of its children
@@ -128,12 +152,12 @@ impl Bfffs {
         }
 
         let req = rpc::fs::stat(name.clone(), props.clone());
-        let parent_fut = self
-            .call(req)
-            .map_ok(rpc::Response::into_fs_stat)
-            // TODO: use Result::flatten once that stabilizes
-            // https://github.com/rust-lang/rust/issues/70142
-            .map(|x| x.and_then(std::convert::identity));
+        let parent_fut = self.call(req).map(|r| {
+            match r {
+                Ok(resp) => resp.into_fs_stat().map_err(Error::from),
+                Err(e) => Err(e),
+            }
+        });
         let parent_stream = stream::once(parent_fut);
         let datasets = if depth > 0 {
             VecDeque::from(vec![(depth, name)])
@@ -193,7 +217,7 @@ impl Bfffs {
     /// `fsname`    -   Name of the file system to mount, including the pool
     pub async fn fs_mount(&self, fsname: String) -> Result<()> {
         let req = rpc::fs::mount(fsname);
-        self.call(req).await.unwrap().into_fs_mount()
+        self.call(req).await?.into_fs_mount().map_err(Error::from)
     }
 
     /// Set properties on a file system
@@ -208,7 +232,7 @@ impl Bfffs {
         props: Vec<Property>,
     ) -> Result<()> {
         let req = rpc::fs::set(fsname, props);
-        self.call(req).await.unwrap().into_fs_set()
+        self.call(req).await?.into_fs_set().map_err(Error::from)
     }
 
     /// Unmount a file system
@@ -219,7 +243,7 @@ impl Bfffs {
     /// `force`     -   Forcibly unmount the file system, even if still in use.
     pub async fn fs_unmount(&self, fsname: &str, force: bool) -> Result<()> {
         let req = rpc::fs::unmount(fsname.to_owned(), force);
-        self.call(req).await.unwrap().into_fs_unmount()
+        self.call(req).await?.into_fs_unmount().map_err(Error::from)
     }
 
     /// Connect to the server whose socket is at this path
@@ -231,7 +255,7 @@ impl Bfffs {
     /// Clean freed space on a pool
     pub async fn pool_clean(&self, pool: String) -> Result<()> {
         let req = rpc::pool::clean(pool);
-        self.call(req).await.unwrap().into_pool_clean()
+        self.call(req).await?.into_pool_clean().map_err(Error::from)
     }
 
     /// Mark a disk or mirror as faulted.
@@ -251,7 +275,7 @@ impl Bfffs {
             }
         };
         let req = rpc::pool::fault(pool, uuid);
-        self.call(req).await.unwrap().into_pool_fault()
+        self.call(req).await?.into_pool_fault().map_err(Error::from)
     }
 
     /// List one or more active pools
@@ -270,10 +294,12 @@ impl Bfffs {
     ) -> impl Stream<Item = Result<rpc::pool::PoolInfo>> + '_ {
         let req = rpc::pool::list(pool, None);
         self.call(req)
-            .map_ok(rpc::Response::into_pool_list)
-            // TODO: use Result::flatten once that stabilizes
-            // https://github.com/rust-lang/rust/issues/70142
-            .map(|x| x.and_then(std::convert::identity))
+            .map(|r| {
+                match r {
+                    Ok(resp) => resp.into_pool_list().map_err(Error::from),
+                    Err(e) => Err(e),
+                }
+            })
             .map_ok(|v: Vec<rpc::pool::PoolInfo>| {
                 stream::iter(v.into_iter().map(Ok))
             })
@@ -285,7 +311,10 @@ impl Bfffs {
         pool: String,
     ) -> Result<rpc::pool::PoolStatus> {
         let req = rpc::pool::status(pool);
-        self.call(req).await.unwrap().into_pool_status()
+        self.call(req)
+            .await?
+            .into_pool_status()
+            .map_err(Error::from)
     }
 
     /// Submit an RPC request to the server
@@ -299,15 +328,13 @@ impl Bfffs {
         let mut buf = vec![0u8; BUFSIZ];
         let nread = self.peer.recv(&mut buf).await.map_err(Error::from)?;
         if nread == 0 {
-            eprintln!("Server did not send response");
-            Err(Error::EIO)
+            Err(Error::NoResponse)
         } else if nread >= BUFSIZ {
-            eprintln!("Server sent unexpectedly large response {nread} bytes");
-            Err(Error::EIO)
+            Err(Error::TooLarge(nread))
         } else {
             buf.truncate(nread);
             let resp = bincode::deserialize::<rpc::Response>(&buf[..])
-                .expect("Corrupt response from server");
+                .map_err(|_| Error::CorruptResponse)?;
             Ok(resp)
         }
     }
@@ -378,7 +405,7 @@ mod t {
                 uuid:     Uuid::default(),
             };
 
-            assert_eq!(Err(Error::ENOENT), Device::into_uuid(path, stat));
+            assert_eq!(Err(Error::NoDevice), Device::into_uuid(path, stat));
         }
     }
 }

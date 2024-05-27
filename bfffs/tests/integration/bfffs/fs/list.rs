@@ -119,7 +119,7 @@ async fn enoent() {
         .args(["fs", "list", "-o", "name", "mypoolx"])
         .assert()
         .failure()
-        .stderr("Error: ENOENT\n");
+        .stderr("No such file or directory\n");
 }
 
 #[test]

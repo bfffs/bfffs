@@ -118,7 +118,7 @@ async fn enoent(harness: Harness) {
         .args(["fs", "destroy", "mypool/foo/bar/baz"])
         .assert()
         .failure()
-        .stderr("Error: ENOENT\n");
+        .stderr("No such file or directory\n");
 }
 
 /// It is an error to attempt to destroy a mounted file system
@@ -141,7 +141,7 @@ async fn mounted(harness: Harness) {
         .args(["fs", "destroy", "mypool"])
         .assert()
         .failure()
-        .stderr("Error: EBUSY\n");
+        .stderr("Device busy\n");
 
     bfffs()
         .arg("--sock")
@@ -168,7 +168,7 @@ async fn parent(harness: Harness) {
         .args(["fs", "destroy", "mypool"])
         .assert()
         .failure()
-        .stderr("Error: EBUSY\n");
+        .stderr("Device busy\n");
 }
 
 #[rstest]

@@ -78,7 +78,7 @@ async fn eexist(harness: Harness) {
         .args(["fs", "create", "mypool/foo"])
         .assert()
         .failure()
-        .stderr("Error: EEXIST\n");
+        .stderr("File exists\n");
 }
 
 #[test]

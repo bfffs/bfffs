@@ -95,7 +95,7 @@ async fn ebusy(harness: Harness) {
         .args(["fs", "unmount", "mypool"])
         .assert()
         .failure()
-        .stderr("Error: EBUSY\n");
+        .stderr("Device busy\n");
 
     drop(f);
     // the VOP_RECLAIM may happen asynchronously, so we may need to retry the
@@ -124,7 +124,7 @@ async fn einval(harness: Harness) {
         .args(["fs", "unmount", "mypool"])
         .assert()
         .failure()
-        .stderr("Error: EINVAL\n");
+        .stderr("Invalid argument\n");
 }
 
 /// With -f, a busy file system should be unmounted
