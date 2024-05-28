@@ -352,7 +352,6 @@ dependencies = [
  "futures",
  "lazy_static",
  "libc",
- "memoffset",
  "tokio",
  "tracing-subscriber",
 ]
