@@ -16,7 +16,6 @@ console-subscriber = "0.2.0"
 futures = "0.3.0"
 lazy_static = "1.0"
 libc = "0.2.44"
-memoffset = "0.8.0"
 tokio = { version = "1.27.0", features = ["rt", "rt-multi-thread", "sync", "time", "tracing"] }
 
 [dependencies.tracing-subscriber]

@@ -3,7 +3,7 @@
 use std::{
     collections::hash_map::HashMap,
     ffi::{CStr, OsStr},
-    mem,
+    mem::{self, offset_of},
     os::unix::ffi::OsStrExt,
     pin::Pin,
     ptr,
@@ -21,7 +21,6 @@ use futures::{
     stream::{futures_unordered::FuturesUnordered, StreamExt},
 };
 use lazy_static::lazy_static;
-use memoffset::offset_of;
 use tokio::{
     runtime::{Builder, Runtime},
     task::JoinError,
