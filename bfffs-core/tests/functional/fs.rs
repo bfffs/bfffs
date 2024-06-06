@@ -20,7 +20,7 @@ mod fs {
     use rstest::rstest;
     use std::{
         collections::HashSet,
-        ffi::{CString, CStr, OsString, OsStr},
+        ffi::{CStr, OsString, OsStr},
         os::raw::c_char,
         os::unix::ffi::OsStrExt,
         slice,
@@ -144,7 +144,7 @@ mod fs {
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd0.ino());
 
         // The parent dir's link count should not have increased
@@ -1616,14 +1616,14 @@ root:
         let dotdot_name = unsafe{
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
-        assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
+        assert_eq!(dotdot_name, c"..");
         assert_eq!(u64::from(dotdot.d_fileno), root.ino());
         let (dot, _) = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
-        assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
+        assert_eq!(dot_name, c".");
         assert_eq!(u64::from(dot.d_fileno), fd.ino());
 
         // The parent dir should have an "x" directory entry
@@ -1637,7 +1637,7 @@ root:
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd.ino());
 
         // The parent dir's link count should've increased
@@ -1730,7 +1730,7 @@ root:
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
@@ -1783,7 +1783,7 @@ root:
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
@@ -1837,7 +1837,7 @@ root:
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
@@ -1891,7 +1891,7 @@ root:
         let dirent_name = unsafe{
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
-        assert_eq!(dirent_name, CString::new("x").unwrap().as_c_str());
+        assert_eq!(dirent_name, c"x");
         assert_eq!(u64::from(dirent.d_fileno), fd.ino());
     }
 
@@ -2274,13 +2274,13 @@ root:
         let dotdot_name = unsafe{
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
-        assert_eq!(dotdot_name, CString::new("..").unwrap().as_c_str());
+        assert_eq!(dotdot_name, c"..");
         let (dot, _) = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
-        assert_eq!(dot_name, CString::new(".").unwrap().as_c_str());
+        assert_eq!(dot_name, c".");
         assert_eq!(u64::from(dot.d_fileno), root.ino());
     }
 
