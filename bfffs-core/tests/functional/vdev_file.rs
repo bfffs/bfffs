@@ -267,13 +267,14 @@ mod basic {
 
 /// Tests that use a device file
 mod dev {
-    use crate::{require_root, Md};
+    use crate::require_root;
     use bfffs_core::{
         vdev::Vdev,
         vdev_file::*
     };
     use divbuf::DivBufShared;
     use function_name::named;
+    use mdconfig::Md;
     use pretty_assertions::assert_eq;
     use std::{
         fs,
@@ -289,14 +290,16 @@ mod dev {
     }
 
     fn harness() -> io::Result<Harness> {
-        let md = Md::new()?;
+        let md = mdconfig::Builder::swap(64 << 20)
+            .create()
+            .unwrap();
         let zones_per_lba = 8192;  // 32 MB zones
         let file = fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(md.as_path())
+            .open(md.path())
             .unwrap();
         let mut vdev = VdevFile::new(&file)?;
         vdev.set(vdev.size(), zones_per_lba);

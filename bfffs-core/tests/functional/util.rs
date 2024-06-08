@@ -1,13 +1,12 @@
 use std::{
-    ffi::OsStr,
     io,
     num::NonZeroU64,
-    os::unix::ffi::OsStrExt,
     path::{PathBuf, Path},
     process::Command
 };
 
 use itertools::Itertools;
+use mdconfig::Md;
 use tempfile::{Builder, TempDir};
 
 use bfffs_core::{
@@ -59,52 +58,25 @@ macro_rules! assert_bufeq {
     }
 }
 
-/// An md(4) device.
-pub struct Md(pub PathBuf);
-impl Md {
-    pub fn new() -> io::Result<Self> {
-        let output = Command::new("mdconfig")
-            .args(["-a", "-t",  "swap", "-s", "64m"])
-            .output()?;
-        // Strip the trailing "\n"
-        let l = output.stdout.len() - 1;
-        let mddev = OsStr::from_bytes(&output.stdout[0..l]);
-        let pb = Path::new("/dev").join(mddev);
-        Ok(Self(pb))
-    }
-
-    pub fn as_path(&self) -> &Path {
-        self.0.as_path()
-    }
-}
-impl Drop for Md {
-    fn drop(&mut self) {
-        Command::new("mdconfig")
-            .args(["-d", "-u"])
-            .arg(&self.0)
-            .output()
-            .expect("failed to deallocate md(4) device");
-    }
-}
-
-/// A gnop(4) device with controllable error probability
 pub struct Gnop {
     _md: Md,
     path: PathBuf
 }
 impl Gnop {
     pub fn new() -> io::Result<Self> {
-        let md = Md::new()?;
+        let md = mdconfig::Builder::swap(64 << 20)
+            .create()
+            .unwrap();
         let r = Command::new("gnop")
             .arg("create")
-            .arg(md.as_path())
+            .arg(md.path())
             .status()
             .expect("Failed to execute command")
             .success();
         if !r {
             panic!("Failed to create gnop device");
         }
-        let mut path = PathBuf::from(md.as_path());
+        let mut path = PathBuf::from(md.path());
         path.set_extension("nop");
         Ok(Self{_md: md, path})
     }
