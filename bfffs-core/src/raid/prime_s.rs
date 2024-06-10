@@ -291,13 +291,6 @@ impl Locator for PrimeS {
         Box::new(PrimeSIter::new(self, start, end))
     }
 
-    fn iter_data(&self, start: ChunkId, end: ChunkId)
-        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>> {
-        assert!(start.is_data());
-        assert!(end.is_data());
-        Box::new(PrimeSIterData::new(self, start, end))
-    }
-
     fn loc2id(&self, chunkloc: Chunkloc) -> ChunkId {
         // Algorithm:
         // Generate the set of stripes that are stored on this iteration of this
@@ -353,6 +346,7 @@ impl Locator for PrimeS {
         i16::from(self.f)
     }
 
+    #[cfg(test)]
     fn stripes(&self) -> u32 {
         u32::from(self.stripes)
     }
@@ -513,94 +507,6 @@ impl Iterator for PrimeSIter {
 }
 
 impl FusedIterator for PrimeSIter {}
-
-/// Return type for [`PrimeS::iter_data`](struct.PrimeS.html#method.iter_data)
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PrimeSIterData(PrimeSIter);
-
-impl PrimeSIterData {
-    /// Create a new iterator.  `id` is the id of the first chunk that the
-    /// iterator should return.
-    fn new(layout: &PrimeS, start: ChunkId, end: ChunkId) -> Self {
-        PrimeSIterData(PrimeSIter::new(layout, start, end))
-    }
-
-    /// Return the next element in the iterator, _without_ advancing the
-    /// iterator.
-    ///
-    /// This differs from `std::iter::Peekable::peek` in that it actually
-    /// doesn't modify the iterator's internal state
-    #[cfg(test)]
-    fn peek(&self) -> Option<(ChunkId, Chunkloc)> {
-        self.0.peek()
-    }
-}
-
-impl Iterator for PrimeSIterData {
-    type Item = (ChunkId, Chunkloc);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.0.id == self.0.end {
-            return None;
-        }
-        let (disk, offset) = self.0.next_elem();
-        let result = Some((self.0.id, Chunkloc{disk, offset}));
-
-        // Now update the internal state
-        self.0.id = match self.0.id {
-        ChunkId::Data(a) => {
-            let stripe = i32::from(self.0.stripe);
-            if self.0.a < (stripe + 1) * i32::from(self.0.m) - 1 {
-                self.0.o[disk as usize] += 1;
-                self.0.a += 1;
-            } else {
-                // Update offsets for all the parity chunks, but don't actually
-                // return any.  Instead, skip parity chunks and go directly to
-                // the next stripe
-                for i in 0..self.0.f {
-                    let b = self.0.m + i;
-                    let disk = ((stripe * i32::from(self.0.m) +
-                                 i32::from(b)) * i32::from(self.0.y))
-                        .rem_euclid(i32::from(self.0.n)) as u8;
-                    self.0.o[disk as usize] += 1;
-                }
-                // Roll over to the next stripe
-                if self.0.stripe_iter == self.0.stripes_per_iteration() - 1 {
-                    // Roll over to the next iteration
-                    self.0.stripe_iter = 0;
-                    if self.0.z == self.0.iterations_per_rep() - 1 {
-                        // Roll over to the next repetition
-                        for o in &mut self.0.o {
-                            *o = 0;
-                        }
-                        self.0.a = 0;
-                        self.0.r += 1;
-                        self.0.stripe = 0;
-                        self.0.y = 1;
-                        self.0.z = 0;
-                    } else {
-                        self.0.a += 1;
-                        self.0.o[disk as usize] += 1;
-                        self.0.z += 1;
-                        self.0.stripe += 1;
-                        self.0.y = self.0.z.rem_euclid(self.0.n - 1) + 1;
-                    }
-                } else {
-                    self.0.a += 1;
-                    self.0.o[disk as usize] += 1;
-                    self.0.stripe_iter += 1;
-                    self.0.stripe += 1;
-                }
-            }
-            ChunkId::Data(a + 1)
-        },
-        ChunkId::Parity(_, _) => unreachable!() // LCOV_EXCL_LINE
-        };
-        result
-    }
-}
-
-impl FusedIterator for PrimeSIterData {}
 
 // LCOV_EXCL_START
 #[cfg(all(feature = "nightly", test))]
@@ -850,7 +756,6 @@ mod tests {
         let locator = PrimeS::new(n, k, f);
         let end = ChunkId::Data(locator.datachunks() * reps);
         let mut iter = locator.iter(ChunkId::Data(0), end);
-        let mut iter_data = locator.iter_data(ChunkId::Data(0), end);
 
         for rep in 0..reps {
             for s in 0..locator.stripes() {
@@ -858,8 +763,6 @@ mod tests {
                     let id = ChunkId::Data(rep * locator.datachunks() +
                                            u64::from(s) * m as u64 + a as u64);
                     assert_eq!((id, locator.id2loc(id)), iter.next().unwrap());
-                    assert_eq!((id, locator.id2loc(id)),
-                               iter_data.next().unwrap());
                 }
                 for p in 0..f {
                     let id = ChunkId::Parity(rep * locator.datachunks() +
@@ -869,7 +772,6 @@ mod tests {
             }
         }
         assert!(iter.next().is_none());
-        assert!(iter_data.next().is_none());
     }
 
     // Test creating iterators from any starting point in a 7-5-2 PRIME-S layout
@@ -901,37 +803,6 @@ mod tests {
         // Check that repolling doesn't change the state
         assert!(iter.next().is_none());
 
-    }
-
-    // Test creating data iterators from any starting point in a 7-5-2 PRIME-S
-    // layout
-    #[test]
-    fn iter_data_7_5_2_any_start() {
-        let n = 7;
-        let k = 5;
-        let f = 2;
-
-        let locator = PrimeS::new(n, k, f);
-        let id = ChunkId::Data(0);
-        // Go for two repetitions
-        let end = ChunkId::Data(locator.datachunks() * 2);
-        // Create the PrimeSIter directly instead of through Locator::iter so we
-        // can get the real return type, not just the Trait object.
-        let mut iter = PrimeSIterData::new(&locator, id, end);
-        loop {
-            // Check that the internal state is identical
-            let next_id = iter.peek().map(|(i, _)| i);
-            if next_id.is_none() {
-                break;
-            }
-            let iter2 = PrimeSIterData::new(&locator, next_id.unwrap(), end);
-            assert_eq!(&iter, &iter2);
-            // Now advance the iterator
-            let _ = iter.next();
-        }
-        assert!(iter.next().is_none());
-        // Check that repolling doesn't change the state
-        assert!(iter.next().is_none());
     }
 
     // Large layouts work.  In particular, they don't cause integer overflow
