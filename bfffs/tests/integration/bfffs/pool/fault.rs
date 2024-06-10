@@ -127,10 +127,10 @@ async fn by_path() {
             " NAME                                                    HEALTH 
  FaultPool                                               Degraded(1) 
    mirror                                                Degraded(1) 
-     {:51} Faulted 
+     {:51} Faulted(administratively) 
      {:51} Online 
 ",
-            "",
+            files.paths[0].display(),
             files.paths[1].display()
         ));
 }
@@ -168,10 +168,10 @@ async fn by_uuid() {
             " NAME                                                    HEALTH 
  FaultPool                                               Degraded(1) 
    mirror                                                Degraded(1) 
-     {:51} Faulted 
+     {:51} Faulted(administratively) 
      {:51} Online 
 ",
-            "",
+            files.paths[0].display(),
             files.paths[1].display()
         ));
 }

@@ -9,6 +9,17 @@ use serde_derive::{Deserialize, Serialize};
 use futures::Future;
 use crate::types::*;
 
+/// The reason why a vdev is faulted.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
+pub enum FaultedReason {
+    /// Faulted by request of the user
+    User,
+    /// Too few children are online to reconstruct data
+    InsufficientRedundancy,
+    /// The disk isn't present
+    Removed
+}
+
 /// Represents the health of a vdev or pool
 ///
 /// The ordering reflects which Health is "sicker".  That is, a degraded vdev is
@@ -24,8 +35,7 @@ pub enum Health {
     /// possible.
     Rebuilding,
     /// Faulted.  No I/O is possible
-    // TODO: add reasons, like "offline" or "removed"
-    Faulted,
+    Faulted(FaultedReason),
 }
 
 impl Health {
@@ -37,6 +47,10 @@ impl Health {
             None
         }
     }
+
+    pub fn is_faulted(&self) -> bool {
+        matches!(self, Health::Faulted(_))
+    }
 }
 
 impl fmt::Display for Health {
@@ -45,7 +59,13 @@ impl fmt::Display for Health {
             Self::Online => "Online".fmt(f),
             Self::Degraded(n) => write!(f, "Degraded({})", n),
             Self::Rebuilding => "Rebuilding".fmt(f),
-            Self::Faulted => "Faulted".fmt(f),
+            Self::Faulted(FaultedReason::Removed) => "Faulted(removed)".fmt(f),
+            Self::Faulted(FaultedReason::User) => "Faulted(administratively)".fmt(f),
+            // InsufficientRedundancy can't occur for leaves, and it's obvious
+            // why a mirror or raid might be faulted for this reason, so don't
+            // print it during Display
+            Self::Faulted(FaultedReason::InsufficientRedundancy) =>
+                "Faulted".fmt(f),
         }
     }
 }
@@ -111,6 +131,6 @@ mod t {
                 Health::Degraded(nonzero!(2u8)));
         assert!(Health::Degraded(nonzero!(2u8)) <
                 Health::Rebuilding);
-        assert!(Health::Rebuilding < Health::Faulted);
+        assert!(Health::Rebuilding < Health::Faulted(FaultedReason::Removed));
     }
 }

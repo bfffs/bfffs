@@ -15,7 +15,6 @@ use bfffs_core::{
     database::{self, Database, TreeID},
     property::{Property, PropertyName, PropertySource},
     rpc,
-    vdev::Health,
 };
 use clap::{crate_version, ArgAction, Parser};
 use futures::{future, TryFutureExt, TryStreamExt};
@@ -884,9 +883,7 @@ mod pool {
                     indent += 2;
                 }
                 for mirror in cl.mirrors.iter() {
-                    if mirror.leaves.len() > 1 ||
-                        mirror.health == Health::Faulted
-                    {
+                    if mirror.leaves.len() > 1 || mirror.health.is_faulted() {
                         if self.uuid {
                             table.add_row(row!(
                                 format!("{:indent$}mirror", ""),
@@ -923,9 +920,7 @@ mod pool {
                             ));
                         }
                     }
-                    if mirror.leaves.len() > 1 ||
-                        mirror.health == Health::Faulted
-                    {
+                    if mirror.leaves.len() > 1 || mirror.health.is_faulted() {
                         indent -= 2;
                     }
                 }

@@ -868,7 +868,8 @@ mod pool {
         #[rstest]
         #[case(Online, vec![Online, Online])]
         #[case(Rebuilding, vec![Online, Rebuilding])]
-        #[case(Faulted, vec![Rebuilding, Faulted])]
+        #[case(Faulted(FaultedReason::InsufficientRedundancy),
+            vec![Rebuilding, Faulted(FaultedReason::InsufficientRedundancy)])]
         #[case(Degraded(nonzero!(1u8)),
             vec![Online, Degraded(nonzero!(1u8))])]
         #[case(Degraded(nonzero!(3u8)),

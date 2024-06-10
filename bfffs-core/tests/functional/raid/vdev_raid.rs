@@ -25,7 +25,7 @@ use bfffs_core::{
     LbaT,
     label::*,
     mirror::Mirror,
-    vdev::{Health, Vdev},
+    vdev::{FaultedReason, Health, Vdev},
     raid::{Manager, VdevRaid, VdevRaidApi},
     Uuid
 };
@@ -319,7 +319,8 @@ mod fault {
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].leaves[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     /// Fault a disk which is the only child of a mirror
@@ -333,7 +334,8 @@ mod fault {
 
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].health,
+                   Health::Faulted(FaultedReason::User));
 
         // Ensure that basic vdev methods work on an array that's degraded like
         // this:
@@ -354,7 +356,8 @@ mod fault {
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].leaves[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     #[rstest(h, case(harness(3, 1, 1)))]
@@ -367,7 +370,8 @@ mod fault {
 
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     #[rstest(h, case(harness(3, 1, 1)))]
@@ -381,7 +385,8 @@ mod fault {
 
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     // Attempt to fault the entire RAID device

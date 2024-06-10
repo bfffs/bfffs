@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 
+use ::bfffs::Bfffs;
 use assert_cmd::{cargo::cargo_bin, prelude::*};
 use regex::Regex;
 use tempfile::{Builder, TempDir};
@@ -150,6 +151,43 @@ async fn mirror() {
 }
 
 #[tokio::test]
+async fn mirror_with_faulted_child() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create"])
+        .arg(POOLNAME)
+        .arg("mirror")
+        .args(&files.paths[0..2])
+        .assert()
+        .success();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "fault", POOLNAME, files.paths[1].to_str().unwrap()])
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+            " NAME                                                     HEALTH 
+ StatusPool                                               Degraded(1) 
+   mirror                                                 Degraded(1) 
+     {:51}  Online 
+     {:51}  Faulted(administratively) 
+",
+            files.paths[0].display(),
+            files.paths[1].display(),
+        ));
+}
+
+#[tokio::test]
 async fn mirror_with_missing_child() {
     let files = mk_files();
     bfffs()
@@ -173,7 +211,7 @@ async fn mirror_with_missing_child() {
  StatusPool                                               Degraded(1) 
    mirror                                                 Degraded(1) 
      {:51}  Online 
-     {:51}  Faulted 
+     {:51}  Faulted(removed) 
 ",
             files.paths[0].display(),
             ""
@@ -227,7 +265,7 @@ async fn raid_with_missing_child() {
  StatusPool                                               Degraded(1) 
    PrimeS-3,3,1                                           Degraded(1) 
      {:51}  Online 
-     {:51}  Faulted 
+     {:51}  Faulted(removed) 
      {:51}  Online 
 ",
             files.paths[0].display(),
@@ -352,6 +390,113 @@ async fn raid51() {
             files.paths[6].display(),
             files.paths[7].display(),
             files.paths[8].display()
+        ));
+}
+
+#[tokio::test]
+async fn raid51_with_faulted_leaf() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create", POOLNAME, "raid", "3", "1"])
+        .arg("mirror")
+        .args(&files.paths[0..2])
+        .arg("mirror")
+        .args(&files.paths[2..4])
+        .arg("mirror")
+        .args(&files.paths[4..6])
+        .assert()
+        .success();
+    let daemon = start_bfffsd(&files);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "fault", POOLNAME, files.paths[2].to_str().unwrap()])
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+" NAME                                                       HEALTH 
+ StatusPool                                                 Degraded(1) 
+   PrimeS-3,3,1                                             Degraded(1) 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Degraded(1) 
+       {:51}  Faulted(administratively) 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+",
+            files.paths[0].display(),
+            files.paths[1].display(),
+            files.paths[2].display(),
+            files.paths[3].display(),
+            files.paths[4].display(),
+            files.paths[5].display(),
+        ));
+}
+
+#[tokio::test]
+async fn raid51_with_faulted_mirror() {
+    let files = mk_files();
+    bfffs()
+        .args(["pool", "create", POOLNAME, "raid", "3", "1"])
+        .arg("mirror")
+        .args(&files.paths[0..2])
+        .arg("mirror")
+        .args(&files.paths[2..4])
+        .arg("mirror")
+        .args(&files.paths[4..6])
+        .assert()
+        .success();
+    let daemon = start_bfffsd(&files);
+
+    let libbfffs = Bfffs::new(&daemon.sockpath).await.unwrap();
+    let stat = libbfffs.pool_status(POOLNAME.to_string()).await.unwrap();
+    let uuid = format!("{}", &stat.clusters[0].mirrors[1].uuid);
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "fault", POOLNAME])
+        .arg(uuid)
+        .assert()
+        .success();
+
+    bfffs()
+        .arg("--sock")
+        .arg(daemon.sockpath.as_os_str())
+        .args(["pool", "status", POOLNAME])
+        .assert()
+        .success()
+        .stdout(format!(
+" NAME                                                       HEALTH 
+ StatusPool                                                 Degraded(2) 
+   PrimeS-3,3,1                                             Degraded(2) 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Faulted(administratively) 
+       {:51}  Online 
+       {:51}  Online 
+     mirror                                                 Online 
+       {:51}  Online 
+       {:51}  Online 
+",
+            files.paths[0].display(),
+            files.paths[1].display(),
+            files.paths[2].display(),
+            files.paths[3].display(),
+            files.paths[4].display(),
+            files.paths[5].display(),
         ));
 }
 

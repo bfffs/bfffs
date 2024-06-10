@@ -3,7 +3,7 @@
 use bfffs_core::{
     label::*,
     mirror::Mirror,
-    vdev::Health,
+    vdev::{FaultedReason, Health},
     raid::{Manager, NullRaid, VdevRaidApi},
     Uuid,
     Error
@@ -63,7 +63,8 @@ mod fault {
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].leaves[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     #[rstest(h, case(harness(2)))]
@@ -75,7 +76,8 @@ mod fault {
         let status = h.vdev.status();
         assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
         assert_eq!(status.mirrors[0].health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(status.mirrors[0].leaves[0].health, Health::Faulted);
+        assert_eq!(status.mirrors[0].leaves[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     // Attempt to fault the entire RAID device
