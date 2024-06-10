@@ -102,19 +102,6 @@ pub trait Locator : Clone + Send + Sync {
     fn iter(&self, start: ChunkId, end: ChunkId)
         -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>>;
 
-    /// Like [`iter`], but only iterates through Data chunks, skipping Parity
-    ///
-    /// This is faster than calling `id2loc` repeatedly.
-    ///
-    /// # Parameters
-    ///
-    /// - `start`:  The first Data `ChunkId` whose location will be returned
-    /// - `end`:    The first Data `ChunkId` beyond the end of the iterator.
-    ///
-    /// [`iter`]: #method.iter
-    fn iter_data(&self, start: ChunkId, end: ChunkId)
-        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>>;
-
     /// Inverse of `id2loc`.
     ///
     /// Returns the chunk id of the chunk at this location.
@@ -144,6 +131,7 @@ pub trait Locator : Clone + Send + Sync {
     fn protection(&self) -> i16;
 
     /// Return the number of stripes in a single repetition of the layout
+    #[cfg(test)]
     fn stripes(&self) -> u32;
 
     /// Return the total number of disks in each RAID stripe

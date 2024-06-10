@@ -311,6 +311,7 @@ dependencies = [
  "itertools 0.11.0",
  "lazy_static",
  "libc",
+ "mdconfig",
  "metrohash",
  "mockall",
  "mockall_double",
@@ -1520,6 +1521,17 @@ name = "matchit"
 version = "0.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0e7465ac9959cc2b1404e8e2367b43684a6d13790fe23056cc8c6c5a6b7bcb94"
+
+[[package]]
+name = "mdconfig"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cff02ee7b2a0815081bdc7c3dc00681c30577072db35787ea392aef8857fe34b"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "nix",
+]
 
 [[package]]
 name = "memchr"

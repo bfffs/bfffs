@@ -28,4 +28,4 @@ mod util;
 mod vdev_block;
 mod vdev_file;
 
-use util::{Gnop, Md, PoolBuilder, PoolHarness};
+use util::{Gnop, PoolBuilder, PoolHarness};
