@@ -348,7 +348,6 @@ name = "bfffs-fio"
 version = "0.1.0"
 dependencies = [
  "bfffs-core",
- "cc",
  "console-subscriber",
  "futures",
  "lazy_static",
