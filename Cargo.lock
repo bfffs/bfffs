@@ -162,8 +162,8 @@ dependencies = [
 
 [[package]]
 name = "atomic_enum"
-version = "0.2.0"
-source = "git+https://github.com/asomers/atomic_enum.git?rev=969354b#969354b78c72ca1c489e13668c51beb61b1b00a1"
+version = "0.3.0"
+source = "git+https://github.com/brain0/atomic_enum.git?rev=baea45a#baea45ae2f47ecbc5ca20f0a43e62862b961bb45"
 dependencies = [
  "proc-macro2",
  "quote",
