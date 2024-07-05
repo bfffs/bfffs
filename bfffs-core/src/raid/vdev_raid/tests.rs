@@ -1,8 +1,10 @@
 // vim: tw=80
 // LCOV_EXCL_START
 use super::*;
+
 use futures::future;
-use mockall::predicate::*;
+use mockall::{Sequence, predicate::*};
+use nonzero_ext::nonzero;
 use rstest::rstest;
 
 mod min_max{
@@ -1006,6 +1008,130 @@ mod erase_zone {
     }
 }
 
+mod fault {
+    use super::*;
+
+    fn mock_mirror() -> Mirror{
+        let mut m = super::mock_mirror();
+        m.expect_uuid()
+            .return_const(Uuid::new_v4());
+        m
+    }
+
+    /// Fault a leaf device
+    #[test]
+    fn leaf() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let leaf_uuid = Uuid::new_v4();
+        let mut m0 = mock_mirror();
+        let m0_uuid = m0.uuid();
+        let mut seq = Sequence::new();
+        m0.expect_fault()
+            .times(1)
+            .with(eq(leaf_uuid))
+            .in_sequence(&mut seq)
+            .return_const(Ok(()));
+        m0.expect_status()
+            .times(1)
+            .in_sequence(&mut seq)
+            .return_const(mirror::Status {
+                health: Health::Degraded(nonzero!(1u8)),
+                leaves: Vec::new(),
+                uuid: m0_uuid
+            });
+        let mut m1 = mock_mirror();
+        let m1_uuid = m1.uuid();
+        m1.expect_fault()
+            .with(eq(leaf_uuid))
+            .return_const(Err(Error::ENOENT));
+        m1.expect_status()
+            .return_const(mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: m1_uuid
+            });
+        let mut m2 = mock_mirror();
+        let m2_uuid = m2.uuid();
+        m2.expect_fault()
+            .with(eq(leaf_uuid))
+            .return_const(Err(Error::ENOENT));
+        m2.expect_status()
+            .return_const(mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: m2_uuid
+            });
+        mirrors.push(Child::present(m0));
+        mirrors.push(Child::present(m1));
+        mirrors.push(Child::present(m2));
+
+        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.fault(leaf_uuid).unwrap();
+        assert_eq!(0, vdev_raid.faulted_children());
+    }
+
+    /// Fault an already-faulted mirror
+    #[test]
+    fn already_faulted_mirror() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let m0 = mock_mirror();
+        let m0_uuid = m0.uuid();
+        let m1 = mock_mirror();
+        let m2 = mock_mirror();
+        mirrors.push(Child::faulted(m0));
+        mirrors.push(Child::present(m1));
+        mirrors.push(Child::present(m2));
+
+        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        assert_eq!(1, vdev_raid.faulted_children());
+        vdev_raid.fault(m0_uuid).unwrap();
+        assert!(matches!(vdev_raid.children[0], Child::Faulted(_)));
+        assert_eq!(1, vdev_raid.faulted_children());
+    }
+
+    /// Fault an entire mirror
+    #[test]
+    fn mirror() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let m0 = mock_mirror();
+        let m0_uuid = m0.uuid();
+        let m1 = mock_mirror();
+        let m2 = mock_mirror();
+        mirrors.push(Child::present(m0));
+        mirrors.push(Child::present(m1));
+        mirrors.push(Child::present(m2));
+
+        let mut vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.fault(m0_uuid).unwrap();
+        assert!(matches!(vdev_raid.children[0], Child::Faulted(_)));
+        assert_eq!(1, vdev_raid.faulted_children());
+    }
+}
+
 mod finish_zone {
     use super::*;
 
@@ -1497,6 +1623,57 @@ mod lba2zone {
 mod open {
     use super::*;
     use crate::raid::{self, vdev_raid};
+
+    /// If a mirror is already faulted, VdevRaid::open should take note
+    #[test]
+    fn faulted_mirror() {
+        let mut m0 = mock_mirror();
+        let m0_uuid = Uuid::new_v4();
+        m0.expect_uuid()
+            .return_const(m0_uuid);
+        m0.expect_status()
+            .return_const(mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: m0_uuid
+            });
+        let mut m1 = mock_mirror();
+        let m1_uuid = Uuid::new_v4();
+        m1.expect_uuid()
+            .return_const(m1_uuid);
+        m1.expect_status()
+            .return_const(mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: m1_uuid
+            });
+        let mut m2 = mock_mirror();
+        let m2_uuid = Uuid::new_v4();
+        m2.expect_uuid()
+            .return_const(m2_uuid);
+        m2.expect_status()
+            .return_const(mirror::Status {
+                health: Health::Faulted(FaultedReason::User),
+                leaves: Vec::new(),
+                uuid: m2_uuid
+            });
+        let label = vdev_raid::Label {
+            uuid: Uuid::new_v4(),
+            chunksize: 1,
+            disks_per_stripe: 3,
+            redundancy: 1,
+            layout_algorithm: LayoutAlgorithm::PrimeS,
+            children: vec![m0_uuid, m1_uuid, m2_uuid]
+        };
+        let mut combined = BTreeMap::new();
+        combined.insert(m0_uuid, m0);
+        combined.insert(m1_uuid, m1);
+        combined.insert(m2_uuid, m2);
+        let vdev_raid = VdevRaid::open(label, combined);
+        assert_eq!(vdev_raid.faulted_children(), 1);
+        let status = vdev_raid.status();
+        assert_eq!(status.health, Health::Degraded(nonzero!(1u8)));
+    }
 
     /// Regardless of the order in which the devices are given to
     /// raid::open, it will construct itself in the correct order.
@@ -2043,8 +2220,6 @@ mod read_at {
 mod status {
     use super::*;
 
-    use nonzero_ext::nonzero;
-
     use std::path::PathBuf;
 
     use crate::vdev::Health::*;
@@ -2054,7 +2229,7 @@ mod status {
     #[rstest]
     #[case(Online, vec![Online, Online, Online])]
     #[case(Degraded(nonzero!(3u8)),
-        vec![Online, Online, Faulted])]
+        vec![Online, Online, Faulted(FaultedReason::Removed)])]
     #[case(Degraded(nonzero!(3u8)),
         vec![Online, Rebuilding, Online])]
     #[case(Degraded(nonzero!(1u8)),
@@ -2066,7 +2241,9 @@ mod status {
              Degraded(nonzero!(1u8)),
              Online])]
     #[case(Degraded(nonzero!(4u8)),
-        vec![Degraded(nonzero!(1u8)), Online, Faulted])]
+        vec![Degraded(nonzero!(1u8)), Online, Faulted(FaultedReason::Removed)])]
+    #[case(Faulted(FaultedReason::InsufficientRedundancy),
+        vec![Faulted(FaultedReason::Removed), Faulted(FaultedReason::Removed), Online])]
     fn degraded(#[case] health: Health, #[case] children: Vec<Health>) {
         let k = children.len() as i16; // doesn't matter for Health calculation
         let f = 1;
@@ -2091,7 +2268,10 @@ mod status {
                     leaves,
                     uuid: muuid
                 });
-            Child::present(m)
+            match mirror_health {
+                Health::Faulted(_) => Child::faulted(m),
+                _ => Child::present(m),
+            }
         };
         for c in children.into_iter() {
             mirrors.push(m(c));

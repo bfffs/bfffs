@@ -2,7 +2,7 @@
 use bfffs_core::{
     label::*,
     pool::*,
-    vdev::Health,
+    vdev::{FaultedReason, Health},
     Error,
     TxgT
 };
@@ -35,7 +35,8 @@ mod fault {
         harness.pool.fault(uuid).await.unwrap();
 
         let stat = harness.pool.status();
-        assert_eq!(stat.health, Health::Faulted);
+        assert_eq!(stat.health,
+                   Health::Faulted(FaultedReason::InsufficientRedundancy));
     }
 
     #[rstest]

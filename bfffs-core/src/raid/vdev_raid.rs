@@ -183,7 +183,9 @@ impl StripeBuffer {
 /// A child of a VdevRaid.  Probably either a Mirror or a missing disk.
 enum Child {
     Present(Arc<Mirror>),
-    Missing(Uuid)
+    Missing(Uuid),
+    /// Administratively faulted
+    Faulted(Arc<Mirror>)
 }
 
 cfg_if! {
@@ -195,6 +197,10 @@ cfg_if! {
 }
 
 impl Child {
+    fn faulted(vdev: Mirror) -> Self {
+        Child::Faulted(Arc::new(vdev))
+    }
+
     fn present(vdev: Mirror) -> Self {
         Child::Present(Arc::new(vdev))
     }
@@ -223,12 +229,25 @@ impl Child {
         self.as_present().map(|m| m.erase_zone(start, end))
     }
 
-    fn finish_zone(&self, start: LbaT, end: LbaT) -> Option<BoxVdevFut> {
-        self.as_present().map(|m| m.finish_zone(start, end))
+    /// Mark this child as faulted.  If its status changed from Present to
+    /// Faulted, return 1.
+    fn fault(&mut self) -> i16 {
+        let old = mem::replace(self, Child::Missing(Uuid::default()));
+        let r = if matches!(old, Child::Present(_)) {
+            1
+        } else {
+            0
+        };
+        *self = match old {
+            Child::Present(m) => Child::Faulted(m),
+            Child::Faulted(m) => Child::Faulted(m),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
+        r
     }
 
-    fn is_missing(&self) -> bool {
-        matches!(self, Child::Missing(_))
+    fn finish_zone(&self, start: LbaT, end: LbaT) -> Option<BoxVdevFut> {
+        self.as_present().map(|m| m.finish_zone(start, end))
     }
 
     fn is_present(&self) -> bool {
@@ -260,8 +279,17 @@ impl Child {
     }
 
     fn status(&self) -> Option<mirror::Status> {
-        self.as_present().map(|m| m.status())
+        match self {
+            Child::Present(m) => Some(m.status()),
+            Child::Faulted(m) => {
+                let mut status = m.status();
+                status.health = Health::Faulted(FaultedReason::User);
+                Some(status)
+            },
+            Child::Missing(_) => None
+        }
     }
+
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
         if let Child::Present(c) = self {
@@ -308,7 +336,8 @@ impl Child {
     fn uuid(&self) -> Uuid {
         match self {
             Child::Present(vb) => vb.uuid(),
-            Child::Missing(uuid) => *uuid
+            Child::Faulted(vb) => vb.uuid(),
+            Child::Missing(uuid) => *uuid,
         }
     }
 }
@@ -505,7 +534,7 @@ impl VdevRaid {
     fn faulted_children(&self) -> i16 {
         debug_assert_eq!(self.faulted_children as usize,
                          self.children.iter()
-                         .filter(|c| c.is_missing())
+                         .filter(|c| !c.is_present())
                          .count());
         self.faulted_children
     }
@@ -598,7 +627,11 @@ impl VdevRaid {
     {
         let children = label.children.iter().map(|uuid| {
             if let Some(m) = mirrors.remove(uuid) {
-                Child::present(m)
+                if m.status().health.is_faulted() {
+                    Child::faulted(m)
+                } else {
+                    Child::present(m)
+                }
             } else {
                 Child::missing(*uuid)
             }
@@ -1921,15 +1954,15 @@ impl VdevRaidApi for VdevRaid {
 
         for child in self.children.iter_mut() {
             if uuid == child.uuid() {
-                *child = Child::Missing(uuid);
+                self.faulted_children += child.fault();
                 return Ok(());
             } else if let Some(mirror) = child.as_present_mut() {
                 if let Some(m) = Arc::get_mut(mirror) {
                     match m.fault(uuid) {
                         Ok(()) => {
                             let status = m.status();
-                            if status.health == Health::Faulted {
-                                *child = Child::Missing(status.uuid)
+                            if status.health.is_faulted() {
+                                self.faulted_children += child.fault();
                             }
                             return Ok(());
                         }
@@ -2131,7 +2164,7 @@ impl VdevRaidApi for VdevRaid {
         let mut mirrors = Vec::with_capacity(self.children.len());
         for child in self.children.iter() {
             let cs = child.status().unwrap_or(mirror::Status {
-                health: Health::Faulted,
+                health: Health::Faulted(FaultedReason::Removed),
                 uuid: child.uuid(),
                 leaves: Vec::new()
             });
@@ -2153,9 +2186,13 @@ impl VdevRaidApi for VdevRaid {
                 }
             }
         }).sum();
-        let health = NonZeroU8::new(d)
-            .map(Health::Degraded)
-            .unwrap_or(Health::Online);
+        let health = if self.faulted_children() > self.codec.protection() {
+            Health::Faulted(FaultedReason::InsufficientRedundancy)
+        } else {
+            NonZeroU8::new(d)
+                .map(Health::Degraded)
+                .unwrap_or(Health::Online)
+        };
         Status {
             health,
             codec,

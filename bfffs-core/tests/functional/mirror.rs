@@ -7,7 +7,7 @@ use std::{
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
-    vdev::Health,
+    vdev::{FaultedReason, Health},
     Error,
     LbaT,
     Uuid,
@@ -52,7 +52,8 @@ mod fault {
         harness.0.fault(uuid).unwrap();
         let stat = harness.0.status();
         assert_eq!(stat.health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(stat.leaves[2].health, Health::Faulted);
+        assert_eq!(stat.leaves[2].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     #[tokio::test]
@@ -70,8 +71,10 @@ mod fault {
 
         vdev.fault(uuid).unwrap();
         let stat = vdev.status();
-        assert_eq!(stat.health, Health::Faulted);
-        assert_eq!(stat.leaves[0].health, Health::Faulted);
+        assert_eq!(stat.health,
+                   Health::Faulted(FaultedReason::InsufficientRedundancy));
+        assert_eq!(stat.leaves[0].health,
+                   Health::Faulted(FaultedReason::User));
     }
 
     #[rstest]
@@ -81,7 +84,8 @@ mod fault {
         harness.0.fault(uuid).unwrap();
         let stat = harness.0.status();
         assert_eq!(stat.health, Health::Degraded(nonzero!(1u8)));
-        assert_eq!(stat.leaves[2].health, Health::Faulted);
+        assert_eq!(stat.leaves[2].health,
+                   Health::Faulted(FaultedReason::User));
     }
 }
 

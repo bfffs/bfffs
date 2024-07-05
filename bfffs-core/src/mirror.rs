@@ -8,6 +8,7 @@
 use std::{
     collections::BTreeMap,
     io,
+    mem,
     num::{NonZeroU8, NonZeroU64},
     path::Path,
     pin::Pin,
@@ -128,10 +129,17 @@ impl Status {
 /// A child of a Mirror.  Probably either a VdevBlock or a missing disk
 enum Child {
     Present(Arc<VdevBlock>),
-    Missing(Uuid)
+    Missing(Uuid),
+    /// Administratively faulted
+    Faulted(Arc<VdevBlock>)
 }
 
 impl Child {
+    #[cfg(test)]
+    fn faulted(vdev: VdevBlock) -> Self {
+        Child::Faulted(Arc::new(vdev))
+    }
+
     fn present(vdev: VdevBlock) -> Self {
         Child::Present(Arc::new(vdev))
     }
@@ -152,6 +160,15 @@ impl Child {
         self.as_present().map(|bd| bd.erase_zone(start, end))
     }
 
+    fn fault(&mut self) {
+        let old = mem::replace(self, Child::Missing(Uuid::default()));
+        *self = match old {
+            Child::Present(vb) => Child::Faulted(vb),
+            Child::Faulted(vb) => Child::Faulted(vb),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
+    }
+
     fn finish_zone(&self, start: LbaT, end: LbaT) -> Option<VdevBlockFut> {
         self.as_present().map(|bd| bd.finish_zone(start, end))
     }
@@ -165,7 +182,15 @@ impl Child {
     }
 
     fn status(&self) -> Option<vdev_block::Status> {
-        self.as_present().map(|vb| vb.status())
+        match self {
+            Child::Present(vb) => Some(vb.status()),
+            Child::Faulted(vb) => {
+                let mut status = vb.status();
+                status.health = Health::Faulted(FaultedReason::User);
+                Some(status)
+            },
+            Child::Missing(_) => None
+        }
     }
 
     fn write_at(&self, buf: IoVec, lba: LbaT) -> Option<VdevBlockFut> {
@@ -205,7 +230,8 @@ impl Child {
     fn uuid(&self) -> Uuid {
         match self {
             Child::Present(vb) => vb.uuid(),
-            Child::Missing(uuid) => *uuid
+            Child::Missing(uuid) => *uuid,
+            Child::Faulted(vb) => vb.uuid(),
         }
     }
 
@@ -285,7 +311,7 @@ impl Mirror {
     pub fn fault(&mut self, uuid: Uuid) -> Result<()> {
         for child in self.children.iter_mut() {
             if child.uuid() == uuid {
-                *child = Child::missing(uuid);
+                child.fault();
                 return Ok(());
             }
         }
@@ -508,7 +534,7 @@ impl Mirror {
         let mut leaves = Vec::with_capacity(nchildren);
         for child in self.children.iter() {
             let cs = child.status().unwrap_or(vdev_block::Status {
-                health: Health::Faulted,
+                health: Health::Faulted(FaultedReason::Removed),
                 uuid: child.uuid(),
                 path: std::path::PathBuf::new()
             });
@@ -518,7 +544,7 @@ impl Mirror {
             .filter(|l| l.health != Health::Online)
             .count();
         let health = if sick_children == nchildren {
-            Health::Faulted
+            Health::Faulted(FaultedReason::InsufficientRedundancy)
         } else {
             NonZeroU8::new(sick_children as u8)
                 .map(Health::Degraded)
@@ -867,6 +893,24 @@ mod t {
             assert_eq!(Health::Online, mirror.status().health);
         }
 
+        /// Mirror::fault is a no-op if the child is already Faulted
+        #[test]
+        fn faulted() {
+            let bd0 = mock();
+            let bd1 = mock();
+            let bd1_uuid = bd1.uuid();
+            let children = vec![
+                Child::present(bd0),
+                Child::faulted(bd1)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.fault(bd1_uuid).unwrap();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Faulted(FaultedReason::User));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+        }
+
         #[test]
         fn present() {
             let bd0 = mock();
@@ -875,10 +919,15 @@ mod t {
             let children = vec![Child::present(bd0), Child::present(bd1)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
             mirror.fault(bd0_uuid).unwrap();
-            assert_eq!(Health::Degraded(nonzero!(1u8)), mirror.status().health);
+            let status = mirror.status();
+            assert_eq!(status.leaves[0].health,
+                       Health::Faulted(FaultedReason::User));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
         }
 
-        /// Mirror::fault is a no-op if the child is already Missing
+        /// Mirror::fault is a no-op if the child is already Missing.  But the
+        /// child's status will remain "Faulted" rather than switching to
+        /// "Removed".
         #[test]
         fn missing() {
             let bd0 = mock();
@@ -889,6 +938,10 @@ mod t {
             ];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
             mirror.fault(faulty_uuid).unwrap();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Faulted(FaultedReason::Removed));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
         }
 
         /// faulting the only child of a mirror should work, but the Mirror will
@@ -900,7 +953,11 @@ mod t {
             let children = vec![Child::present(bd0)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
             mirror.fault(bd0_uuid).unwrap();
-            assert_eq!(Health::Faulted, mirror.status().health);
+            let status = mirror.status();
+            assert_eq!(status.leaves[0].health,
+                       Health::Faulted(FaultedReason::User));
+            assert_eq!(Health::Faulted(FaultedReason::InsufficientRedundancy),
+                status.health);
         }
     }
 
