@@ -72,7 +72,7 @@ impl LruCache {
                 v.mru = None;
                 v.lru = mru;
                 v.buf.make_ref().downcast::<T>().unwrap()
-            }).map(|cacheref| {
+            }).inspect(|_cacheref| {
                 self.store.get_mut(&v_mru.unwrap()).unwrap().lru = v_lru;
                 if let Some(lru) = &v_lru {
                     self.store.get_mut(lru).unwrap().mru = v_mru;
@@ -84,7 +84,6 @@ impl LruCache {
                     self.store.get_mut(mru).unwrap().mru = Some(*key);
                 }
                 self.mru = Some(*key);
-                cacheref
             })
         }
     }
