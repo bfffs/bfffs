@@ -16,9 +16,7 @@ task:
     # Use bleeding edge features: Rust nightly and FreeBSD fspacectl
     - name: cargo test (nightly)
       env:
-        # Pin the nightly compiler version due to
-        # https://github.com/rust-lang/rust/issues/125474
-        VERSION: nightly-2024-05-21-x86_64-unknown-freebsd
+        VERSION: nightly
         CARGO_ARGS: --all-features
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
