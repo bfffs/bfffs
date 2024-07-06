@@ -5,7 +5,6 @@ use std::{
     pin::Pin,
 };
 
-use async_trait::async_trait;
 use crate::{
     BYTES_PER_LBA,
     ZERO_REGION,
@@ -93,7 +92,6 @@ impl Vdev for NullRaid {
     }
 }
 
-#[async_trait]
 impl VdevRaidApi for NullRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.mirror.zone_limits(zone);

@@ -1,6 +1,5 @@
 // vim: tw=80
 
-use async_trait::async_trait;
 use crate::{
     label::*,
     types::*,
@@ -1947,7 +1946,6 @@ impl Vdev for VdevRaid {
     }
 }
 
-#[async_trait]
 impl VdevRaidApi for VdevRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),

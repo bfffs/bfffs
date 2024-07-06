@@ -100,7 +100,7 @@ pub trait Locator : Clone + Send + Sync {
     /// - `start`:  The first `ChunkId` whose location will be returned
     /// - `end`:    The first `ChunkId` beyond the end of the iterator
     fn iter(&self, start: ChunkId, end: ChunkId)
-        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>>;
+        -> impl Iterator<Item=(ChunkId, Chunkloc)>;
 
     /// Inverse of `id2loc`.
     ///

@@ -5,7 +5,6 @@
 //! This provides vdevs which slot between `cluster` and `mirror` and
 //! provide RAID-like functionality.
 
-#[cfg(test)] use async_trait::async_trait;
 use crate::{
     label::*,
     types::*,
@@ -229,7 +228,6 @@ mock!{
         fn zone_limits(&self, zone: ZoneT) -> (LbaT, LbaT);
         fn zones(&self) -> ZoneT;
     }
-    #[async_trait]
     impl VdevRaidApi for VdevRaid {
         fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
