@@ -400,6 +400,14 @@ impl Future for ReadSpacemap {
     }
 }
 
+/// Parts of the [`VdevRaid`] structure that must be Arc'd
+struct Inner {
+    /// Locator, declustering or otherwise
+    locator: LocatorImpl,
+
+    /// Underlying mirror devices.  Order is important!
+    children: Box<[Child]>,
+}
 
 /// `VdevRaid`: Virtual Device for the RAID transform
 ///
@@ -421,12 +429,6 @@ pub struct VdevRaid {
     /// Cache of the number of faulted children.
     faulted_children: i16,
 
-    /// Locator, declustering or otherwise
-    locator: LocatorImpl,
-
-    /// Underlying mirror devices.  Order is important!
-    children: Box<[Child]>,
-
     /// RAID placement algorithm.
     layout_algorithm: LayoutAlgorithm,
 
@@ -444,6 +446,8 @@ pub struct VdevRaid {
     stripe_buffers: RwLock<BTreeMap<ZoneT, StripeBuffer>>,
 
     uuid: Uuid,
+
+    inner: Inner,
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -466,7 +470,7 @@ macro_rules! issue_1stripe_writes {
                 (ChunkId::Data($lba / $self.chunksize),
                  ChunkId::Parity($lba / $self.chunksize, 0))
             };
-            let mut iter = $self.locator.iter(start, end);
+            let mut iter = $self.inner.locator.iter(start, end);
             let mut first = true;
             $buf.into_iter()
             .map(|d| {
@@ -479,7 +483,7 @@ macro_rules! issue_1stripe_writes {
                 } else {
                     loc.offset * $self.chunksize
                 };
-                $self.children[loc.disk as usize].$func(d, disk_lba)
+                $self.inner.children[loc.disk as usize].$func(d, disk_lba)
             }).collect::<FuturesOrdered<_>>()
             .collect::<Vec<Result<()>>>()
         }
@@ -533,7 +537,7 @@ impl VdevRaid {
 
     fn faulted_children(&self) -> i16 {
         debug_assert_eq!(self.faulted_children as usize,
-                         self.children.iter()
+                         self.inner.children.iter()
                          .filter(|c| !c.is_present())
                          .count());
         self.faulted_children
@@ -541,7 +545,7 @@ impl VdevRaid {
 
     /// Return a reference to the first child that isn't missing
     fn first_healthy_child(&self) -> &Mirror {
-        for c in self.children.iter() {
+        for c in self.inner.children.iter() {
             if let Some(m) = c.as_present() {
                 return m;
             }
@@ -601,17 +605,21 @@ impl VdevRaid {
         let size = disk_size_in_chunks * locator.datachunks() *
             chunksize / LbaT::from(locator.depth());
 
+        let inner = Inner {
+            locator,
+            children,
+        };
+
         VdevRaid {
             chunksize,
             codec: Arc::new(codec),
-            locator,
-            children,
             layout_algorithm,
             faulted_children,
             optimum_queue_depth,
             size,
             stripe_buffers: RwLock::new(BTreeMap::new()),
-            uuid
+            uuid,
+            inner
         }
     }
 
@@ -665,7 +673,7 @@ impl VdevRaid {
         let (first_disk_lba, _) = self.first_healthy_child().zone_limits(zone);
         let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
         let futs = FuturesUnordered::<BoxVdevFut>::new();
-        for (idx, mirrordev) in self.children.iter().enumerate() {
+        for (idx, mirrordev) in self.inner.children.iter().enumerate() {
             if !mirrordev.is_present() {
                 continue;
             }
@@ -674,7 +682,7 @@ impl VdevRaid {
             let mut first_usable_disk_lba = 0;
             for chunk in start_disk_chunk.. {
                 let loc = Chunkloc::new(idx as i16, chunk);
-                let chunk_id = self.locator.loc2id(loc);
+                let chunk_id = self.inner.locator.loc2id(loc);
                 let chunk_lba = chunk_id.address() * self.chunksize;
                 if chunk_lba >= start_lba {
                     first_usable_disk_lba = chunk * self.chunksize;
@@ -718,7 +726,7 @@ impl VdevRaid {
         const SENTINEL : LbaT = LbaT::MAX;
 
         let col_len = self.chunksize as usize * BYTES_PER_LBA;
-        let n = self.children.len();
+        let n = self.inner.children.len();
         let f = self.codec.protection();
         let k = self.codec.stripesize();
         let m = k - f;
@@ -761,7 +769,7 @@ impl VdevRaid {
         psglists.resize_with(n, Default::default);
         // The disk LBAs (not RAID LBAs) that each disk read starts from
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
-        let max_chunks_per_disk = self.locator.parallel_read_count(uchunks);
+        let max_chunks_per_disk = self.inner.locator.parallel_read_count(uchunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
             sglists.push(SGListMut::with_capacity(max_chunks_per_disk));
@@ -781,7 +789,7 @@ impl VdevRaid {
             ChunkId::Data(div_roundup(uelba, self.chunksize))
         };
         let mut starting = true;
-        for (cid, loc) in self.locator.iter(start_cid, end_cid) {
+        for (cid, loc) in self.inner.locator.iter(start_cid, end_cid) {
             let mut disk_lba = loc.offset * self.chunksize;
             let disk = loc.disk as usize;
             let cid_lba = cid.address() * self.chunksize;
@@ -888,7 +896,7 @@ impl VdevRaid {
             }
         }
 
-        let rfut = multizip((self.children.iter(),
+        let rfut = multizip((self.inner.children.iter(),
                               sglists.into_iter(),
                               start_lbas.into_iter()))
         .map(|(mirrordev, sglist, lba)| {
@@ -929,7 +937,7 @@ impl VdevRaid {
                 } else {
                     ChunkId::Data((s + 1) * m as u64)
                 };
-                let lociter = self.locator.iter(start_cid, end_cid);
+                let lociter = self.inner.locator.iter(start_cid, end_cid);
                 let dvs = lociter
                     .map(|(_cid, loc)| dv[loc.disk as usize])
                     .collect::<Vec<_>>();
@@ -989,7 +997,7 @@ impl VdevRaid {
         };
 
         let mut first = true;
-        let rfut = self.locator.iter(start_cid, end_cid)
+        let rfut = self.inner.locator.iter(start_cid, end_cid)
         .map(|(cid, loc)| {
             let cid_lba = cid.address() * self.chunksize;
             let cid_end_lba = cid_lba + self.chunksize;
@@ -1002,7 +1010,7 @@ impl VdevRaid {
                 let dbs = DivBufShared::uninitialized(col_len);
                 let dbm = dbs.try_mut().unwrap();
                 exbufs.as_mut().unwrap().push(dbs);
-                self.children[loc.disk as usize].read_at(dbm, disk_lba)
+                self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)
             } else if cid_lba < ulba && faulted_children > 0 {
                 // This chunk is needed partly by the caller and partly for
                 // parity reconstruction
@@ -1023,7 +1031,7 @@ impl VdevRaid {
                     exbufs.as_mut().unwrap().push(dbs);
                     sglist.push(excol);
                 }
-                self.children[loc.disk as usize].readv_at(sglist, disk_lba)
+                self.inner.children[loc.disk as usize].readv_at(sglist, disk_lba)
             } else if cid_lba < ulba {
                 // Part of this chunk is needed by the caller
                 debug_assert!(first);
@@ -1034,16 +1042,16 @@ impl VdevRaid {
                                           buf.len());
                 let col0 = buf.split_to(chunk0size);
                 disk_lba += chunk_offset;
-                self.children[loc.disk as usize].read_at(col0, disk_lba)
+                self.inner.children[loc.disk as usize].read_at(col0, disk_lba)
             } else if cid_end_lba <= uelba {
                 // This chunk is needed by the caller
                 let dbm = buf.split_to(col_len.min(buf.len()));
-                self.children[loc.disk as usize].read_at(dbm, disk_lba)
+                self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)
             } else if cid_lba < uelba && faulted_children == 0 {
                 // Part of this chunk is needed by the caller
                 // TODO: add a DivBufMut::take method
                 let dbm = buf.split_to(buf.len());
-                self.children[loc.disk as usize].read_at(dbm, disk_lba)
+                self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)
             } else if cid_lba < uelba {
                 // This chunk is needed partly by the caller and partly for
                 // parity reconstruction
@@ -1053,7 +1061,7 @@ impl VdevRaid {
                 let excol = dbs.try_mut().unwrap();
                 exbufs.as_mut().unwrap().push(dbs);
                 let sglist = vec![datacol, excol];
-                self.children[loc.disk as usize].readv_at(sglist, disk_lba)
+                self.inner.children[loc.disk as usize].readv_at(sglist, disk_lba)
             } else {
                 debug_assert!(cid_lba >= uelba);
                 // This chunk is only needed for parity reconstruction
@@ -1061,7 +1069,7 @@ impl VdevRaid {
                 let dbs = DivBufShared::uninitialized(col_len);
                 let dbm = dbs.try_mut().unwrap();
                 exbufs.as_mut().unwrap().push(dbs);
-                self.children[loc.disk as usize].read_at(dbm, disk_lba)
+                self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)
             }
         }).collect::<FuturesOrdered<_>>();
         let mut dv = rfut.collect::<Vec<Result<()>>>().await;
@@ -1088,7 +1096,7 @@ impl VdevRaid {
             } else {
                 ChunkId::Data(end_of_stripe_lba / self.chunksize)
             };
-            let rfut = self.locator.iter(start_cid, end_cid)
+            let rfut = self.inner.locator.iter(start_cid, end_cid)
             .map(|(cid, loc)| {
                 if let ChunkId::Parity(_, pid) = cid {
                     debug_assert!(pid < nerrs);
@@ -1101,7 +1109,7 @@ impl VdevRaid {
                         let dbm = dbs.try_mut().unwrap();
                         exbufs.as_mut().unwrap().push(dbs);
                         let disk_lba = loc.offset * self.chunksize;
-                        Box::pin(self.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
+                        Box::pin(self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
                     }
                 } else if cid.address() < start_chunk_addr {
                     // Need to read this data chunk for parity reconstruction
@@ -1109,7 +1117,7 @@ impl VdevRaid {
                     let dbm = dbs.try_mut().unwrap();
                     exbufs.as_mut().unwrap().push(dbs);
                     let disk_lba = loc.offset * self.chunksize;
-                    Box::pin(self.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
+                    Box::pin(self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
                 } else if cid.address() - start_chunk_addr < dv.len() as u64 {
                     // should've already read it
                     let dvidx = (cid.address() - start_chunk_addr) as usize;
@@ -1120,7 +1128,7 @@ impl VdevRaid {
                     let dbm = dbs.try_mut().unwrap();
                     exbufs.as_mut().unwrap().push(dbs);
                     let disk_lba = loc.offset * self.chunksize;
-                    Box::pin(self.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
+                    Box::pin(self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)) as BoxVdevFut
                 }
             }).collect::<FuturesOrdered<_>>();
             start_chunk_addr = stripe_lba / self.chunksize;
@@ -1153,11 +1161,11 @@ impl VdevRaid {
         let f = self.codec.protection();
         let k = self.codec.stripesize();
         let m = self.codec.stripesize() - f;
-        let n = self.children.len();
+        let n = self.inner.children.len();
         let chunksize = self.chunksize;
         // The only current Locator is small enough that it's probably cheaper
         // to clone it than to use an Arc.
-        let locator = self.locator.clone();
+        let locator = self.inner.locator.clone();
         let lbas_per_stripe = chunksize * m as LbaT;
         let start_stripe = ulba / (chunksize * m as LbaT);
         let col_len = chunksize as usize * BYTES_PER_LBA;
@@ -1169,11 +1177,11 @@ impl VdevRaid {
         // Assemble the list of read operations.  Unlink read_at_multi, don't
         // use scatter/gather operations.  Instead, read each disks's data into
         // a single contiguous buffer.  We'll chop it up in the next step.
-        let mut buffers = Vec::with_capacity(self.children.len());
-        for _ in 0..self.children.len() {
+        let mut buffers = Vec::with_capacity(self.inner.children.len());
+        for _ in 0..self.inner.children.len() {
             buffers.push(None);
         }
-        let mut args_per_disk = vec![None; self.children.len()];
+        let mut args_per_disk = vec![None; self.inner.children.len()];
 
         let stripe_lba = ulba - ulba % lbas_per_stripe;
         let start_lba = stripe_lba;
@@ -1196,7 +1204,7 @@ impl VdevRaid {
             let dbs = DivBufShared::from(vec![0u8; len]);
             let dbm = dbs.try_mut().unwrap();
             buffers[disk_idx] = Some(dbs);
-            self.children[disk_idx].read_at(dbm, disk_lba)
+            self.inner.children[disk_idx].read_at(dbm, disk_lba)
         }).collect::<FuturesOrdered<_>>()
         .collect::<Vec<Result<()>>>()
         .map(move |dv| {
@@ -1300,7 +1308,7 @@ impl VdevRaid {
         let k = self.codec.stripesize() as usize;
         let f = self.codec.protection();
         let m = (self.codec.stripesize() - f) as usize;
-        let n = self.children.len();
+        let n = self.inner.children.len();
         let lbas_per_stripe = self.chunksize * m as LbaT;
         let codec2 = self.codec.clone();
 
@@ -1315,13 +1323,13 @@ impl VdevRaid {
         let start_cid = ChunkId::Data(start_chunk_addr);
         let end_cid = ChunkId::Data(end_lba / self.chunksize);
 
-        let rfut = self.locator.iter(start_cid, end_cid)
+        let rfut = self.inner.locator.iter(start_cid, end_cid)
         .map(|(_cid, loc)| {
             let disk_lba = loc.offset * self.chunksize;
             let dbs = DivBufShared::from(vec![0u8; col_len]);
             let dbm = dbs.try_mut().unwrap();
             exbufs.push(dbs);
-            self.children[loc.disk as usize].read_at(dbm, disk_lba)
+            self.inner.children[loc.disk as usize].read_at(dbm, disk_lba)
         }).collect::<FuturesOrdered<_>>();
         rfut.collect::<Vec<Result<()>>>()
         .map(move |dv| {
@@ -1587,7 +1595,7 @@ impl VdevRaid {
         let f = self.codec.protection() as usize;
         let k = self.codec.stripesize() as usize;
         let m = k - f;
-        let n = self.children.len();
+        let n = self.inner.children.len();
         let chunks = buf.len() / col_len;
         let stripes = chunks / m;
 
@@ -1633,7 +1641,7 @@ impl VdevRaid {
         let mut sglists = Vec::<SGList>::with_capacity(n);
         const SENTINEL : LbaT = LbaT::MAX;
         let mut start_lbas : Vec<LbaT> = vec![SENTINEL; n];
-        let max_chunks_per_disk = self.locator.parallel_read_count(chunks);
+        let max_chunks_per_disk = self.inner.locator.parallel_read_count(chunks);
         for _ in 0..n {
             // Size each SGList to the maximum possible size
             sglists.push(SGList::with_capacity(max_chunks_per_disk));
@@ -1642,7 +1650,7 @@ impl VdevRaid {
         let start = ChunkId::Data(lba / self.chunksize);
         let end = ChunkId::Data((lba + (buf.len() / BYTES_PER_LBA) as LbaT) /
                                 self.chunksize);
-        for (chunk_id, loc) in self.locator.iter(start, end) {
+        for (chunk_id, loc) in self.inner.locator.iter(start, end) {
             let col = match chunk_id {
                 ChunkId::Data(_) => buf.split_to(col_len),
                 ChunkId::Parity(_, i) => pw[i as usize].split_to(col_len)
@@ -1656,7 +1664,7 @@ impl VdevRaid {
             sglists[loc.disk as usize].push(col);
         }
 
-        let bi = self.children.iter();
+        let bi = self.inner.children.iter();
         let sgi = sglists.into_iter();
         let li = start_lbas.into_iter();
         let fut = multizip((bi, sgi, li))
@@ -1825,13 +1833,13 @@ fn min_max<I>(iterable: I) -> Option<(I::Item, I::Item)>
 
 impl Vdev for VdevRaid {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
-        let loc = self.locator.id2loc(ChunkId::Data(lba / self.chunksize));
+        let loc = self.inner.locator.id2loc(ChunkId::Data(lba / self.chunksize));
         let disk_lba = loc.offset * self.chunksize;
-        let child_idx = (0..self.children.len())
-            .map(|i| (loc.disk as usize + i) % self.children.len())
-            .find(|child_idx| self.children[*child_idx].is_present())
+        let child_idx = (0..self.inner.children.len())
+            .map(|i| (loc.disk as usize + i) % self.inner.children.len())
+            .find(|child_idx| self.inner.children[*child_idx].is_present())
             .unwrap();
-        let tentative = self.children[child_idx].lba2zone(disk_lba);
+        let tentative = self.inner.children[child_idx].lba2zone(disk_lba);
         tentative?;
         // NB: this call to zone_limits is slow, but unfortunately necessary.
         let limits = self.zone_limits(tentative.unwrap());
@@ -1881,8 +1889,8 @@ impl Vdev for VdevRaid {
 
         let endpoint_lba = |boundary_chunk, is_highend| {
             // 2) Find the lowest and highest stripe
-            let stripes = (0..self.children.len()).map(|i| {
-                let cid = self.locator.loc2id(Chunkloc::new(i as i16,
+            let stripes = (0..self.inner.children.len()).map(|i| {
+                let cid = self.inner.locator.loc2id(Chunkloc::new(i as i16,
                                                             boundary_chunk));
                 cid.address() / m
             });
@@ -1894,7 +1902,7 @@ impl Vdev for VdevRaid {
             'stripe_loop: for stripe in min_stripe..=max_stripe {
                 let minchunk = ChunkId::Data(stripe * m);
                 let maxchunk = ChunkId::Data((stripe + 1) * m);
-                let chunk_iter = self.locator.iter(minchunk, maxchunk);
+                let chunk_iter = self.inner.locator.iter(minchunk, maxchunk);
                 for (_, loc) in chunk_iter {
                     if is_highend && (loc.offset > boundary_chunk) {
                         continue 'stripe_loop;
@@ -1936,7 +1944,7 @@ impl VdevRaidApi for VdevRaid {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");
         let (start, end) = self.first_healthy_child().zone_limits(zone);
-        let fut = self.children.iter().filter_map(|mirrordev| {
+        let fut = self.inner.children.iter().filter_map(|mirrordev| {
             mirrordev.erase_zone(start, end - 1)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -1952,7 +1960,7 @@ impl VdevRaidApi for VdevRaid {
             return Err(Error::EINVAL);
         }
 
-        for child in self.children.iter_mut() {
+        for child in self.inner.children.iter_mut() {
             if uuid == child.uuid() {
                 self.faulted_children += child.fault();
                 return Ok(());
@@ -1992,7 +2000,7 @@ impl VdevRaidApi for VdevRaid {
             futs.push(self.writev_at_one(&sgl, lba))
         }
         futs.extend(
-            self.children.iter()
+            self.inner.children.iter()
             .filter_map(|mirrordev|
                  mirrordev.finish_zone(start, end - 1)
                  .map(|fut| Box::pin(fut) as BoxVdevFut)
@@ -2134,8 +2142,9 @@ impl VdevRaidApi for VdevRaid {
     fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> BoxVdevFut
     {
         let dbi = buf.clone_inaccessible();
-        let fut = self.children.last().map(|child| child.read_spacemap(buf, smidx));
-        let children = self.children[0 .. self.children.len() - 1].iter()
+        let fut = self.inner.children.last().map(|child| child.read_spacemap(buf, smidx));
+        // TODO: clone the Inner instead of cloning the children
+        let children = self.inner.children[0 .. self.inner.children.len() - 1].iter()
             .filter_map(|child| {
                 child.as_present().cloned()
             })
@@ -2157,12 +2166,12 @@ impl VdevRaidApi for VdevRaid {
     }
 
     fn status(&self) -> Status {
-        let n = self.children.len();
+        let n = self.inner.children.len();
         let k = self.codec.stripesize();
         let f = self.codec.protection();
         let codec = format!("{}-{},{},{}", self.layout_algorithm, n, k, f);
-        let mut mirrors = Vec::with_capacity(self.children.len());
-        for child in self.children.iter() {
+        let mut mirrors = Vec::with_capacity(self.inner.children.len());
+        for child in self.inner.children.iter() {
             let cs = child.status().unwrap_or(mirror::Status {
                 health: Health::Faulted(FaultedReason::Removed),
                 uuid: child.uuid(),
@@ -2211,7 +2220,7 @@ impl VdevRaidApi for VdevRaid {
             "Must call flush_zone before sync_all"
         );
         // TODO: handle errors on some devices
-        let fut = self.children.iter()
+        let fut = self.inner.children.iter()
         .filter_map(|bd| bd.sync_all())
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -2285,19 +2294,19 @@ impl VdevRaidApi for VdevRaid {
 
     fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
     {
-        let children_uuids = self.children.iter().map(|bd| bd.uuid())
+        let children_uuids = self.inner.children.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
         let raid_label = Label {
             uuid: self.uuid,
             chunksize: self.chunksize,
-            disks_per_stripe: self.locator.stripesize(),
-            redundancy: self.locator.protection(),
+            disks_per_stripe: self.inner.locator.stripesize(),
+            redundancy: self.inner.locator.protection(),
             layout_algorithm: self.layout_algorithm,
             children: children_uuids
         };
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
-        let fut = self.children.iter().map(|bd| {
+        let fut = self.inner.children.iter().map(|bd| {
            bd.write_label(labeller.clone())
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
@@ -2308,7 +2317,7 @@ impl VdevRaidApi for VdevRaid {
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> BoxVdevFut
     {
-        let fut = self.children.iter().map(|bd| {
+        let fut = self.inner.children.iter().map(|bd| {
             bd.write_spacemap(sglist.clone(), idx, block)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
