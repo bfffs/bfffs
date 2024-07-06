@@ -447,7 +447,7 @@ pub struct VdevRaid {
 
     uuid: Uuid,
 
-    inner: Inner,
+    inner: Arc<Inner>,
 }
 
 /// Convenience macro for `VdevRaid` I/O methods
@@ -605,10 +605,10 @@ impl VdevRaid {
         let size = disk_size_in_chunks * locator.datachunks() *
             chunksize / LbaT::from(locator.depth());
 
-        let inner = Inner {
+        let inner = Arc::new(Inner {
             locator,
             children,
-        };
+        });
 
         VdevRaid {
             chunksize,
@@ -1960,7 +1960,12 @@ impl VdevRaidApi for VdevRaid {
             return Err(Error::EINVAL);
         }
 
-        for child in self.inner.children.iter_mut() {
+        let inner = if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner
+        } else {
+            return Err(Error::EAGAIN);
+        };
+        for child in inner.children.iter_mut() {
             if uuid == child.uuid() {
                 self.faulted_children += child.fault();
                 return Ok(());
