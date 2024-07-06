@@ -70,34 +70,36 @@ pub struct Manager {
 impl Manager {
     /// Import a mirror that is already known to exist
     #[cfg(not(test))]
+    #[auto_enums::auto_enum(Future)]
     pub fn import(&mut self, uuid: Uuid)
         -> impl Future<Output=Result<(Mirror, LabelReader)>>
     {
-        let ml = match self.mirrors.remove(&uuid) {
-            Some(ml) => ml,
-            None => return futures::future::err(Error::ENOENT).boxed()
-        };
-        ml.children.into_iter()
-            .map(move |child_uuid| self.vbm.import(child_uuid))
-            .collect::<FuturesUnordered<_>>()
-            .collect::<Vec<_>>()
-            .map(move |v| {
-                let mut pairs = Vec::with_capacity(v.len());
-                let mut error = Error::ENOENT;
-                for r in v.into_iter() {
-                    match r {
-                        Ok(pair) => pairs.push(pair),
-                        Err(e) => {
-                            error = e;
+        match self.mirrors.remove(&uuid) {
+            None => futures::future::err(Error::ENOENT),
+            Some(ml) => {
+                ml.children.into_iter()
+                    .map(move |child_uuid| self.vbm.import(child_uuid))
+                    .collect::<FuturesUnordered<_>>()
+                    .collect::<Vec<_>>()
+                    .map(move |v| {
+                        let mut pairs = Vec::with_capacity(v.len());
+                        let mut error = Error::ENOENT;
+                        for r in v.into_iter() {
+                            match r {
+                                Ok(pair) => pairs.push(pair),
+                                Err(e) => {
+                                    error = e;
+                                }
+                            }
+                        };
+                        if !pairs.is_empty() {
+                            Ok(Mirror::open(Some(uuid), pairs))
+                        } else {
+                            Err(error)
                         }
-                    }
-                };
-                if !pairs.is_empty() {
-                    Ok(Mirror::open(Some(uuid), pairs))
-                } else {
-                    Err(error)
-                }
-            }).boxed()
+                    })
+            }
+        }
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
@@ -443,29 +445,30 @@ impl Mirror {
     /// immediately return EINTEGRITY, under the assumption that this method
     /// should only be called after a normal read already returned such an
     /// error.
+    #[auto_enums::auto_enum(Future)]
     pub fn read_long(&self, len: LbaT, lba: LbaT)
-        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>
+        -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
     {
         if self.children.iter().filter(|c| c.is_present()).count() <= 1 {
-            return future::err(Error::EINTEGRITY).boxed();
+            future::err(Error::EINTEGRITY)
+        } else {
+            self.children.iter()
+            .filter_map(Child::as_present)
+            .map(|child| {
+                let dbs = DivBufShared::from(vec![0u8; len as usize * BYTES_PER_LBA]);
+                let dbm = dbs.try_mut().unwrap();
+                child.read_at(dbm, lba)
+                    .map_ok(move |_| dbs)
+            }).collect::<FuturesUnordered<_>>()
+            .collect::<Vec<_>>()
+            .map(|r| {
+                if r.iter().all(Result::is_err) {
+                    Err(*r[0].as_ref().unwrap_err())
+                } else {
+                    Ok(Box::new(r.into_iter().filter_map(Result::ok)) as Box<dyn Iterator<Item=DivBufShared> + Send>)
+                }
+            })
         }
-
-        self.children.iter()
-        .filter_map(Child::as_present)
-        .map(|child| {
-            let dbs = DivBufShared::from(vec![0u8; len as usize * BYTES_PER_LBA]);
-            let dbm = dbs.try_mut().unwrap();
-            child.read_at(dbm, lba)
-                .map_ok(move |_| dbs)
-        }).collect::<FuturesUnordered<_>>()
-        .collect::<Vec<_>>()
-        .map(|r| {
-            if r.iter().all(Result::is_err) {
-                Err(*r[0].as_ref().unwrap_err())
-            } else {
-                Ok(Box::new(r.into_iter().filter_map(Result::ok)) as Box<dyn Iterator<Item=DivBufShared> + Send>)
-            }
-        }).boxed()
     }
 
     /// Issue a read operation on the one child, and return a Vec of the other

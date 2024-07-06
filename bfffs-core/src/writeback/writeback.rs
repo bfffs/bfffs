@@ -1,4 +1,5 @@
 // vim: tw=80
+use auto_enums::auto_enum;
 use futures::{
     Future,
     FutureExt,
@@ -13,7 +14,6 @@ use std::{
     collections::VecDeque,
     mem,
     ops::{Add, Sub},
-    pin::Pin,
     sync::{
         Mutex,
         atomic::{AtomicIsize, Ordering::*}
@@ -215,8 +215,9 @@ impl WriteBack {
         }
     }
 
+    #[auto_enum(Future)]
     pub fn borrow(&self, size: usize)
-        -> Pin<Box<dyn Future<Output=Credit> + Send>>
+        -> impl Future<Output=Credit> + Send
     {
         let wants = size << 1;
         debug_assert!(self.capacity >= wants.try_into().unwrap());
@@ -252,11 +253,10 @@ impl WriteBack {
                     let sleeper = Sleeper { tx, wants: iwants };
                     guard.push_back(sleeper);
                     self.supply.fetch_or(1, Release);
-                    break rx.map(move |_| Credit(AtomicIsize::new(iwants)))
-                        .boxed();
+                    break rx.map(move |_| Credit(AtomicIsize::new(iwants)));
                 }
             } else {
-                break future::ready(Credit(AtomicIsize::new(iwants))).boxed();
+                break future::ready(Credit(AtomicIsize::new(iwants)));
             }
         }
     }

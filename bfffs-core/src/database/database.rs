@@ -10,6 +10,7 @@ use crate::{
     tree::TreeOnDisk,
     types::*,
 };
+use auto_enums::auto_enum;
 use futures::{
     Future,
     FutureExt,
@@ -430,24 +431,26 @@ impl Database {
     /// Flush the database's dirty data to disk.
     ///
     /// Does not sync a transaction.  Does not rewrite the labels.
+    #[auto_enum(Future)]
     fn flush(inner: &Arc<Inner>)
         -> impl Future<Output=Result<()>> + Send
     {
         if !inner.dirty.load(Ordering::Relaxed) {
-            return future::ok(()).boxed();
+            future::ok(())
+        } else {
+            let inner2 = inner.clone();
+            let idml2 = inner.idml.clone();
+            async move {
+                let txg_guard = inner2.idml.txg().await;
+                let txg = *txg_guard;
+                let guard = inner2.fs_trees.read().await;
+                stream::iter(guard.iter().map(Ok))
+                    .try_fold((), move |_acc, (_tree_id, itree)|
+                              itree.clone().flush(txg)
+                    ).await?;
+                idml2.clone().flush(None, txg).await
+            }
         }
-        let inner2 = inner.clone();
-        let idml2 = inner.idml.clone();
-        async move {
-            let txg_guard = inner2.idml.txg().await;
-            let txg = *txg_guard;
-            let guard = inner2.fs_trees.read().await;
-            stream::iter(guard.iter().map(Ok))
-                .try_fold((), move |_acc, (_tree_id, itree)|
-                          itree.clone().flush(txg)
-                ).await?;
-            idml2.clone().flush(None, txg).await
-        }.boxed()
     }
 
     /// Lookup a Tree's parent
@@ -707,6 +710,7 @@ impl Database {
             .map_ok(drop)
     }
 
+    #[auto_enum(Future)]
     fn sync_transaction_priv(inner: &Arc<Inner>)
         -> impl Future<Output=Result<()>>
     {
@@ -719,42 +723,42 @@ impl Database {
         // 6) Sync the pool again, in case we're about to physically pull the
         //    disk or power off.
         if !inner.dirty.swap(false, Ordering::Relaxed) {
-            return future::ok(()).boxed();
+            future::ok(())
+        } else {
+            let inner2 = inner.clone();
+            inner.idml.advance_transaction(move |txg| async move {
+                let guard = inner2.fs_trees.read().await;
+                guard.iter()
+                    .map(move |(_, itree)| {
+                        itree.clone().flush(txg)
+                    }).collect::<FuturesUnordered<_>>()
+                    .try_collect::<Vec<_>>().await?;
+                // TODO: only write out the dirty trees
+                let forest_futs = guard.iter()
+                    .map(|(tree_id, itree)| {
+                        inner2.forest
+                            .update_tree(*tree_id, itree.serialize().unwrap(), txg)
+                    }).collect::<FuturesUnordered<_>>();
+                drop(guard);
+                forest_futs.try_collect::<Vec<_>>().await?;
+                inner2.forest.flush(txg).await?;
+                inner2.idml.clone().flush(Some(0), txg).await?;
+                inner2.idml.sync_all(txg).await?;
+                let forest = inner2.forest.serialize();
+                let label = Label {forest};
+                inner2.write_label(&label, 0, txg).await?;
+                inner2.idml.clone().flush(Some(1), txg).await?;
+                // The only time we need to read the second label is if we lose
+                // power while writing the first.  The fact that we reached this
+                // point means that that won't happen, at least not until the
+                // _next_ transaction sync.  So we don't need an additional
+                // sync_all between inner2.idml.clone().flush(1, ...) and
+                // inner2.idml.sync_all(...).
+                inner2.idml.sync_all(txg).await?;
+                inner2.write_label(&label, 1, txg).await?;
+                inner2.idml.sync_all(txg).await
+            })
         }
-        let inner2 = inner.clone();
-        let fut = inner.idml.advance_transaction(move |txg| async move {
-            let guard = inner2.fs_trees.read().await;
-            guard.iter()
-                .map(move |(_, itree)| {
-                    itree.clone().flush(txg)
-                }).collect::<FuturesUnordered<_>>()
-                .try_collect::<Vec<_>>().await?;
-            // TODO: only write out the dirty trees
-            let forest_futs = guard.iter()
-                .map(|(tree_id, itree)| {
-                    inner2.forest
-                        .update_tree(*tree_id, itree.serialize().unwrap(), txg)
-                }).collect::<FuturesUnordered<_>>();
-            drop(guard);
-            forest_futs.try_collect::<Vec<_>>().await?;
-            inner2.forest.flush(txg).await?;
-            inner2.idml.clone().flush(Some(0), txg).await?;
-            inner2.idml.sync_all(txg).await?;
-            let forest = inner2.forest.serialize();
-            let label = Label {forest};
-            inner2.write_label(&label, 0, txg).await?;
-            inner2.idml.clone().flush(Some(1), txg).await?;
-            // The only time we need to read the second label is if we lose
-            // power while writing the first.  The fact that we reached this
-            // point means that that won't happen, at least not until the
-            // _next_ transaction sync.  So we don't need an additional
-            // sync_all between inner2.idml.clone().flush(1, ...) and
-            // inner2.idml.sync_all(...).
-            inner2.idml.sync_all(txg).await?;
-            inner2.write_label(&label, 1, txg).await?;
-            inner2.idml.sync_all(txg).await
-        });
-        fut.boxed()
     }
 
     /// Perform a read-write operation on a Filesystem

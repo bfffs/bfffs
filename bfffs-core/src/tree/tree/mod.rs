@@ -10,6 +10,7 @@ use crate::{
     util::*,
     writeback::Credit
 };
+use auto_enums::auto_enum;
 use futures::{
     Future,
     FutureExt,
@@ -1306,14 +1307,14 @@ impl<A, D, K, V> Tree<A, D, K, V>
             parent.as_int_mut().children[child_idx].txgs = old_txgs;
             parent.as_int_mut().children.insert(child_idx + 1, new_elem);
             // Reinsert into the parent, which will choose the correct child
-            Box::pin(Tree::insert_int_no_split(self, parent, k, v, txg, credit))
+            Tree::insert_int_no_split(self, parent, k, v, txg, credit).boxed()
         } else if child.is_leaf() {
             let elem = &mut parent.as_int_mut().children[child_idx];
-            Box::pin(Tree::<A, D, K, V>::insert_leaf_no_split(elem,
-                child, k, v, txg, self.dml.clone(), credit))
+            Tree::<A, D, K, V>::insert_leaf_no_split(elem,
+                child, k, v, txg, self.dml.clone(), credit).boxed()
         } else {
             drop(parent);
-            Box::pin(Tree::insert_int_no_split(self, child, k, v, txg, credit))
+            Tree::insert_int_no_split(self, child, k, v, txg, credit).boxed()
         }
     }
 
@@ -2256,24 +2257,25 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Lock the root `IntElem` exclusively.  If it is not already resident in
     /// memory, then COW it.
+    #[auto_enum(Future)]
     fn xlock_root(
         dml: &Arc<D>,
         mut guard: RwLockWriteGuard<TreeRoot<A, K, V>>,
         txg: TxgT,
         mut credit: Credit
-    ) -> Pin<Box<dyn Future<
+    ) -> impl Future<
             Output=Result<(
                 RwLockWriteGuard<TreeRoot<A, K, V>>,
                 TreeWriteGuard<A, K, V>,
                 Credit)>
-        > + Send>>
+        > + Send
     {
         guard.elem.txgs.end = txg + 1;
         if guard.elem.ptr.is_mem() {
             async move {
                 let child_guard = guard.elem.ptr.as_mem().0.write().await;
                 Ok((guard, TreeWriteGuard(child_guard), credit))
-            }.boxed()
+            }
         } else {
             let addr = *guard.elem.ptr.as_addr();
             let afut = dml.pop::<Arc<Node<A, K, V>>, Arc<Node<A, K, V>>>(
@@ -2293,7 +2295,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                     guard.elem.ptr.as_mem().0.try_write().unwrap()
                 );
                 Ok((guard, child_guard, credit))
-            }.boxed()
+            }
         }
     }
 }

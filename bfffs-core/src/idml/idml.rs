@@ -64,9 +64,9 @@ pub struct IDML {
 #[cfg_attr(test, allow(unused))]
 impl<'a> IDML {
     pub fn borrow_credit(&self, size: usize)
-        -> Pin<Box<dyn Future<Output=Credit> + Send>>
+        -> impl Future<Output=Credit> + Send
     {
-        self.writeback.borrow(size).boxed()
+        self.writeback.borrow(size)
     }
 
     /// Get the maximum size of bytes in the cache

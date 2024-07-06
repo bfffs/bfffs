@@ -57,10 +57,11 @@ pub enum Label {
 }
 
 impl<'a> Label {
-    pub fn iter_children(&'a self) -> Box<dyn Iterator<Item=&Uuid> + 'a> {
+    #[auto_enums::auto_enum(Iterator)]
+    pub fn iter_children(&'a self) -> impl Iterator<Item=&Uuid> + 'a {
         match self {
-            Label::Raid(l) => Box::new(l.children.iter()),
-            Label::NullRaid(l) => Box::new(once(&l.child)),
+            Label::Raid(l) => l.children.iter(),
+            Label::NullRaid(l) => once(&l.child),
         }
     }
 
@@ -95,36 +96,38 @@ pub struct Manager {
 impl Manager {
     /// Import a RAID device that is already known to exist
     #[cfg(not(test))]
+    #[auto_enums::auto_enum(Future)]
     pub fn import(&mut self, uuid: Uuid)
         -> impl Future<Output=Result<(RaidImpl, LabelReader)>>
     {
-        let rl = match self.raids.remove(&uuid) {
-            Some(rl) => rl,
-            None => return future::err(Error::ENOENT).boxed()
-        };
-        rl.iter_children()
-            .map(move |child_uuid| self.mm.import(*child_uuid))
-            .collect::<FuturesUnordered<_>>()
-            // Could use Iterator::try_collect if it stabilizes.
-            // https://github.com/rust-lang/rust/issues/94047
-            .collect::<Vec<_>>()
-            .map(move |v| {
-                let mut pairs = Vec::with_capacity(rl.nchildren());
-                let mut error = Error::ENOENT;
-                for r in v.into_iter() {
-                    match r {
-                        Ok(pair) => pairs.push(pair),
-                        Err(e) => {
-                            error = e;
+        match self.raids.remove(&uuid) {
+            None => future::err(Error::ENOENT),
+            Some(rl) => {
+                rl.iter_children()
+                    .map(move |child_uuid| self.mm.import(*child_uuid))
+                    .collect::<FuturesUnordered<_>>()
+                    // Could use Iterator::try_collect if it stabilizes.
+                    // https://github.com/rust-lang/rust/issues/94047
+                    .collect::<Vec<_>>()
+                    .map(move |v| {
+                        let mut pairs = Vec::with_capacity(rl.nchildren());
+                        let mut error = Error::ENOENT;
+                        for r in v.into_iter() {
+                            match r {
+                                Ok(pair) => pairs.push(pair),
+                                Err(e) => {
+                                    error = e;
+                                }
+                            }
+                        };
+                        if pairs.is_empty() {
+                            Err(error)
+                        } else {
+                            Ok(open(Some(uuid), pairs))
                         }
-                    }
-                };
-                if pairs.is_empty() {
-                    Err(error)
-                } else {
-                    Ok(open(Some(uuid), pairs))
-                }
-            }).boxed()
+                    })
+            }
+        }
     }
 
     /// Taste the device identified by `p` for a BFFFS label.
