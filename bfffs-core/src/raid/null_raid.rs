@@ -3,7 +3,6 @@
 use std::{
     collections::BTreeMap,
     pin::Pin,
-    sync::Arc
 };
 
 use async_trait::async_trait;
@@ -123,7 +122,7 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.open_zone(limits.0))
     }
 
-    fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
         Box::pin(self.mirror.read_at(buf, lba))
     }
 

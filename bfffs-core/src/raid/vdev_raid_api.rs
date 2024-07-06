@@ -1,8 +1,5 @@
 // vim: tw=80
-use std::{
-    pin::Pin,
-    sync::Arc
-};
+use std::pin::Pin;
 
 use async_trait::async_trait;
 use divbuf::DivBufShared;
@@ -56,9 +53,7 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// immediately return EINTEGRITY, under the assumption that this method
     /// should only be called after a normal read already returned such an
     /// error.
-    // We can't use &Arc<Self> because that isn't object-safe.  But we could use
-    // it if we eliminate this trait and just use an enum instead.
-    fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
 
     /// Read an LBA range including all parity.  Return an iterator that will
     /// yield every possible reconstruction of the data.

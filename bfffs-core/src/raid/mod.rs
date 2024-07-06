@@ -229,7 +229,7 @@ mock!{
         fn fault(&mut self, uuid: Uuid) -> Result<()>;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         fn read_long(&self, len: LbaT, lba: LbaT)
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
