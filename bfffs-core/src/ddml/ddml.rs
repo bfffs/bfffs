@@ -6,9 +6,11 @@ use crate::{
     pool::ClosedZone,
     types::*,
     util::*,
-    vdev::*,
     writeback::Credit
 };
+#[cfg(test)]
+use crate::vdev::BoxVdevFut;
+
 use divbuf::DivBufShared;
 use futures::{Future, FutureExt, TryFutureExt, future};
 use futures_locks::{RwLock, RwLockReadGuard};
@@ -92,13 +94,13 @@ impl DDML {
     }
 
     /// Free a record's storage, ignoring the Cache
-    pub fn delete_direct(&self, drp: &DRP, _txg: TxgT) -> BoxVdevFut
+    pub fn delete_direct(&self, drp: &DRP, _txg: TxgT)
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         let pba = drp.pba;
         let asize = drp.asize();
-        let fut = self.pool.read()
-            .then(move |pool| pool.free(pba, asize));
-        Box::pin(fut)
+        self.pool.read()
+            .then(move |pool| pool.free(pba, asize))
     }
 
     pub async fn dump_fsm(&self) -> Vec<String> {
@@ -110,10 +112,11 @@ impl DDML {
         self.pool.write().await.fault(uuid).await
     }
 
-    pub fn flush(&self, idx: u32) -> BoxVdevFut {
-        let fut = self.pool.read()
-            .then(move |pool| pool.flush(idx));
-        Box::pin(fut)
+    pub fn flush(&self, idx: u32)
+        -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        self.pool.read()
+            .then(move |pool| pool.flush(idx))
     }
 
     pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
@@ -124,13 +127,12 @@ impl DDML {
     /// Get directly from disk, bypassing cache
     #[instrument(skip(self, drp))]
     pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
-        -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>
+        -> impl Future<Output=Result<Box<T>>> + Send
     {
         let drp = *drp;
         self.pool.read()
         .then(move |pg| Self::read(pg, drp))
         .map_ok(move |(_, dbs)| Box::new(T::deserialize(dbs)))
-        .boxed()
     }
 
     /// List all closed zones in the `DDML` in no particular order

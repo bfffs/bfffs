@@ -798,8 +798,7 @@ impl Cluster {
         nearly_full_zones.iter().map(|&zone_id| {
             let blocks = wg.finish_zone(zone_id, txg);
             self.allocated_space.fetch_add(blocks, Ordering::Relaxed);
-            let fut = self.vdev.finish_zone(zone_id);
-            Box::pin(fut) as BoxVdevFut
+            self.vdev.finish_zone(zone_id)
         }).collect::<FuturesUnordered<BoxVdevFut>>()
     }
 
@@ -843,7 +842,8 @@ impl Cluster {
     /// Flush all data and metadata to disk, but don't sync yet.  This should
     /// normally be called just before [`sync_all`](#method.sync_all).  `idx` is
     /// the index of the label that is about to be written.
-    pub fn flush(&self, idx: u32) -> BoxVdevFut
+    pub fn flush(&self, idx: u32)
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         let mut fsm = self.fsm.write().unwrap();
         let zone_ids = fsm.open_zone_ids().cloned().collect::<Vec<_>>();
@@ -876,7 +876,7 @@ impl Cluster {
         .map_ok(drop);
         fsm.clear_dirty_zones();
         drop(fsm);
-        Box::pin(fut)
+        fut
     }
 
     /// Erase all zones that are no longer needed.

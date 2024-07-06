@@ -13,3 +13,4 @@ resolver = "2"
 [patch.crates-io]
 atomic_enum = { git = "https://github.com/brain0/atomic_enum.git", rev = "baea45a" }
 fuse3 = { git = "https://github.com/Sherlock-Holo/fuse3.git", rev = "bf4a341"}
+mockall = { git = "https://github.com/asomers/mockall.git", rev = "803873a" }

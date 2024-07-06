@@ -49,11 +49,11 @@ mod htable {
         fs_tree::{FSKey, FSValue, HTItem, HTValue},
         types::*
     };
+    use auto_enums::auto_enum;
     use futures::{Future, FutureExt, TryFutureExt, future};
     use std::{
         ffi::OsString,
         mem,
-        pin::Pin
     };
     use super::{ReadOnlyFilesystem, ReadWriteFilesystem};
 
@@ -71,12 +71,13 @@ mod htable {
     }
 
     impl ReadFilesystem<'_> {
+        #[auto_enum(Future)]
         fn get(&self, k: FSKey)
-            -> Pin<Box<dyn Future<Output=Result<Option<FSValue>>> + Send>>
+            -> impl Future<Output=Result<Option<FSValue>>> + Send
         {
             match self {
-                ReadFilesystem::ReadOnly(ds) => Box::pin(ds.get(k)),
-                ReadFilesystem::ReadWrite(ds) => Box::pin(ds.get(k))
+                ReadFilesystem::ReadOnly(ds) => ds.get(k),
+                ReadFilesystem::ReadWrite(ds) => ds.get(k)
             }
         }
     }

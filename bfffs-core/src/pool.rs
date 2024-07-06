@@ -251,10 +251,11 @@ impl Pool {
     // Before deleting the underlying storage, BFFFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&self, pba: PBA, length: LbaT) -> BoxVdevFut
+    pub fn free(&self, pba: PBA, length: LbaT)
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         self.stats.used_space.fetch_sub(length, Ordering::Relaxed);
-        Box::pin(self.clusters[pba.cluster as usize].free(pba.lba, length))
+        self.clusters[pba.cluster as usize].free(pba.lba, length)
     }
 
     /// Construct a new `Pool` from some already constructed
@@ -378,17 +379,17 @@ impl Pool {
     }
 
     /// Asynchronously read from the pool
-    pub fn read(&self, buf: IoVecMut, pba: PBA) -> BoxVdevFut
+    pub fn read(&self, buf: IoVecMut, pba: PBA)
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         let cidx = pba.cluster as usize;
         self.stats.queue_depth[cidx].fetch_add(1, Ordering::Relaxed);
         let stats2 = self.stats.clone();
-        let fut = self.clusters[pba.cluster as usize].read(buf, pba.lba)
+        self.clusters[pba.cluster as usize].read(buf, pba.lba)
             .map(move |r| {
                 stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
                 r
-            });
-        Box::pin(fut)
+            })
     }
 
     /// Asynchronously read a contiguous portion of the pool.
@@ -435,13 +436,14 @@ impl Pool {
 
     /// Sync the `Pool`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> BoxVdevFut {
-        let fut = self.clusters.iter()
+    pub fn sync_all(&self)
+        -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        self.clusters.iter()
         .map(Cluster::sync_all)
         .collect::<FuturesUnordered<BoxVdevFut>>()
         .try_collect::<Vec<()>>()
-        .map_ok(drop);
-        Box::pin(fut)
+        .map_ok(drop)
     }
 
     /// How many blocks have been allocated and are still in used?
@@ -477,7 +479,8 @@ impl Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&self, mut labeller: LabelWriter)
+        -> impl Future<Output=Result<()>> + Send + Sync
     {
         let cluster_uuids = self.clusters.iter().map(Cluster::uuid)
             .collect::<Vec<_>>();
@@ -487,12 +490,11 @@ impl Pool {
             children: cluster_uuids,
         };
         labeller.serialize(&label).unwrap();
-        let fut = self.clusters.iter()
+        self.clusters.iter()
         .map(|cluster| cluster.write_label(labeller.clone()))
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
-        .map_ok(drop);
-        Box::pin(fut)
+        .map_ok(drop)
     }
 }
 
