@@ -1,8 +1,5 @@
 // vim: tw=80
-use std::pin::Pin;
-
 use async_trait::async_trait;
-use divbuf::DivBufShared;
 use futures::Future;
 
 use crate::{
@@ -15,6 +12,7 @@ use crate::{
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.
 #[async_trait]
+#[enum_dispatch::enum_dispatch]
 pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Asynchronously erase a zone on a RAID device
     ///
@@ -58,7 +56,7 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Read an LBA range including all parity.  Return an iterator that will
     /// yield every possible reconstruction of the data.
     fn read_long(&self, len: LbaT, lba: LbaT)
-        -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
+        -> std::pin::Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=divbuf::DivBufShared> + Send>>> + Send>>;
 
     /// Read one of the spacemaps from disk.
     ///
