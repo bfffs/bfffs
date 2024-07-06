@@ -182,10 +182,10 @@ impl StripeBuffer {
 
 /// A child of a VdevRaid.  Probably either a Mirror or a missing disk.
 enum Child {
-    Present(Arc<Mirror>),
+    Present(Mirror),
     Missing(Uuid),
     /// Administratively faulted
-    Faulted(Arc<Mirror>)
+    Faulted(Mirror)
 }
 
 cfg_if! {
@@ -198,18 +198,18 @@ cfg_if! {
 
 impl Child {
     fn faulted(vdev: Mirror) -> Self {
-        Child::Faulted(Arc::new(vdev))
+        Child::Faulted(vdev)
     }
 
     fn present(vdev: Mirror) -> Self {
-        Child::Present(Arc::new(vdev))
+        Child::Present(vdev)
     }
 
     fn missing(uuid: Uuid) -> Self {
         Child::Missing(uuid)
     }
 
-    fn as_present(&self) -> Option<&Arc<Mirror>> {
+    fn as_present(&self) -> Option<&Mirror> {
         if let Child::Present(vb) = self {
             Some(vb)
         } else {
@@ -217,7 +217,7 @@ impl Child {
         }
     }
 
-    fn as_present_mut(&mut self) -> Option<&mut Arc<Mirror>> {
+    fn as_present_mut(&mut self) -> Option<&mut Mirror> {
         if let Child::Present(vb) = self {
             Some(vb)
         } else {
@@ -356,11 +356,9 @@ pub struct Label {
 /// Future type of [`VdevRaid::read_spacemap`]
 #[pin_project]
 pub struct ReadSpacemap {
-    children: Vec<Arc<Mirror>>,
-    /// Reads already issued so far
-    issued: usize,
-    /// Index of the first child read from
-    initial_idx: usize,
+    inner: Arc<Inner>,
+    /// Index of the next child read from
+    next: usize,
     dbi: DivBufInaccessible,
     /// Spacemap index to read
     smidx: u32,
@@ -385,7 +383,7 @@ impl Future for ReadSpacemap {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(Ok(())) => return Poll::Ready(Ok(())),
                 Poll::Ready(Err(e)) => {
-                    if pinned.children.is_empty() {
+                    if *pinned.next >= pinned.inner.children.len() {
                         // Out of children.  Fail the Read.
                         return Poll::Ready(Err(e));
                     }
@@ -393,7 +391,8 @@ impl Future for ReadSpacemap {
             }
             // Try a different child.
             let buf = pinned.dbi.try_mut().unwrap();
-            let child = pinned.children.pop().unwrap();
+            let child = &pinned.inner.children[*pinned.next];
+            *pinned.next += 1;
             let new_fut = child.read_spacemap(buf, *pinned.smidx);
             pinned.fut.replace(new_fut);
         }
@@ -1969,8 +1968,6 @@ impl VdevRaidApi for VdevRaid {
 
     /// Mark a child device as faulted.
     fn fault(&mut self, uuid: Uuid) -> Result<()> {
-        let mut err = Error::ENOENT;
-
         if uuid == self.uuid {
             return Err(Error::EINVAL);
         }
@@ -1985,25 +1982,21 @@ impl VdevRaidApi for VdevRaid {
                 self.faulted_children += child.fault();
                 return Ok(());
             } else if let Some(mirror) = child.as_present_mut() {
-                if let Some(m) = Arc::get_mut(mirror) {
-                    match m.fault(uuid) {
-                        Ok(()) => {
-                            let status = m.status();
-                            if status.health.is_faulted() {
-                                self.faulted_children += child.fault();
-                            }
-                            return Ok(());
+                match mirror.fault(uuid) {
+                    Ok(()) => {
+                        let status = mirror.status();
+                        if status.health.is_faulted() {
+                            self.faulted_children += child.fault();
                         }
-                        Err(Error::ENOENT) => continue,
-                        Err(e) => panic!("Unexpected error from Mirror::fault: {:?}", e),
+                        return Ok(());
                     }
-                } else {
-                    err = Error::EAGAIN;
+                    Err(Error::ENOENT) => continue,
+                    Err(e) => panic!("Unexpected error from Mirror::fault: {:?}", e),
                 }
             }
         }
 
-        Err(err)
+        Err(Error::ENOENT)
     }
 
     // Zero-fill the current StripeBuffer and write it out.  Then drop the
@@ -2162,18 +2155,12 @@ impl VdevRaidApi for VdevRaid {
     fn read_spacemap(&self, buf: IoVecMut, smidx: u32) -> BoxVdevFut
     {
         let dbi = buf.clone_inaccessible();
-        let fut = self.inner.children.last().map(|child| child.read_spacemap(buf, smidx));
-        // TODO: clone the Inner instead of cloning the children
-        let children = self.inner.children[0 .. self.inner.children.len() - 1].iter()
-            .filter_map(|child| {
-                child.as_present().cloned()
-            })
-            .collect::<Vec<_>>();
+        let inner = self.inner.clone();
+        let fut = inner.children.first().map(|child| child.read_spacemap(buf, smidx));
 
         Box::pin(ReadSpacemap {
-            children,
-            issued: 1,
-            initial_idx: 0,
+            inner,
+            next: 1,
             dbi,
             smidx,
             fut
