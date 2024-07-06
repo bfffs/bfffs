@@ -1101,7 +1101,7 @@ mod fault {
                                       mirrors.into_boxed_slice());
         assert_eq!(1, vdev_raid.faulted_children());
         vdev_raid.fault(m0_uuid).unwrap();
-        assert!(matches!(vdev_raid.children[0], Child::Faulted(_)));
+        assert!(matches!(vdev_raid.inner.children[0], Child::Faulted(_)));
         assert_eq!(1, vdev_raid.faulted_children());
     }
 
@@ -1127,7 +1127,7 @@ mod fault {
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
         vdev_raid.fault(m0_uuid).unwrap();
-        assert!(matches!(vdev_raid.children[0], Child::Faulted(_)));
+        assert!(matches!(vdev_raid.inner.children[0], Child::Faulted(_)));
         assert_eq!(1, vdev_raid.faulted_children());
     }
 }

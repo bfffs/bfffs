@@ -9,6 +9,9 @@ use serde_derive::{Deserialize, Serialize};
 use futures::Future;
 use crate::types::*;
 
+// This looks like a layering violation, but it's required for enum_dispatch.
+use crate::raid::RaidImpl;
+
 /// The reason why a vdev is faulted.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
 pub enum FaultedReason {
@@ -87,6 +90,7 @@ pub type BoxVdevFut = Pin<Box<dyn Future<Output = Result<()>> + Send + Sync>>;
 /// The main datapath interface to any `Vdev` is `read_at` and `write_at`.
 /// However, those methods are not technically part of the trait, because they
 /// have different return values at different levels.
+#[enum_dispatch::enum_dispatch]
 pub trait Vdev {
     /// Return the zone number at which the given LBA resides
     ///

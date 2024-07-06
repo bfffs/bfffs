@@ -29,7 +29,6 @@ use std::{
     iter::once,
     num::NonZeroU64,
     path::Path,
-    sync::Arc
 };
 #[cfg(test)]
 use std::pin::Pin;
@@ -97,7 +96,7 @@ impl Manager {
     /// Import a RAID device that is already known to exist
     #[cfg(not(test))]
     pub fn import(&mut self, uuid: Uuid)
-        -> impl Future<Output=Result<(Arc<dyn VdevRaidApi>, LabelReader)>>
+        -> impl Future<Output=Result<(RaidImpl, LabelReader)>>
     {
         let rl = match self.raids.remove(&uuid) {
             Some(rl) => rl,
@@ -140,6 +139,15 @@ impl Manager {
     }
 }
 
+#[enum_dispatch::enum_dispatch(Vdev)]
+#[enum_dispatch::enum_dispatch(VdevRaidApi)]
+pub enum RaidImpl {
+    Null(NullRaid),
+    Raid(VdevRaid),
+    #[cfg(test)]
+    Mock(MockVdevRaid),
+}
+
 /// Return value of [`VdevRaidApi::status`]
 #[derive(Clone, Debug)]
 pub struct Status {
@@ -164,15 +172,15 @@ pub struct Status {
 ///                         inoperable.
 /// * `mirrors`:            Already labeled Mirror devices
 pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
-    redundancy: i16, mut mirrors: Vec<Mirror>) -> Arc<dyn VdevRaidApi>
+    redundancy: i16, mut mirrors: Vec<Mirror>) -> RaidImpl
 {
     if mirrors.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Arc::new(NullRaid::create(mirrors.pop().unwrap()))
+        NullRaid::create(mirrors.pop().unwrap()).into()
     } else {
-        Arc::new(VdevRaid::create(chunksize, disks_per_stripe, redundancy,
-                                  mirrors))
+        VdevRaid::create(chunksize, disks_per_stripe, redundancy, mirrors)
+            .into()
     }
 }
 
@@ -186,7 +194,7 @@ pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
 fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
-    -> (Arc<dyn VdevRaidApi>, LabelReader)
+    -> (RaidImpl, LabelReader)
 {
     let mut label_pair = None;
     let all_mirrors = combined.into_iter()
@@ -202,12 +210,8 @@ fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
     }).collect::<BTreeMap<Uuid, Mirror>>();
     let (label, label_reader) = label_pair.unwrap();
     let vdev = match label {
-        Label::Raid(l) => {
-            Arc::new(VdevRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
-        },
-        Label::NullRaid(l) => {
-            Arc::new(NullRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
-        },
+        Label::Raid(l) => VdevRaid::open(l, all_mirrors).into(),
+        Label::NullRaid(l) => NullRaid::open(l, all_mirrors).into(),
     };
     (vdev, label_reader)
 }
@@ -229,7 +233,7 @@ mock!{
         fn fault(&mut self, uuid: Uuid) -> Result<()>;
         fn flush_zone(&self, zone: ZoneT) -> (LbaT, BoxVdevFut);
         fn open_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn read_at(self: Arc<Self>, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
+        fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut;
         fn read_long(&self, len: LbaT, lba: LbaT)
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;

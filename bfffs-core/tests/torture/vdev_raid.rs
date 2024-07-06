@@ -7,7 +7,6 @@ use std::{
     mem,
     num::NonZeroU64,
     path::PathBuf,
-    sync::Arc
 };
 
 use std::os::unix::fs::FileExt;
@@ -27,11 +26,12 @@ use bfffs_core::{
     LbaT,
     label::LabelWriter,
     mirror::Mirror,
-    raid::{self, Manager, VdevRaidApi},
+    raid::{self, Manager, RaidImpl, VdevRaidApi},
+    vdev::Vdev,
 };
 
 struct Harness {
-    vdev: Arc<dyn VdevRaidApi>,
+    vdev: RaidImpl,
     _tempdir: TempDir,
     paths: Vec<PathBuf>,
     k: i16,
@@ -74,7 +74,7 @@ fn mkbuf(offs: LbaT, len: usize) -> Vec<u8> {
 }
 
 async fn do_test(
-    vdev: Arc<dyn VdevRaidApi>,
+    vdev: RaidImpl,
     chunksize: LbaT,
     k: i16,
     f: i16,
@@ -136,7 +136,7 @@ async fn do_test(
         let dbs = DivBufShared::from(vec![0; read_bytes]);
         let rbuf = dbs.try_mut().unwrap();
         assert!(ofs + read_lbas < zl.1, "This test is not yet zone-aware");
-        vdev.clone().read_at(rbuf, ofs).await.unwrap();
+        vdev.read_at(rbuf, ofs).await.unwrap();
         assert_bufeq!(&dbs.try_const().unwrap()[..], &expect_buf[..]);
         nread += read_bytes;
         ofs += read_lbas;

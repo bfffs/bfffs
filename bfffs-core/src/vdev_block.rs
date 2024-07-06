@@ -1042,10 +1042,10 @@ impl VdevBlock {
 
     /// Asynchronously sync the underlying device, ensuring that all data
     /// reaches stable storage
-    pub fn sync_all(&self) -> BoxVdevFut {
+    pub fn sync_all(&self) -> VdevBlockFut {
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::sync_all(sender);
-        Box::pin(self.new_fut(block_op, receiver))
+        self.new_fut(block_op, receiver)
     }
 
     pub fn uuid(&self) -> Uuid {
