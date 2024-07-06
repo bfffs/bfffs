@@ -223,7 +223,7 @@ impl Child {
         self.as_present().map(|vb| vb.size())
     }
 
-    fn sync_all(&self) -> Option<BoxVdevFut> {
+    fn sync_all(&self) -> Option<VdevBlockFut> {
         self.as_present().map(|vb| vb.sync_all())
     }
 
