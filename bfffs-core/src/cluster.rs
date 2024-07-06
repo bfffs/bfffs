@@ -31,7 +31,6 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
         RwLock,
         RwLockWriteGuard
     },
@@ -218,9 +217,9 @@ impl<'a> FreeSpaceMap {
         self.dirty.clear();
     }
 
-    fn deserialize(vdev: Arc<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
+    fn deserialize(vdev: Box<dyn VdevRaidApi>, buf: DivBuf, zones: ZoneT)
         -> Pin<Box<
-                dyn Future<Output=Result<(Self, Arc<dyn VdevRaidApi>)>>
+                dyn Future<Output=Result<(Self, Box<dyn VdevRaidApi>)>>
                 + Send
             >>
     {
@@ -475,8 +474,8 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Open a FreeSpaceMap from an already-formatted `VdevRaid`.
-    async fn open(vdev: Arc<dyn VdevRaidApi>)
-        -> Result<(Self, Arc<dyn VdevRaidApi + 'static>)>
+    async fn open(vdev: Box<dyn VdevRaidApi>)
+        -> Result<(Self, Box<dyn VdevRaidApi + 'static>)>
     {
         let total_zones = vdev.zones();
         // NB: it would be slightly faster to created it with the correct
@@ -773,9 +772,7 @@ pub struct Cluster {
     fsm: RwLock<FreeSpaceMap>,
 
     /// Underlying vdev (which may or may not use RAID)
-    // The Arc is necessary in order for some methods to return futures with
-    // 'static lifetimes
-    vdev: Arc<dyn VdevRaidApi>
+    vdev: Box<dyn VdevRaidApi>
 }
 
 #[cfg_attr(test, automock)]
@@ -813,7 +810,7 @@ impl Cluster {
     /// Create a new `Cluster` from unused files or devices
     ///
     /// * `raids`:              Already labeled raid vdev
-    pub fn create(vdev: Arc<dyn VdevRaidApi>) -> Self
+    pub fn create(vdev: Box<dyn VdevRaidApi>) -> Self
     {
         let total_zones = vdev.zones();
         let fsm = FreeSpaceMap::new(total_zones);
@@ -835,10 +832,7 @@ impl Cluster {
 
     /// Mark a child device as faulted.
     pub fn fault(&mut self, uuid: Uuid) -> Result<()> {
-        match Arc::get_mut(&mut self.vdev) {
-            Some(vdev) => vdev.fault(uuid),
-            None => Err(Error::EAGAIN)
-        }
+        self.vdev.fault(uuid)
     }
 
     /// Find the first closed zone whose index is greater than or equal to `zid`
@@ -931,7 +925,7 @@ impl Cluster {
 
     /// Construct a new `Cluster` from an already constructed
     /// [`VdevRaidApi`](trait.VdevRaidApi.html)
-    fn new(args: (FreeSpaceMap, Arc<dyn VdevRaidApi>)) -> Self {
+    fn new(args: (FreeSpaceMap, Box<dyn VdevRaidApi>)) -> Self {
         let (fsm, vdev) = args;
         let allocated_space = fsm.allocated_total().into();
         Cluster{allocated_space, fsm: RwLock::new(fsm), vdev}
@@ -942,7 +936,7 @@ impl Cluster {
     ///
     /// Returns a new `Cluster` and a `LabelReader` that may be used to
     /// construct other vdevs stacked on top.
-    pub async fn open(vdev_raid: Arc<dyn VdevRaidApi>) -> Result<Self>
+    pub async fn open(vdev_raid: Box<dyn VdevRaidApi>) -> Result<Self>
     {
         FreeSpaceMap::open(vdev_raid).await
             .map(Cluster::new)
@@ -959,7 +953,7 @@ impl Cluster {
     /// Asynchronously read from the cluster
     pub fn read(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut
     {
-        self.vdev.clone().read_at(buf, lba)
+        self.vdev.read_at(buf, lba)
     }
 
     /// Asynchronously read a contiguous portion of the cluster.
@@ -1114,7 +1108,10 @@ mod cluster {
     use itertools::Itertools;
     use mockall::{Sequence, predicate::*};
     use pretty_assertions::assert_eq;
-    use std::iter;
+    use std::{
+        iter,
+        sync::Arc
+    };
 
     #[tokio::test]
     async fn free_and_erase_full_zone() {
@@ -1156,7 +1153,7 @@ mod cluster {
             .return_once(|_| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1216,7 +1213,7 @@ mod cluster {
             .return_once(|_| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1278,7 +1275,7 @@ mod cluster {
             .return_once(|_, _, _| Box::pin(future::ok(())));
 
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs0 = DivBufShared::from(vec![0u8; 4096]);
         let dbs1 = DivBufShared::from(vec![0u8; 8192]);
@@ -1320,7 +1317,7 @@ mod cluster {
             .with(eq(0))
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         drop(cluster.free(900, 200));
     }
 
@@ -1337,7 +1334,7 @@ mod cluster {
             .with(eq(0))
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         drop(cluster.free(1000, 10));
     }
 
@@ -1409,7 +1406,7 @@ mod cluster {
         vr.expect_zone_limits()
             .with(eq(5))
             .return_const((504, 596));
-        let (fsm, _mock_vr) = FreeSpaceMap::open(Arc::new(vr))
+        let (fsm, _mock_vr) = FreeSpaceMap::open(Box::new(vr))
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -1473,7 +1470,7 @@ mod cluster {
                  (100 * i + 4, 100 * i + 96)
              });
 
-        let (fsm, _mock_vr) = FreeSpaceMap::open(Arc::new(vr))
+        let (fsm, _mock_vr) = FreeSpaceMap::open(Box::new(vr))
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -1509,7 +1506,7 @@ mod cluster {
                 Box::pin(future::ok(()))
             });
 
-        let r = FreeSpaceMap::open(Arc::new(vr)).now_or_never().unwrap();
+        let r = FreeSpaceMap::open(Box::new(vr)).now_or_never().unwrap();
         assert_eq!(Error::EINTEGRITY, r.err().unwrap());
     }
 
@@ -1536,7 +1533,7 @@ mod cluster {
         fsm.finish_zone(3, TxgT::from(3));
         fsm.open_zone(4, 4, 5, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         assert_eq!(cluster.find_closed_zone(0).unwrap(),
             ClosedZone{zid: 0, start: 0, freed_blocks: 1, total_blocks: 1,
                        txgs: TxgT::from(0)..TxgT::from(1)});
@@ -1571,7 +1568,7 @@ mod cluster {
             ).once()
             .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1621,7 +1618,7 @@ mod cluster {
             .in_sequence(&mut seq)
             .return_once(|| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
         cluster.fsm.write().unwrap().clear_dirty_zones();
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
@@ -1648,7 +1645,7 @@ mod cluster {
             .with(eq(0))
             .return_const((0, 1));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
@@ -1676,7 +1673,7 @@ mod cluster {
                 *zone == 0
             ).returning(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Arc::new(Cluster::new((fsm, Arc::new(vr))));
+        let cluster = Arc::new(Cluster::new((fsm, Box::new(vr))));
 
         let buf = vec![0u8; BYTES_PER_LBA];
         (0..16).map(|_| {
@@ -1701,7 +1698,7 @@ mod cluster {
             .with(eq(0))
             .return_const((0, 0));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let result = cluster.write(dbs.try_const().unwrap(), TxgT::from(0));
@@ -1729,7 +1726,7 @@ mod cluster {
             ).once()
             .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1767,7 +1764,7 @@ mod cluster {
             ).once()
             .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 4096]);
         let db0 = dbs.try_const().unwrap();
@@ -1824,7 +1821,7 @@ mod cluster {
             ).once()
             .return_once(|_, _, _| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
-        let cluster = Cluster::new((fsm, Arc::new(vr)));
+        let cluster = Cluster::new((fsm, Box::new(vr)));
 
         let dbs = DivBufShared::from(vec![0u8; 8192]);
         let db0 = dbs.try_const().unwrap();

@@ -29,7 +29,6 @@ use std::{
     iter::once,
     num::NonZeroU64,
     path::Path,
-    sync::Arc
 };
 #[cfg(test)]
 use std::pin::Pin;
@@ -97,7 +96,7 @@ impl Manager {
     /// Import a RAID device that is already known to exist
     #[cfg(not(test))]
     pub fn import(&mut self, uuid: Uuid)
-        -> impl Future<Output=Result<(Arc<dyn VdevRaidApi>, LabelReader)>>
+        -> impl Future<Output=Result<(Box<dyn VdevRaidApi>, LabelReader)>>
     {
         let rl = match self.raids.remove(&uuid) {
             Some(rl) => rl,
@@ -164,14 +163,14 @@ pub struct Status {
 ///                         inoperable.
 /// * `mirrors`:            Already labeled Mirror devices
 pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
-    redundancy: i16, mut mirrors: Vec<Mirror>) -> Arc<dyn VdevRaidApi>
+    redundancy: i16, mut mirrors: Vec<Mirror>) -> Box<dyn VdevRaidApi>
 {
     if mirrors.len() == 1 {
         assert_eq!(disks_per_stripe, 1);
         assert_eq!(redundancy, 0);
-        Arc::new(NullRaid::create(mirrors.pop().unwrap()))
+        Box::new(NullRaid::create(mirrors.pop().unwrap()))
     } else {
-        Arc::new(VdevRaid::create(chunksize, disks_per_stripe, redundancy,
+        Box::new(VdevRaid::create(chunksize, disks_per_stripe, redundancy,
                                   mirrors))
     }
 }
@@ -186,7 +185,7 @@ pub fn create(chunksize: Option<NonZeroU64>, disks_per_stripe: i16,
 ///                 associated `LabelReader`.  The labels of each will be
 ///                 verified.
 fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
-    -> (Arc<dyn VdevRaidApi>, LabelReader)
+    -> (Box<dyn VdevRaidApi>, LabelReader)
 {
     let mut label_pair = None;
     let all_mirrors = combined.into_iter()
@@ -203,10 +202,10 @@ fn open(uuid: Option<Uuid>, combined: Vec<(Mirror, LabelReader)>)
     let (label, label_reader) = label_pair.unwrap();
     let vdev = match label {
         Label::Raid(l) => {
-            Arc::new(VdevRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
+            Box::new(VdevRaid::open(l, all_mirrors)) as Box<dyn VdevRaidApi>
         },
         Label::NullRaid(l) => {
-            Arc::new(NullRaid::open(l, all_mirrors)) as Arc<dyn VdevRaidApi>
+            Box::new(NullRaid::open(l, all_mirrors)) as Box<dyn VdevRaidApi>
         },
     };
     (vdev, label_reader)

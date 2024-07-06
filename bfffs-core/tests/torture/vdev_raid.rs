@@ -31,7 +31,7 @@ use bfffs_core::{
 };
 
 struct Harness {
-    vdev: Arc<dyn VdevRaidApi>,
+    vdev: Box<dyn VdevRaidApi>,
     _tempdir: TempDir,
     paths: Vec<PathBuf>,
     k: i16,
@@ -74,7 +74,7 @@ fn mkbuf(offs: LbaT, len: usize) -> Vec<u8> {
 }
 
 async fn do_test(
-    vdev: Arc<dyn VdevRaidApi>,
+    vdev: Box<dyn VdevRaidApi>,
     chunksize: LbaT,
     k: i16,
     f: i16,
