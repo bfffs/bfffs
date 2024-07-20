@@ -297,7 +297,6 @@ dependencies = [
 name = "bfffs-core"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "atomic_enum",
  "auto_enums",
  "bincode",

@@ -394,7 +394,7 @@ impl<'a> IDML {
                         ddml4.put_direct(&db, Compression::None, txg)
                         .and_then(move |drp| {
                             ddml4.delete_direct(&entry.drp, txg)
-                            .map_ok(move |_| drp.into_compressed(&entry.drp))
+                            .map(move |_| Ok(drp.into_compressed(&entry.drp)))
                         })
                     });
                     fut.boxed()
@@ -414,7 +414,7 @@ impl<'a> IDML {
                         let fut = ddml2.put_direct(&db, Compression::None, txg)
                         .and_then(move |drp| {
                             ddml3.delete_direct(&entry.drp, txg)
-                            .map_ok(move |_| drp)
+                            .map(move |_| Ok(drp))
                         });
                         fut.boxed()
                     } else {
@@ -528,7 +528,7 @@ impl DML for IDML {
                 entry.refcount -= 1;
                 if entry.refcount == 0 {
                     cache2.lock().unwrap().remove(&Key::Rid(rid));
-                    let ddml_fut = ddml2.delete_direct(&entry.drp, txg);
+                    let ddml_fut = ddml2.delete_direct(&entry.drp, txg).map(Ok);
                     let alloct_fut = alloct2.remove(entry.drp.pba(), txg,
                         Credit::null());
                     let ridt_fut = ridt2.remove(rid, txg, Credit::null());
@@ -910,7 +910,7 @@ mod t {
             ddml.expect_delete_direct()
                 .once()
                 .with(eq(drp), eq(TxgT::from(42)))
-                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+                .returning(|_, _| Box::pin(future::ready(())));
             let arc_ddml = Arc::new(ddml);
             let amcache = Arc::new(Mutex::new(cache));
             let idml = IDML::create(arc_ddml, amcache.clone());
@@ -1124,7 +1124,7 @@ mod t {
                 .in_sequence(&mut seq)
                 .with(eq(drp0), always())
                 .returning(move |_, _| {
-                    Box::pin(future::ok::<(), Error>(()))
+                    Box::pin(future::ready(()))
                 });
             let arc_ddml = Arc::new(ddml);
             let amcache = Arc::new(Mutex::new(cache));
@@ -1180,7 +1180,7 @@ mod t {
                 .once()
                 .in_sequence(&mut seq)
                 .with(eq(drp0), always())
-                .returning(move |_, _| Box::pin(future::ok::<(), Error>(())));
+                .returning(move |_, _| Box::pin(future::ready(())));
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             inject_record(&idml, rid, &drp0, 1);
@@ -1225,7 +1225,7 @@ mod t {
                 .once()
                 .in_sequence(&mut seq)
                 .with(eq(drp0), always())
-                .returning(move |_, _| Box::pin(future::ok::<(), Error>(())));
+                .returning(move |_, _| Box::pin(future::ready(())));
             let arc_ddml = Arc::new(ddml);
             let idml = IDML::create(arc_ddml, Arc::new(Mutex::new(cache)));
             inject_record(&idml, rid, &drp0, 1);

@@ -286,8 +286,9 @@ impl Locator for PrimeS {
     }
 
     fn iter(&self, start: ChunkId, end: ChunkId)
-        -> Box<dyn Iterator<Item=(ChunkId, Chunkloc)>> {
-        Box::new(PrimeSIter::new(self, start, end))
+        -> impl Iterator<Item=(ChunkId, Chunkloc)>
+    {
+        PrimeSIter::new(self, start, end)
     }
 
     fn loc2id(&self, chunkloc: Chunkloc) -> ChunkId {

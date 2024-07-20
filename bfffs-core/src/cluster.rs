@@ -897,9 +897,7 @@ impl Cluster {
     ///
     /// Deleting data in increments other than it was written is unsupported.
     /// In particular, it is not allowed to delete across zone boundaries.
-    // TODO: return () instead of future
-    pub fn free(&self, lba: LbaT, length: LbaT) -> BoxVdevFut
-    {
+    pub fn free(&self, lba: LbaT, length: LbaT) {
         let start_zone = self.vdev.lba2zone(lba).expect(
             "Can't free from inter-zone padding");
         #[cfg(test)]
@@ -914,9 +912,8 @@ impl Cluster {
         // Kill the zone if it is fully freed
         if fsm.is_closed(start_zone) && fsm.in_use(start_zone) == 0 {
             drop(fsm);
-            self.kill_zone(start_zone)
+            self.kill_zone(start_zone);
         }
-        Box::pin(future::ok(()))
     }
 
     /// Construct a new `Cluster` from an already constructed [`RaidImpl`]
@@ -1150,7 +1147,7 @@ mod cluster {
             .expect("write failed early");
         fut1.await.unwrap();
         assert_eq!(cluster.allocated(), 2);
-        cluster.free(lba, 1).await.unwrap();
+        cluster.free(lba, 1);
         assert_eq!(cluster.allocated(), 1);
 
         cluster.advance_transaction(TxgT::from(0)).await.unwrap();
@@ -1211,7 +1208,7 @@ mod cluster {
                 .expect("write failed early");
         fut2.await.unwrap();
         assert_eq!(cluster.allocated(), 4);
-        cluster.free(lba, 1).await.unwrap();
+        cluster.free(lba, 1);
         assert_eq!(cluster.allocated(), 2);
 
         cluster.advance_transaction(TxgT::from(0)).await.unwrap();
@@ -1278,7 +1275,7 @@ mod cluster {
             .expect("write failed early");
         fut3.await.unwrap();
         assert_eq!(cluster.allocated(), 4);
-        cluster.free(lba, 1).await.unwrap();
+        cluster.free(lba, 1);
         assert_eq!(cluster.allocated(), 4);
 
         cluster.advance_transaction(TxgT::from(0)).await.unwrap();
@@ -1301,7 +1298,7 @@ mod cluster {
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, vr.into()));
-        drop(cluster.free(900, 200));
+        cluster.free(900, 200);
     }
 
     #[test]
@@ -1318,7 +1315,7 @@ mod cluster {
             .return_const((1, 1000));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, vr.into()));
-        drop(cluster.free(1000, 10));
+        cluster.free(1000, 10);
     }
 
     // FreeSpaceMap::open with the following conditions:

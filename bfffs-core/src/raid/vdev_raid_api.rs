@@ -1,5 +1,4 @@
 // vim: tw=80
-use async_trait::async_trait;
 use futures::Future;
 
 use crate::{
@@ -11,7 +10,6 @@ use crate::{
 
 /// The public interface for all RAID Vdevs.  All Vdevs that slot beneath a
 /// cluster must implement this API.
-#[async_trait]
 #[enum_dispatch::enum_dispatch]
 pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Asynchronously erase a zone on a RAID device

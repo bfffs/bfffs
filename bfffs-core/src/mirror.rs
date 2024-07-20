@@ -574,6 +574,7 @@ impl Mirror {
         self.uuid
     }
 
+    // TODO: can we eliminate this box?
     pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut
     {
         let fut = self.children.iter().filter_map(|blockdev| {
