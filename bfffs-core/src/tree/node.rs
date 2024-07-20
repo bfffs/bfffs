@@ -597,10 +597,6 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
         where D: Deserializer<'de>
     {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Credit, Items }
-
         struct LeafDataVisitor<K: Key, V: Value> {
             _k: PhantomData<K>,
             _v: PhantomData<V>
@@ -629,6 +625,10 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: de::MapAccess<'de>
             {
+                #[derive(Deserialize)]
+                #[serde(field_identifier, rename_all = "lowercase")]
+                enum Field { Credit, Items }
+
                 // The only supported serializer that uses a Map is YAML, for
                 // unit tests and Tree::dump, where we do serialize Credit.
                 let mut credit = Credit::null();
