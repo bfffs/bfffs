@@ -311,7 +311,7 @@ impl Uio {
 
     /// Across how many records will this UIO be spread?
     fn nrecs(&self, offset0: usize, rs: usize) -> usize {
-        div_roundup(offset0 + self.len(), rs) - (offset0 / rs)
+        (offset0 + self.len()).div_ceil(rs) - (offset0 / rs)
     }
 }
 

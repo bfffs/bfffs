@@ -176,7 +176,7 @@ impl<'fd> Vdev for VdevFile<'fd> {
     }
 
     fn zones(&self) -> ZoneT {
-        div_roundup(self.size, self.lbas_per_zone) as ZoneT
+        self.size.div_ceil(self.lbas_per_zone) as ZoneT
     }
 }
 
@@ -335,7 +335,7 @@ impl<'fd> VdevFile<'fd> {
         let erase_method = AtomicEraseMethod::initial(f.as_raw_fd())?;
         let size = Self::devlen(f, sectorsize)? / BYTES_PER_LBA as u64;
         let lbas_per_zone = VdevFile::DEFAULT_LBAS_PER_ZONE;
-        let nzones = div_roundup(size, lbas_per_zone);
+        let nzones = size.div_ceil(lbas_per_zone);
         let spacemap_space = spacemap_space(nzones);
         Ok(VdevFile {
             fd: f.as_fd(),
@@ -442,7 +442,7 @@ impl<'fd> VdevFile<'fd> {
     ///                     zones.
     pub fn set(&mut self, size: LbaT, lbas_per_zone: LbaT) {
         self.size = size;
-        let nzones = div_roundup(size, lbas_per_zone);
+        let nzones = size.div_ceil(lbas_per_zone);
         self.spacemap_space = spacemap_space(nzones);
         self.lbas_per_zone = lbas_per_zone;
     }

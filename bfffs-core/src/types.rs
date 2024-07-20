@@ -18,18 +18,6 @@ use std::{
     str::FromStr,
 };
 
-
-/// "Private" trait; only exists to ensure that div_roundup will fail to compile
-/// when used with signed numbers.  It would be nice to use a negative trait
-/// bound like "+ !Neg", but Rust doesn't support negative trait bounds.
-#[doc(hidden)]
-pub trait RoundupAble {}
-impl RoundupAble for u8 {}
-impl RoundupAble for u16 {}
-impl RoundupAble for u32 {}
-impl RoundupAble for u64 {}
-impl RoundupAble for usize {}
-
 /// Objects that implement this trait have a typical size when serialized with
 /// bincode
 pub trait TypicalSize {

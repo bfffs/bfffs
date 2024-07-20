@@ -4,7 +4,6 @@
 use crate::{
     dml::{Cacheable, CacheRef, DML},
     types::*,
-    util::*,
     writeback::Credit
 };
 use divbuf::{DivBuf, DivBufShared};
@@ -1272,7 +1271,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             // Divide evenly, but make the left node slightly larger, on the
             // assumption that we're more likely to insert into the right node
             // than the left one.
-            div_roundup(self.len(), 2)
+            self.len().div_ceil(2)
         };
         match self {
             NodeData::Leaf(leaf) => {

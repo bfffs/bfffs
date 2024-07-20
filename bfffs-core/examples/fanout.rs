@@ -59,7 +59,7 @@ impl Stats {
                     0
                 }
             };
-            let asize = div_roundup(lsize, BYTES_PER_LBA) * BYTES_PER_LBA;
+            let asize = lsize.div_ceil(BYTES_PER_LBA) * BYTES_PER_LBA;
             (padding * *count as usize, asize * *count as usize)
         }).fold((0, 0), |accum, (padding, total)| {
             (accum.0 + padding, accum.1 + total)
@@ -77,7 +77,7 @@ impl Stats {
         let guard = self.put_counts.lock().unwrap();
         guard.iter().fold(0, |total, (lsize, count)| {
             let lsize = *lsize as usize;
-            let asize = div_roundup(lsize, BYTES_PER_LBA) * BYTES_PER_LBA;
+            let asize = lsize.div_ceil(BYTES_PER_LBA) * BYTES_PER_LBA;
             total + asize as u64 * *count
         })
     }
@@ -92,7 +92,7 @@ struct FakeDDML {
 
 impl FakeDDML {
     fn next_drp(&self, z: Compression, lsize: u32, csize: u32) -> DRP {
-        let lbas = div_roundup(lsize as usize, BYTES_PER_LBA) as u64;
+        let lbas = (lsize as usize).div_ceil(BYTES_PER_LBA) as u64;
         let lba = self.next_lba.fetch_add(lbas, Ordering::Relaxed);
         let pba = PBA::new(0, lba);
         let checksum = thread_rng().gen::<u64>();

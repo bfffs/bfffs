@@ -54,8 +54,8 @@ impl Compression {
             let buffer = ctx.compress(&input[..]);
             let v: Vec<u8> = buffer.into();
             let dbs = DivBufShared::from(v);
-            let compressed_lbas = div_roundup(dbs.len(), BYTES_PER_LBA);
-            let uncompressed_lbas = div_roundup(lsize, BYTES_PER_LBA);
+            let compressed_lbas = dbs.len().div_ceil(BYTES_PER_LBA);
+            let uncompressed_lbas = lsize.div_ceil(BYTES_PER_LBA);
             if compressed_lbas < uncompressed_lbas {
                 (dbs.try_const().unwrap(), self)
             } else {
