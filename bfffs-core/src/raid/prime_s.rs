@@ -595,13 +595,6 @@ mod tests {
         PrimeS::new(9, 5, 1);
     }
 
-    // pet kcov
-    #[test]
-    fn debug() {
-        let locator = PrimeS::new(7, 4, 2);
-        format!("{locator:?}");
-    }
-
     // Exhaustive placement test for a small array
     // declust.rb's output:
     // D0.0   D0.1   D0.2   C0.0   C0.1   D1.2   C1.0

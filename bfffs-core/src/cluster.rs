@@ -1085,17 +1085,6 @@ impl Manager {
 #[cfg(test)]
 mod t {
 
-mod open_zone {
-    use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let oz = OpenZone{start: 0, allocated_blocks: 0};
-        format!("{oz:?}");
-    }
-}
-
 mod cluster {
     use super::super::*;
     use crate::vdev::*;
@@ -1836,13 +1825,6 @@ mod cluster {
 mod free_space_map {
     use pretty_assertions::assert_eq;
     use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let fsm = FreeSpaceMap::new(10);
-        format!("{fsm:?}");
-    }
 
     #[test]
     fn allocated_total_all_empty() {

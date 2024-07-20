@@ -166,12 +166,8 @@ use super::*;
 use crate::types::*;
 use divbuf::{DivBuf, DivBufShared};
 
-// pet kcov
 #[test]
 fn debug() {
-    let cache = LruCache::with_capacity(100);
-    format!("{cache:?}");
-    assert_eq!(100, cache.capacity());
     let dbs = DivBufShared::from(Vec::new());
     let entry = LruEntry{buf: Box::new(dbs), lru: None, mru: None};
     assert_eq!("LruEntry { lru: None, mru: None }", format!("{entry:?}"));

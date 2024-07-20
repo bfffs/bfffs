@@ -1525,23 +1525,6 @@ use divbuf::*;
 use pretty_assertions::assert_eq;
 use super::*;
 
-// pet kcov
-#[test]
-fn debug() {
-    let ld = LeafData {
-        credit: Credit::null(),
-        items: BTreeMap::<u32, u32>::new()
-    };
-    let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node: Node<DRP, u32, u32> = leaf_node!(items);
-    format!("{ld:?} {node:?}");
-
-    let mut children: Vec<IntElem<u32, u32, u32>> = Vec::new();
-    let txgs = TxgT(1)..TxgT(3);
-    children.push(IntElem::new(0, txgs, TreePtr::Addr(4)));
-    format!("{:?}", NodeData::Int(IntData{children}));
-}
-
 #[test]
 fn arc_node_eq() {
     let items: BTreeMap<u32, u32> = BTreeMap::new();

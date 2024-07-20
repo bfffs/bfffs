@@ -193,12 +193,6 @@ mod t {
         assert_eq!(compression, Compression::None);
     }
 
-    // pet grcov
-    #[test]
-    fn default() {
-        assert_eq!(Compression::None, Compression::default())
-    }
-
     #[test]
     fn shuffle() {
         assert_eq!(Compression::None.shuffle(), None);

@@ -860,13 +860,6 @@ mod database {
     use mockall::{Sequence, predicate::*};
     use std::ops::RangeFull;
 
-    // pet kcov
-    #[test]
-    fn debug() {
-        let label = Label{forest: TreeOnDisk::default()};
-        format!("{label:?}");
-    }
-
     // await_holding_lock is ok, because the tests don't share reactors
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
@@ -1126,14 +1119,4 @@ mod database {
     }
 }
 
-mod syncer_msg {
-    use super::super::*;
-
-    //pet kcov
-    #[test]
-    fn debug() {
-        let sm = SyncerMsg::Shutdown;
-        format!("{sm:?}");
-    }
-}
 }

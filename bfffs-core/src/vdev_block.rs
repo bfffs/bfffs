@@ -1694,7 +1694,6 @@ mod t {
             }
         }
 
-        // pet kcov
         #[test]
         #[allow(clippy::eq_op)]
         fn partial_eq() {
@@ -1713,36 +1712,6 @@ mod t {
     mod cmd {
         use super::*;
 
-        // pet kcov
-        #[test]
-        fn debug() {
-            let dbs = DivBufShared::from(vec![0u8]);
-            {
-                let read_at = Cmd::ReadAt(dbs.try_mut().unwrap());
-                format!("{read_at:?}");
-            }
-            {
-                let readv_at = Cmd::ReadvAt(vec![dbs.try_mut().unwrap()]);
-                format!("{readv_at:?}");
-            }
-            {
-                let read_spacemap = Cmd::ReadSpacemap(dbs.try_mut().unwrap());
-                format!("{read_spacemap:?}");
-            }
-            let write_at = Cmd::WriteAt(dbs.try_const().unwrap());
-            let writev_at = Cmd::WritevAt(vec![dbs.try_const().unwrap()]);
-            let erase_zone = Cmd::EraseZone(0);
-            let finish_zone = Cmd::FinishZone(0);
-            let sync_all = Cmd::SyncAll;
-            let label_writer = LabelWriter::new(0);
-            let write_label = Cmd::WriteLabel(label_writer);
-            let write_spacemap = Cmd::WriteSpacemap(
-                vec![dbs.try_const().unwrap()]);
-            format!("{write_at:?} {writev_at:?} {erase_zone:?} {finish_zone:?}\
- {sync_all:?} {write_label:?} {write_spacemap:?}");
-        }
-
-        // pet kcov
         #[test]
         fn partial_cmp() {
             let c0 = Cmd::SyncAll;

@@ -528,20 +528,6 @@ impl Future for Write {
 #[cfg(test)]
 mod t {
 
-mod label {
-    use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let label = Label{name: "Foo".to_owned(),
-            uuid: Uuid::new_v4(),
-            children: vec![]
-        };
-        format!("{label:?}");
-    }
-}
-
 mod pool {
     use super::super::*;
     use futures::future;

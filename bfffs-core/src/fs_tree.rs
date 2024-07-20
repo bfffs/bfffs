@@ -1240,20 +1240,6 @@ use crate::idml::IDML;
 use pretty_assertions::assert_eq;
 use super::*;
 
-// pet kcov
-#[test]
-fn debug() {
-    assert_eq!("DirEntry(0)", format!("{:?}", ObjKey::DirEntry(0)));
-    assert_eq!("Extent(0)", format!("{:?}", ObjKey::Extent(0)));
-    assert_eq!("ExtAttr(0)", format!("{:?}", ObjKey::ExtAttr(0)));
-    assert_eq!("Property(Atime)",
-        format!("{:?}", ObjKey::Property(PropertyName::Atime)));
-    assert_eq!("FSKey { object: 0x42, objtype: DirEntry, offset: 0x42 }",
-        format!("{:?}", FSKey::new(0x42, ObjKey::DirEntry(66))));
-    assert_eq!("FSKey { object: 0x42, objtype: Unknown, offset: 0x0 }",
-        format!("{:?}", FSKey::compose(0x42, 254, 0)));
-}
-
 #[test]
 fn fskey_typical_size() {
     let ok = ObjKey::Extent(0);

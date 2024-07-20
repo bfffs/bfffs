@@ -49,12 +49,6 @@ mod basic {
         Harness{file, vdev, path: pb, _tempdir: tempdir}
     }
 
-    // pet kcov
-    #[rstest]
-    fn debug(harness: Harness) {
-        format!("{:?}", harness.vdev);
-    }
-
     /// erase_zone on a plain file should succeed.  If fspacectl is supported,
     /// that region of the file should be zeroed.  Otherwise, nothing should
     /// happen.

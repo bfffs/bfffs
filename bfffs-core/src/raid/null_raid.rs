@@ -196,21 +196,3 @@ impl VdevRaidApi for NullRaid {
         Box::pin(self.mirror.write_spacemap(sglist, idx, block))
     }
 }
-
-// LCOV_EXCL_START
-#[cfg(test)]
-mod t {
-
-use super::*;
-// pet kcov
-#[test]
-fn debug() {
-    let label = Label {
-        uuid: Uuid::new_v4(),
-        child: Uuid::new_v4()
-    };
-    format!("{label:?}");
-}
-
-}
-// LCOV_EXCL_STOP

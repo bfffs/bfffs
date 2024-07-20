@@ -100,18 +100,3 @@ impl<A: Addr> TypicalSize for TreeOnDisk<A> {
 }
 
 impl<A: Addr> Value for TreeOnDisk<A> { }
-
-// LCOV_EXCL_START
-#[cfg(test)]
-mod t {
-    use super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let cr = CreditRequirements{insert: 0, range_delete: 0, remove: 0};
-        let tod = TreeOnDisk::<RID>::default();
-        format!("{cr:?} {tod:?}");
-    }
-}
-// LCOV_EXCL_STOP
