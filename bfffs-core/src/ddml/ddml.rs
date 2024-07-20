@@ -95,12 +95,12 @@ impl DDML {
 
     /// Free a record's storage, ignoring the Cache
     pub fn delete_direct(&self, drp: &DRP, _txg: TxgT)
-        -> impl Future<Output=Result<()>> + Send + Sync
+        -> impl Future<Output=()> + Send + Sync
     {
         let pba = drp.pba;
         let asize = drp.asize();
         self.pool.read()
-            .then(move |pool| pool.free(pba, asize))
+            .map(move |pool| pool.free(pba, asize))
     }
 
     pub async fn dump_fsm(&self) -> Vec<String> {
@@ -231,9 +231,9 @@ impl DDML {
         self.pool.read()
         .then(move |pg| {
             Self::read(pg, drp2)
-            .and_then(move |(pg, dbs)| {
-                pg.free(pba, lbas)
-                .map_ok(move |_| Box::new(T::deserialize(dbs)))
+            .map_ok(move |(pg, dbs)| {
+                pg.free(pba, lbas);
+                Box::new(T::deserialize(dbs))
             })
         })
     }
@@ -322,7 +322,7 @@ impl DML for DDML {
         let asize = drp.asize();
         self.cache.lock().unwrap().remove(&Key::PBA(pba));
         let fut = self.pool.read()
-            .then(move |pool| pool.free(pba, asize));
+            .map(move |pool| {pool.free(pba, asize); Ok(())});
         Box::pin(fut)
     }
 
@@ -354,8 +354,7 @@ impl DML for DDML {
         self.cache.lock().unwrap().remove(&Key::PBA(pba)).map(|cacheable| {
             let t = cacheable.downcast::<T>().unwrap();
             self.pool.read()
-                .then(move |pg| pg.free(pba, lbas))
-                .map_ok(|_| t)
+                .map(move |pg| {pg.free(pba, lbas); Ok(t)})
                 .boxed()
         }).unwrap_or_else(|| {
             Box::pin( self.pop_direct::<T>(drp)) as Pin<Box<_>>
@@ -401,7 +400,7 @@ mock! {
     pub DDML {
         pub fn advance_transaction(&self, txg: TxgT) -> BoxVdevFut;
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) -> Pin<Box<dyn Future<Output=()> + Send + Sync>>;
-        pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> BoxVdevFut;
+        pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> Pin<Box<dyn Future<Output=()> + Send>>;
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
@@ -515,7 +514,7 @@ mod ddml {
             .with(eq(pba), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         ddml.delete(&drp, TxgT::from(0))
@@ -836,7 +835,7 @@ mod ddml {
         let mut pool = mock_pool();
         pool.expect_free()
             .with(eq(pba), eq(1))
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let amcache = Arc::new(Mutex::new(cache));
         let ddml = DDML::new(pool, amcache.clone());
@@ -869,7 +868,7 @@ mod ddml {
             .with(eq(pba), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         ddml.pop::<DivBufShared, DivBuf>(&drp, TxgT::from(0))
@@ -921,7 +920,7 @@ mod ddml {
             .with(eq(pba), eq(1))
             .once()
             .in_sequence(&mut seq)
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let ddml = DDML::new(pool, Arc::new(Mutex::new(cache)));
         ddml.pop_direct::<DivBufShared>(&drp)

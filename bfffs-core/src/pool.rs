@@ -251,11 +251,9 @@ impl Pool {
     // Before deleting the underlying storage, BFFFS should double-check that
     // nothing is using it.  That requires using the AllocationTable, which is
     // above the layer of the Pool.
-    pub fn free(&self, pba: PBA, length: LbaT)
-        -> impl Future<Output=Result<()>> + Send + Sync
-    {
+    pub fn free(&self, pba: PBA, length: LbaT) {
         self.stats.used_space.fetch_sub(length, Ordering::Relaxed);
-        self.clusters[pba.cluster as usize].free(pba.lba, length)
+        self.clusters[pba.cluster as usize].free(pba.lba, length);
     }
 
     /// Construct a new `Pool` from some already constructed
@@ -686,12 +684,12 @@ mod pool {
         c1.expect_free()
             .with(eq(12345), eq(16))
             .once()
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let clusters = vec![ c0, c1 ];
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), clusters);
 
-        assert!(pool.free(PBA::new(1, 12345), 16).await.is_ok());
+        pool.free(PBA::new(1, 12345), 16);
         // Freeing bytes should not decrease allocated.  Only erasing should.
         assert_eq!(pool.used(), 84);
     }
@@ -830,14 +828,14 @@ mod pool {
             .return_once(|_, _| Ok((0, Box::pin(future::ok(())))));
         cluster.expect_free()
             .once()
-            .return_once(|_, _| Box::pin(future::ok(())));
+            .return_once(|_, _| ());
 
         let pool = Pool::new("foo".to_string(), Uuid::new_v4(), vec![cluster]);
 
         let dbs = DivBufShared::from(vec![0u8; 1024]);
         let db0 = dbs.try_const().unwrap();
         let drp =  pool.write(db0, TxgT::from(42)).await.unwrap();
-         pool.free(drp, 1).await.unwrap();
+        pool.free(drp, 1);
         assert_eq!(pool.used(), 0);
     }
 
