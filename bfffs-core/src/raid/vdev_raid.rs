@@ -190,8 +190,54 @@ enum Child {
 cfg_if! {
     if #[cfg(test)] {
         type ChildReadSpacemap = BoxVdevFut;
+        type ChildReadAt = BoxVdevFut;
+        type ChildReadvAt = BoxVdevFut;
     } else {
         type ChildReadSpacemap = mirror::ReadSpacemap;
+        type ChildReadAt = mirror::ReadAt;
+        type ChildReadvAt = mirror::ReadvAt;
+    }
+}
+type ChildWriteAt = BoxVdevFut;
+type ChildWritevAt = BoxVdevFut;
+
+#[pin_project(project = ChildReadFutProj)]
+enum ChildReadFut {
+    ReadAt(#[pin] ChildReadAt),
+    ReadvAt(#[pin] ChildReadvAt),
+    Enxio
+}
+
+impl Future for ChildReadFut {
+    type Output = Result<()>;
+
+    fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    {
+        match self.project() {
+            ChildReadFutProj::ReadAt(f) => f.poll(cx),
+            ChildReadFutProj::ReadvAt(f) => f.poll(cx),
+            ChildReadFutProj::Enxio => Poll::Ready(Err(Error::ENXIO))
+        }
+    }
+}
+
+#[pin_project(project = ChildWriteFutProj)]
+enum ChildWriteFut {
+    WriteAt(#[pin] ChildWriteAt),
+    WritevAt(#[pin] ChildWritevAt),
+    Enxio
+}
+
+impl Future for ChildWriteFut {
+    type Output = Result<()>;
+
+    fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    {
+        match self.project() {
+            ChildWriteFutProj::WriteAt(f) => f.poll(cx),
+            ChildWriteFutProj::WritevAt(f) => f.poll(cx),
+            ChildWriteFutProj::Enxio => Poll::Ready(Err(Error::ENXIO))
+        }
     }
 }
 
@@ -257,11 +303,11 @@ impl Child {
         self.as_present().unwrap().open_zone(start)
     }
 
-    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> BoxVdevFut {
+    fn read_at(&self, buf: IoVecMut, lba: LbaT) -> ChildReadFut {
         if let Child::Present(c) = self {
-            Box::pin(c.read_at(buf, lba)) as BoxVdevFut
+            ChildReadFut::ReadAt(c.read_at(buf, lba))
         } else {
-            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+            ChildReadFut::Enxio
         }
     }
 
@@ -269,11 +315,11 @@ impl Child {
         self.as_present().unwrap().read_spacemap(buf, smidx)
     }
 
-    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut {
+    fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> ChildReadFut {
         if let Child::Present(c) = self {
-            Box::pin(c.readv_at(bufs, lba)) as BoxVdevFut
+            ChildReadFut::ReadvAt(c.readv_at(bufs, lba))
         } else {
-            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+            ChildReadFut::Enxio
         }
     }
 
@@ -290,11 +336,11 @@ impl Child {
     }
 
 
-    fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut {
+    fn write_at(&self, buf: IoVec, lba: LbaT) -> ChildWriteFut {
         if let Child::Present(c) = self {
-            Box::pin(c.write_at(buf, lba)) as BoxVdevFut
+            ChildWriteFut::WriteAt(c.write_at(buf, lba))
         } else {
-            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+            ChildWriteFut::Enxio
         }
     }
 
@@ -308,11 +354,11 @@ impl Child {
         self.as_present().unwrap().write_spacemap(sglist, idx, block)
     }
 
-    fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut {
+    fn writev_at(&self, bufs: SGList, lba: LbaT) -> ChildWriteFut {
         if let Child::Present(c) = self {
-            Box::pin(c.writev_at(bufs, lba)) as BoxVdevFut
+            ChildWriteFut::WritevAt(c.writev_at(bufs, lba))
         } else {
-            Box::pin(future::err(Error::ENXIO)) as BoxVdevFut
+            ChildWriteFut::Enxio
         }
     }
 
