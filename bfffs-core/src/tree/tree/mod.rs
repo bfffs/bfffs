@@ -691,7 +691,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 2 * (split_size / elem_size)
             };
             debug_assert!(max_fanout <= usize::from(u16::MAX));
-            let min_fanout = div_roundup(max_fanout as u16, spread);
+            let min_fanout = (max_fanout as u16).div_ceil(spread);
             (min_fanout, max_fanout as u16)
         };
 

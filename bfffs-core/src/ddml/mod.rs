@@ -67,7 +67,7 @@ impl DRP {
 
     /// Return the storage space actually allocated for this record
     pub fn asize(&self) -> LbaT {
-        div_roundup(self.csize as usize, BYTES_PER_LBA) as LbaT
+        (self.csize as usize).div_ceil(BYTES_PER_LBA) as LbaT
     }
 
     /// Transform this DRP into one that has the same compression function as

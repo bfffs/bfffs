@@ -8,7 +8,7 @@ use std::{
     any::TypeId,
     hash::Hasher,
     mem,
-    ops::{Add, Bound, Div, RangeBounds, Sub},
+    ops::{Bound, RangeBounds},
 };
 
 
@@ -116,7 +116,7 @@ pub fn copy_and_pad_sglist(bufs: SGList) -> SGList {
         }
         if let Some(ref mut accum) = accumulator {
             // Must've been an incomplete block.  zero-pad the tail
-            let l = div_roundup(accum.len(), BYTES_PER_LBA) * BYTES_PER_LBA;
+            let l = accum.len().div_ceil(BYTES_PER_LBA) * BYTES_PER_LBA;
             // Data copy
             accum.resize(l, 0);
             let dbs = DivBufShared::from(accumulator.take().unwrap());
@@ -127,14 +127,6 @@ pub fn copy_and_pad_sglist(bufs: SGList) -> SGList {
     } else {
         bufs
     }
-}
-
-/// Divide two unsigned numbers (usually integers), rounding up.
-pub fn div_roundup<T>(dividend: T, divisor: T) -> T
-    where T: Add<Output=T> + Copy + Div<Output=T> + From<u8> + RoundupAble +
-             Sub<Output=T> {
-    (dividend + divisor - T::from(1u8)) / divisor
-
 }
 
 /// Return the length of data in an sglist, not the number of iovecs
@@ -149,7 +141,7 @@ pub fn sglist_len<T>(sglist: &[T]) -> usize
 /// Create an SGList full of zeros, with the requested total length
 pub fn zero_sglist(len: usize) -> SGList {
     let zero_region_len = ZERO_REGION.len();
-    let zero_bufs = div_roundup(len, zero_region_len);
+    let zero_bufs = len.div_ceil(zero_region_len);
     let mut sglist = SGList::new();
     for _ in 0..(zero_bufs - 1) {
         sglist.push(ZERO_REGION.try_const().unwrap())
@@ -184,13 +176,6 @@ impl<R, T> RangeBoundsExt<T> for R
 mod t {
 use pretty_assertions::assert_eq;
 use super::*;
-
-#[test]
-fn test_div_roundup() {
-    assert_eq!(div_roundup(5u8, 2u8), 3u8);
-    assert_eq!(div_roundup(4u8, 2u8), 2u8);
-    assert_eq!(div_roundup(4000u32, 1500u32), 3u32);
-}
 
 #[cfg(test)]
 macro_rules! checksum_sglist_helper {

@@ -780,22 +780,6 @@ mod t {
         ddml
     }
 
-    // pet kcov
-    #[test]
-    fn ridtentry_debug() {
-        let drp = DRP::random(Compression::None, 4096);
-        let ridt_entry = RidtEntry::new(drp);
-        format!("{ridt_entry:?}");
-
-        let label = Label{
-            alloct:     TreeOnDisk::default(),
-            next_rid:   0,
-            ridt:       TreeOnDisk::default(),
-            txg:        TxgT(0)
-        };
-        format!("{label:?}");
-    }
-
     #[test]
     fn ridtentry_typical_size() {
         let typical = RidtEntry::new(DRP::default());

@@ -47,7 +47,7 @@ pub const SPACEMAP_ZONES_PER_LBA: usize = 255;
 
 /// How many LBAs should be reserved for each spacemap?
 pub fn spacemap_space(nzones: u64) -> LbaT {
-    div_roundup(nzones, SPACEMAP_ZONES_PER_LBA as u64)
+    nzones.div_ceil(SPACEMAP_ZONES_PER_LBA as u64)
 }
 
 /// Used to read successive structs out of the label

@@ -174,20 +174,6 @@ mod stripe_buffer {
     }
 }
 
-// pet kcov
-#[test]
-fn debug() {
-    let label = Label {
-        uuid: Uuid::new_v4(),
-        chunksize: 1,
-        disks_per_stripe: 2,
-        redundancy: 1,
-        layout_algorithm: LayoutAlgorithm::PrimeS,
-        children: vec![Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()]
-    };
-    format!("{label:?}");
-}
-
 /// A mock Mirror device with some basic expectations
 fn mock_mirror() -> Mirror{
     let zl0 = (1, 60_000);

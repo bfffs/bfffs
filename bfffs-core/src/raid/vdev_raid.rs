@@ -146,7 +146,7 @@ impl StripeBuffer {
     pub fn pad(&mut self) -> LbaT {
         let padlen = self.stripesize - self.len();
         let zero_region_len = ZERO_REGION.len();
-        let zero_bufs = div_roundup(padlen, zero_region_len);
+        let zero_bufs = padlen.div_ceil(zero_region_len);
         for _ in 0..(zero_bufs - 1) {
             self.fill(ZERO_REGION.try_const().unwrap());
         }
@@ -669,7 +669,7 @@ impl VdevRaid {
         assert!(self.stripe_buffers.write().unwrap().insert(zone, sb).is_none());
 
         let (first_disk_lba, _) = self.first_healthy_child().zone_limits(zone);
-        let start_disk_chunk = div_roundup(first_disk_lba, self.chunksize);
+        let start_disk_chunk = first_disk_lba.div_ceil(self.chunksize);
         let futs = FuturesUnordered::<BoxVdevFut>::new();
         for (idx, mirrordev) in self.inner.children.iter().enumerate() {
             if !mirrordev.is_present() {
@@ -735,7 +735,7 @@ impl VdevRaid {
 
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         let unlbas = (buf.len() / BYTES_PER_LBA) as LbaT;
-        let uchunks = div_roundup(buf.len(), col_len);
+        let uchunks = buf.len().div_ceil(col_len);
         let start_stripe = ulba / (chunksize * m as LbaT);
         // First LBA that the user does not want to read
         let uelba = ulba + unlbas;
@@ -786,7 +786,7 @@ impl VdevRaid {
                 ChunkId::Data((last_stripe + 1) * m as u64)
             }
         } else {
-            ChunkId::Data(div_roundup(uelba, chunksize))
+            ChunkId::Data(uelba.div_ceil(chunksize))
         };
         let mut starting = true;
         for (cid, loc) in inner.locator.iter(start_cid, end_cid) {
@@ -997,7 +997,7 @@ impl VdevRaid {
         } else if end_lba_remainder == 0 || (lbas_per_stripe - end_lba_remainder) < chunksize {
             ChunkId::Parity(stripe_lba / chunksize, 0)
         } else {
-            ChunkId::Data(div_roundup(end_lba, chunksize))
+            ChunkId::Data(end_lba.div_ceil(chunksize))
         };
 
         let mut first = true;
@@ -1893,7 +1893,7 @@ impl Vdev for VdevRaid {
         // 1) All children must have the same zone map, so we only need to do
         //    the zone_limits call once.
         let (disk_lba_b, disk_lba_e) = self.first_healthy_child().zone_limits(zone);
-        let disk_chunk_b = div_roundup(disk_lba_b, self.chunksize);
+        let disk_chunk_b = disk_lba_b.div_ceil(self.chunksize);
         let disk_chunk_e = disk_lba_e / self.chunksize - 1; //inclusive endpoint
 
         let endpoint_lba = |boundary_chunk, is_highend| {

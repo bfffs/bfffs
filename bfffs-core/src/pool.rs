@@ -466,7 +466,7 @@ impl Pool {
     {
         let cluster = self.choose_cluster();
         let cidx = cluster as usize;
-        let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
+        let space = buf.len().div_ceil(BYTES_PER_LBA) as LbaT;
         let stats2 = self.stats.clone();
         match self.clusters[cidx].write(buf, txg) {
             Ok((lba, wfut)) => {
@@ -527,20 +527,6 @@ impl Future for Write {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
-
-mod label {
-    use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let label = Label{name: "Foo".to_owned(),
-            uuid: Uuid::new_v4(),
-            children: vec![]
-        };
-        format!("{label:?}");
-    }
-}
 
 mod pool {
     use super::super::*;

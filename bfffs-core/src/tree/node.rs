@@ -4,7 +4,6 @@
 use crate::{
     dml::{Cacheable, CacheRef, DML},
     types::*,
-    util::*,
     writeback::Credit
 };
 use divbuf::{DivBuf, DivBufShared};
@@ -598,10 +597,6 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
         where D: Deserializer<'de>
     {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field { Credit, Items }
-
         struct LeafDataVisitor<K: Key, V: Value> {
             _k: PhantomData<K>,
             _v: PhantomData<V>
@@ -630,6 +625,10 @@ impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
                 -> std::result::Result<Self::Value, SV::Error>
                 where SV: de::MapAccess<'de>
             {
+                #[derive(Deserialize)]
+                #[serde(field_identifier, rename_all = "lowercase")]
+                enum Field { Credit, Items }
+
                 // The only supported serializer that uses a Map is YAML, for
                 // unit tests and Tree::dump, where we do serialize Credit.
                 let mut credit = Credit::null();
@@ -1272,7 +1271,7 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
             // Divide evenly, but make the left node slightly larger, on the
             // assumption that we're more likely to insert into the right node
             // than the left one.
-            div_roundup(self.len(), 2)
+            self.len().div_ceil(2)
         };
         match self {
             NodeData::Leaf(leaf) => {
@@ -1525,23 +1524,6 @@ use crate::ddml::DRP;
 use divbuf::*;
 use pretty_assertions::assert_eq;
 use super::*;
-
-// pet kcov
-#[test]
-fn debug() {
-    let ld = LeafData {
-        credit: Credit::null(),
-        items: BTreeMap::<u32, u32>::new()
-    };
-    let items: BTreeMap<u32, u32> = BTreeMap::new();
-    let node: Node<DRP, u32, u32> = leaf_node!(items);
-    format!("{ld:?} {node:?}");
-
-    let mut children: Vec<IntElem<u32, u32, u32>> = Vec::new();
-    let txgs = TxgT(1)..TxgT(3);
-    children.push(IntElem::new(0, txgs, TreePtr::Addr(4)));
-    format!("{:?}", NodeData::Int(IntData{children}));
-}
 
 #[test]
 fn arc_node_eq() {

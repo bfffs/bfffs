@@ -476,7 +476,7 @@ impl<'a> FreeSpaceMap {
         let total_zones = vdev.zones();
         // NB: it would be slightly faster to created it with the correct
         // capacity and uninitialized.
-        let blocks = div_roundup(total_zones as usize, SPACEMAP_ZONES_PER_LBA);
+        let blocks = (total_zones as usize).div_ceil(SPACEMAP_ZONES_PER_LBA);
         let dbs = DivBufShared::from(vec![0u8; blocks * BYTES_PER_LBA]);
         let dbm = dbs.try_mut().unwrap();
         vdev.read_spacemap(dbm, 0)
@@ -1004,7 +1004,7 @@ impl Cluster {
         //    that.
         // 3) If that doesn't work, return ENOSPC
         // 4) write to the vdev
-        let space = div_roundup(buf.len(), BYTES_PER_LBA) as LbaT;
+        let space = buf.len().div_ceil(BYTES_PER_LBA) as LbaT;
 
         let mut wg = self.fsm.write().unwrap();
         let (alloc_result, nearly_full_zones) = wg.try_allocate(space);
@@ -1084,17 +1084,6 @@ impl Manager {
 // LCOV_EXCL_START
 #[cfg(test)]
 mod t {
-
-mod open_zone {
-    use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let oz = OpenZone{start: 0, allocated_blocks: 0};
-        format!("{oz:?}");
-    }
-}
 
 mod cluster {
     use super::super::*;
@@ -1836,13 +1825,6 @@ mod cluster {
 mod free_space_map {
     use pretty_assertions::assert_eq;
     use super::super::*;
-
-    // pet kcov
-    #[test]
-    fn debug() {
-        let fsm = FreeSpaceMap::new(10);
-        format!("{fsm:?}");
-    }
 
     #[test]
     fn allocated_total_all_empty() {

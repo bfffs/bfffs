@@ -405,7 +405,7 @@ mod fault {
 mod io {
     use super::*;
 
-    use bfffs_core::{IoVec, IoVecMut, ZoneT, div_roundup};
+    use bfffs_core::{IoVec, IoVecMut, ZoneT};
 
     #[template]
     #[rstest(h,
@@ -681,7 +681,7 @@ mod io {
     #[awt]
     async fn write_read_three_rows(#[future] h: Harness) {
         let rows = 3;
-        let stripes = div_roundup((rows * h.n) as usize, h.k as usize);
+        let stripes = ((rows * h.n) as usize).div_ceil(h.k as usize);
         write_read_n_stripes(h.vdev, h.chunksize, h.k, h.f, stripes).await;
     }
 
