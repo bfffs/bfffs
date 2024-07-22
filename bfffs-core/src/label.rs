@@ -16,11 +16,12 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
- * VdevFile:    variable    speedy-encoded VdevFile::Label
- * VdevRaid:    variable    speedy-encoded VdevRaid::Label
- * Pool:        variable    speedy-encoded Pool::Label
- * IDML:        variable    speedy-encoded IDML::Label
- * Database:    variable    speedy-encoded Database::Label
+ * VdevBlock:   variable    speedy-encoded vdev_block::Block
+ * Mirror:      variable    speedy-encoded mirror::Label
+ * VdevRaid:    variable    speedy-encoded vdev_raid::Label
+ * Pool:        variable    speedy-encoded pool::Label
+ * IDML:        variable    speedy-encoded idml::Label
+ * Database:    variable    speedy-encoded database::Label
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
  *
  * On-disk Reserved Region Format:
@@ -37,8 +38,8 @@ const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
 pub const LABEL_COUNT: LbaT = 2;
-// Actual label size is about 17 bytes for each RAID member plus 17 bytes for
-// each Cluster, plus a couple hundred bytes more.
+// Actual label size is about 17 bytes for each mirror, 17 bytes for each disk,
+// 17 bytes for each Cluster, plus a couple hundred bytes more.
 pub const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
 /// Space allocated for storing the spacemap.  This the number of zones whose
