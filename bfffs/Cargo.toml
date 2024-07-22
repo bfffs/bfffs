@@ -51,7 +51,7 @@ divbuf = { git = "https://github.com/asomers/divbuf.git", rev = "deb99e3"}
 enum_dispatch = "0.3.12"
 freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
-mockall = "0.12.0"
+mockall = "0.13.0"
 nix = { version = "0.29.0", default-features = false, features = ["mount", "process", "signal", "user"] }
 predicates = "3.0.0"
 pretty_assertions = "1.3"
