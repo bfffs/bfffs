@@ -187,6 +187,7 @@ mod persistence {
         manager.taste(&harness.0).await.unwrap();
         let (vdev, _) = manager.import(golden_uuid).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.txg(), TxgT::from(0x01020304));
         assert_eq!(vdev.uuid(), golden_uuid);
         let _ = harness.1;
     }
@@ -232,6 +233,7 @@ mod persistence {
         manager.taste(&harness.0).await.unwrap();
         let (vdev, _) = manager.import(golden_uuid).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.txg(), TxgT::from(0x01020304));
         assert_eq!(vdev.uuid(), golden_uuid);
         let _ = harness.1;
     }
@@ -264,6 +266,7 @@ mod persistence {
         manager.taste(&harness.0).await.unwrap();
         let (vdev, _) = manager.import(golden_uuid).await.unwrap();
         assert_eq!(vdev.size(), 16_384);
+        assert_eq!(vdev.txg(), TxgT::from(0x01020304));
         assert_eq!(vdev.uuid(), golden_uuid);
         let _ = harness.1;
     }

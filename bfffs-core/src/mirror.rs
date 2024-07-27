@@ -147,6 +147,10 @@ impl Child {
         Child::Present(Arc::new(vdev))
     }
 
+    fn rebuilding(vdev: VdevBlock) -> Self {
+        Child::Rebuilding(Arc::new(vdev))
+    }
+
     fn missing(uuid: Uuid) -> Self {
         Child::Missing(uuid)
     }
@@ -179,6 +183,11 @@ impl Child {
 
     fn is_present(&self) -> bool {
         matches!(self, Child::Present(_))
+    }
+
+    #[cfg(test)]
+    fn is_rebuilding(&self) -> bool {
+        matches!(self, Child::Rebuilding(_))
     }
 
     fn open_zone(&self, start: LbaT) -> Option<VdevBlockFut> {
@@ -407,6 +416,10 @@ impl Mirror {
         -> (Self, LabelReader)
     {
         let mut label_pair = None;
+        let highest_txg = combined.iter()
+            .map(|(vb, _)| vb.txg())
+            .max()
+            .expect("Must have at least one child");
         let mut leaves = combined.into_iter()
             .map(|(vdev_block, mut label_reader)| {
                 let label: Label = label_reader.deserialize().unwrap();
@@ -426,7 +439,11 @@ impl Mirror {
             // TODO: verify the child's txg.  If it's old, the child must go
             // into the Rebuilding state.
             if let Some(vb) = leaves.remove(lchild) {
-                children.push(Child::present(vb));
+                if vb.txg() == highest_txg {
+                    children.push(Child::present(vb));
+                } else {
+                    children.push(Child::rebuilding(vb));
+                }
             } else {
                 children.push(Child::missing(*lchild));
             }
@@ -1085,6 +1102,8 @@ mod t {
                     .return_const(10u32);
                 bd.expect_size()
                     .return_const(262_144u64);
+                bd.expect_txg()
+                    .return_const(TxgT::from(42u32));
                 bd
             }
             let label = Label {
@@ -1109,12 +1128,59 @@ mod t {
                     combined.push((bd, lr));
                 }
                 let (mirror, _) = Mirror::open(Some(label.uuid), combined);
+                assert!(mirror.children[0].is_present());
                 assert_eq!(mirror.children[0].uuid(), child_uuid0);
+                assert!(mirror.children[1].is_present());
                 assert_eq!(mirror.children[1].uuid(), child_uuid1);
+                assert!(mirror.children[2].is_present());
                 assert_eq!(mirror.children[2].uuid(), child_uuid2);
             }
         }
 
+        /// If one VdevBlock is out-of-date, it will be opened into the
+        /// Rebuilding state.
+        #[test]
+        fn out_of_date() {
+            let child_uuid0 = Uuid::new_v4();
+            let child_uuid1 = Uuid::new_v4();
+            fn mock(child_uuid: &Uuid) -> VdevBlock {
+                let mut bd = VdevBlock::default();
+                bd.expect_uuid()
+                    .return_const(*child_uuid);
+                bd.expect_optimum_queue_depth()
+                    .return_const(10u32);
+                bd.expect_size()
+                    .return_const(262_144u64);
+                bd
+            }
+            let label = Label {
+                uuid: Uuid::new_v4(),
+                children: vec![child_uuid0, child_uuid1]
+            };
+            let mut serialized = Vec::new();
+            let mut lw = LabelWriter::new(0);
+            lw.serialize(&label).unwrap();
+            for buf in lw.into_sglist().into_iter() {
+                serialized.extend(&buf[..]);
+            }
+            let mut bd0 = mock(&child_uuid0);
+            bd0.expect_txg()
+                .return_const(TxgT::from(42u32));
+            let mut bd1 = mock(&child_uuid1);
+            bd1.expect_txg()
+                .return_const(TxgT::from(41u32));
+
+            let mut combined = Vec::new();
+            for bd in [bd0, bd1] {
+                let lr = LabelReader::new(serialized.clone()).unwrap();
+                combined.push((bd, lr));
+            }
+            let (mirror, _) = Mirror::open(Some(label.uuid), combined);
+            assert!(mirror.children[0].is_present());
+            assert_eq!(mirror.children[0].uuid(), child_uuid0);
+            assert!(mirror.children[1].is_rebuilding());
+            assert_eq!(mirror.children[1].uuid(), child_uuid1);
+        }
     }
 
     mod open_zone {

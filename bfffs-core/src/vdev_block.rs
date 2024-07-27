@@ -20,7 +20,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, LazyLock, RwLock, Weak},
+    sync::{Arc, LazyLock, RwLock, Weak, atomic::{self, AtomicU32}},
     ops,
     time,
 };
@@ -729,6 +729,9 @@ pub struct VdevBlock {
     /// Last known path for this Vdev
     path: PathBuf,
 
+    /// The most recently synced transaction group on this VdevBlock
+    txg:            AtomicU32,
+
     uuid:           Uuid,
 }
 
@@ -777,6 +780,7 @@ impl VdevBlock {
             leaf.lbas_per_zone()
         };
         let size = leaf.size();
+        let txg = AtomicU32::new(0);
         let uuid = Uuid::new_v4();
         let spacemap_space = leaf.spacemap_space();
         let inner = Arc::new(RwLock::new(Inner {
@@ -800,7 +804,8 @@ impl VdevBlock {
             spacemap_space,
             lbas_per_zone,
             uuid,
-            path: path.as_ref().to_owned()
+            path: path.as_ref().to_owned(),
+            txg
         })
     }
 
@@ -812,6 +817,7 @@ impl VdevBlock {
         let size = leaf.size();
         let uuid = Uuid::new_v4();
         let spacemap_space = leaf.spacemap_space();
+        let txg = AtomicU32::new(0);
         let inner = Arc::new(RwLock::new(Inner {
             delayed: None,
             optimum_queue_depth: leaf.optimum_queue_depth(),
@@ -833,7 +839,8 @@ impl VdevBlock {
             spacemap_space,
             lbas_per_zone,
             uuid,
-            path: PathBuf::new()
+            path: PathBuf::new(),
+            txg
         }
     }
 
@@ -927,12 +934,14 @@ impl VdevBlock {
     /// * `uuid`:          UUID as recorded in the label
     /// * `size`:          device size in LBAs as recorded in the label
     /// * `lbas_per_zone`: Number of LBAs per simulated zone
+    /// * `txg`:           Most recent txg recorded in the label
     fn new(
         device: fs::File,
         path: PathBuf,
         uuid: Uuid,
         size: LbaT,
-        lbas_per_zone: LbaT
+        lbas_per_zone: LbaT,
+        txg: TxgT
     ) -> Self
     {
         // Safe because the Drop impl ensures that any futures based on leaf
@@ -962,7 +971,8 @@ impl VdevBlock {
             spacemap_space,
             lbas_per_zone,
             uuid,
-            path
+            path,
+            txg: AtomicU32::new(txg.into())
         }
     }
 
@@ -1045,6 +1055,11 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
+    /// Get the most recently synced transaction group on this disk
+    pub fn txg(&self) -> TxgT {
+        self.txg.load(atomic::Ordering::Relaxed).into()
+    }
+
     pub fn uuid(&self) -> Uuid {
         self.uuid
     }
@@ -1073,6 +1088,9 @@ impl VdevBlock {
         labeller.serialize(&label).unwrap();
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_label(labeller, sender);
+        // Use Relaxed ordering for now, because I'm not sure if this will
+        // _ever_ be read.
+        self.txg.store(txg.into(), atomic::Ordering::Relaxed);
         self.new_fut(block_op, receiver)
     }
 
@@ -1169,7 +1187,7 @@ impl Manager {
                 let label: Label = lr.deserialize().unwrap();
                 assert_eq!(uuid, label.uuid);
                 let vb = VdevBlock::new(rec.file, rec.path, uuid,
-                    label.lbas, label.lbas_per_zone);
+                    label.lbas, label.lbas_per_zone, label.txg);
                 Ok((vb, lr))
             })
     }
@@ -1255,6 +1273,7 @@ mock! {
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
         pub fn status(&self) -> Status;
         pub fn sync_all(&self) -> BoxVdevFut;
+        pub fn txg(&self) -> TxgT;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
         pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
