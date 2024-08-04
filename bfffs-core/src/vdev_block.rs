@@ -7,7 +7,6 @@ use futures::{
     task::{Context, Poll}
 };
 use futures::{TryFutureExt, future};
-use lazy_static::lazy_static;
 use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
@@ -21,7 +20,7 @@ use std::{
     os::unix::fs::OpenOptionsExt,
     path::{Path, PathBuf},
     pin::Pin,
-    sync::{Arc, RwLock, Weak},
+    sync::{Arc, LazyLock, RwLock, Weak},
     ops,
     time,
 };
@@ -41,16 +40,14 @@ pub type VdevLeaf = MockVdevFile;
 #[cfg(not(test))]
 pub type VdevLeaf<'fd> = VdevFile<'fd>;
 
-lazy_static! {
-    static ref IOV_MAX: Option<NonZeroUsize> = {
-        sysconf(SysconfVar::IOV_MAX)
-            .unwrap()
-            .map(usize::try_from)
-            .map(std::result::Result::unwrap)
-            .map(NonZeroUsize::try_from)
-            .map(std::result::Result::unwrap)
-    };
-}
+static IOV_MAX: LazyLock<Option<NonZeroUsize>> = LazyLock::new(|| {
+    sysconf(SysconfVar::IOV_MAX)
+        .unwrap()
+        .map(usize::try_from)
+        .map(std::result::Result::unwrap)
+        .map(NonZeroUsize::try_from)
+        .map(std::result::Result::unwrap)
+});
 
 #[derive(Debug)]
 enum Cmd {

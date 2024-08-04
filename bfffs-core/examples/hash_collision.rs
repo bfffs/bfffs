@@ -5,7 +5,6 @@
 use bfffs_core::fs_tree::*;
 use dashmap::DashMap;
 use clap::Parser;
-use lazy_static::lazy_static;
 use rand_xorshift::XorShiftRng;
 use rand::{
     Rng,
@@ -16,7 +15,7 @@ use rand::{
 use std::{
     ffi::{OsStr, OsString},
     os::unix::ffi::OsStrExt,
-    sync::Mutex,
+    sync::{LazyLock, Mutex},
     thread,
     time
 };
@@ -36,13 +35,13 @@ impl Stats {
     }
 }
 
-lazy_static! {
-    // Don't store the actual namespace and name, because that takes too much
-    // RAM.  Instead, store a seed that can be used to recreate the name and
-    // namespace.  It cuts the throughput, but also cuts the RAM usage.
-    static ref HM: DashMap<u64, [u8; 16]> =
-        DashMap::with_capacity(4_000_000);
-}
+// Don't store the actual namespace and name, because that takes too much RAM.
+// Instead, store a seed that can be used to recreate the name and namespace.
+// It cuts the throughput, but also cuts the RAM usage.
+static HM: LazyLock<DashMap<u64, [u8; 16]>> = LazyLock::new(|| {
+    DashMap::with_capacity(4_000_000)
+});
+
 static STATS: Mutex<Stats> = Mutex::new(Stats::new());
 
 trait Collidable {

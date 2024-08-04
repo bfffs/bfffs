@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     ptr,
     slice,
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock, RwLock},
 };
 
 use bfffs_core::{
@@ -20,7 +20,6 @@ use futures::{
     future::{Future, FutureExt, TryFutureExt},
     stream::{futures_unordered::FuturesUnordered, StreamExt},
 };
-use lazy_static::lazy_static;
 use tokio::{
     runtime::{Builder, Runtime},
     task::JoinError,
@@ -167,17 +166,18 @@ pub extern "C" fn rust_ctor() {
     }
 }
 
-lazy_static! {
-    static ref RUNTIME: RwLock<Runtime> = RwLock::new(
+static RUNTIME: LazyLock<RwLock<Runtime>> = LazyLock::new(|| {
+    RwLock::new(
         Builder::new_multi_thread()
             .enable_time()
             .enable_io()
             .build()
-            .unwrap()
-    );
-    static ref FILES: RwLock<HashMap<libc::c_int, FileDataMut>> =
-        RwLock::default();
-}
+            .unwrap(),
+    )
+});
+static FILES: LazyLock<RwLock<HashMap<libc::c_int, FileDataMut>>> =
+    LazyLock::new(RwLock::default);
+
 static FS: RwLock<Option<Arc<Fs>>> = RwLock::new(None);
 static ROOT: RwLock<Option<FileDataMut>> = RwLock::new(None);
 
@@ -228,15 +228,13 @@ pub unsafe extern "C" fn fio_bfffs_event(
     td: *mut thread_data,
     event: libc::c_int,
 ) -> *mut io_u {
-    let mut io_ops_data =
-        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+    let io_ops_data = (*td).io_ops_data as *mut BfffsIoOpsData;
     let io_u = mem::replace(
-        &mut io_ops_data.ready_events[event as usize],
+        &mut (*io_ops_data).ready_events[event as usize],
         IoU(ptr::null_mut()),
     );
     assert!(!io_u.0.is_null());
 
-    Box::into_raw(io_ops_data);
     io_u.0
 }
 
@@ -256,26 +254,23 @@ pub unsafe extern "C" fn fio_bfffs_getevents(
     t: *const libc::timespec,
 ) -> libc::c_int {
     let rt = RUNTIME.read().unwrap();
-    let mut io_ops_data =
-        Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+    let io_ops_data = (*td).io_ops_data as *mut BfffsIoOpsData;
     assert!(t.is_null(), "timeout is unimplemented");
-    assert!(!io_ops_data.futs.is_empty());
+    assert!(!(*io_ops_data).futs.is_empty());
 
-    io_ops_data.ready_events.clear();
+    (*io_ops_data).ready_events.clear();
 
     rt.block_on(async {
         for _ in 0..min {
-            let r = io_ops_data.futs.next().await;
+            let r = (*io_ops_data).futs.next().await;
             let (io_u, retval) =
                 r.unwrap().unwrap().expect("I/O failed inside of BFFFS");
             (*io_u.0).resid = (*io_u.0).xfer_buflen - retval as u64;
-            io_ops_data.ready_events.push(io_u);
+            (*io_ops_data).ready_events.push(io_u);
         }
     });
 
-    let retval = io_ops_data.ready_events.len() as i32;
-    Box::into_raw(io_ops_data);
-    retval
+    (*io_ops_data).ready_events.len() as i32
 }
 
 ///
@@ -421,7 +416,7 @@ pub unsafe extern "C" fn fio_bfffs_queue(
     let fs = FS.read().unwrap().clone().unwrap();
     let files = FILES.read().unwrap();
     assert!(!((*td).io_ops_data.is_null()));
-    let io_ops_data = Box::from_raw((*td).io_ops_data as *mut BfffsIoOpsData);
+    let io_ops_data = (*td).io_ops_data as *mut BfffsIoOpsData;
 
     let (ddir, fd, offset, data) = {
         let data: &[u8] = slice::from_raw_parts(
@@ -459,9 +454,8 @@ pub unsafe extern "C" fn fio_bfffs_queue(
             }
         })
         .boxed();
-    io_ops_data.futs.push(jh);
+    (*io_ops_data).futs.push(jh);
 
-    Box::into_raw(io_ops_data);
     fio_q_status_FIO_Q_QUEUED
 }
 

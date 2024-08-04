@@ -3,12 +3,12 @@
 
 use crate::types::*;
 use divbuf::DivBufShared;
-use lazy_static::lazy_static;
 use std::{
     any::TypeId,
     hash::Hasher,
     mem,
     ops::{Bound, RangeBounds},
+    sync::LazyLock
 };
 
 
@@ -18,16 +18,14 @@ pub const BYTES_PER_LBA: usize = 4096;
 /// Length of the global read-only `ZERO_REGION`
 pub const ZERO_REGION_LEN: usize = 8 * BYTES_PER_LBA;
 
-lazy_static! {
-    /// A read-only buffer of zeros, useful for padding.
-    ///
-    /// The length is pretty arbitrary.  Code should be able to cope with a
-    /// smaller-than-desired `ZERO_REGION`.  A smaller size will have less
-    /// impact on the CPU cache.  A larger size will consume fewer CPU cycles
-    /// manipulating sglists.
-    pub static ref ZERO_REGION: DivBufShared =
-        DivBufShared::from(vec![0u8; ZERO_REGION_LEN]);
-}
+/// A read-only buffer of zeros, useful for padding.
+///
+/// The length is pretty arbitrary.  Code should be able to cope with a
+/// smaller-than-desired `ZERO_REGION`.  A smaller size will have less impact on
+/// the CPU cache.  A larger size will consume fewer CPU cycles manipulating
+/// sglists.
+pub static ZERO_REGION: LazyLock<DivBufShared> =
+    LazyLock::new(|| DivBufShared::from(vec![0u8; ZERO_REGION_LEN]));
 
 /// Transmute one type into another, if they're really the same type.
 ///
