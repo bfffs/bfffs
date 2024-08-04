@@ -11,7 +11,6 @@ license = "GPL-2.0"
 bfffs-core = { path = "../bfffs-core" }
 console-subscriber = "0.2.0"
 futures = "0.3.30"
-lazy_static = "1.4"
 libc = "0.2.155"
 tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "sync", "time", "tracing"] }
 

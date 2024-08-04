@@ -8,7 +8,7 @@ use std::{
     pin::Pin,
     ptr,
     slice,
-    sync::{Arc, RwLock},
+    sync::{Arc, LazyLock, RwLock},
 };
 
 use bfffs_core::{
@@ -20,7 +20,6 @@ use futures::{
     future::{Future, FutureExt, TryFutureExt},
     stream::{futures_unordered::FuturesUnordered, StreamExt},
 };
-use lazy_static::lazy_static;
 use tokio::{
     runtime::{Builder, Runtime},
     task::JoinError,
@@ -167,17 +166,18 @@ pub extern "C" fn rust_ctor() {
     }
 }
 
-lazy_static! {
-    static ref RUNTIME: RwLock<Runtime> = RwLock::new(
+static RUNTIME: LazyLock<RwLock<Runtime>> = LazyLock::new(|| {
+    RwLock::new(
         Builder::new_multi_thread()
             .enable_time()
             .enable_io()
             .build()
-            .unwrap()
-    );
-    static ref FILES: RwLock<HashMap<libc::c_int, FileDataMut>> =
-        RwLock::default();
-}
+            .unwrap(),
+    )
+});
+static FILES: LazyLock<RwLock<HashMap<libc::c_int, FileDataMut>>> =
+    LazyLock::new(RwLock::default);
+
 static FS: RwLock<Option<Arc<Fs>>> = RwLock::new(None);
 static ROOT: RwLock<Option<FileDataMut>> = RwLock::new(None);
 
