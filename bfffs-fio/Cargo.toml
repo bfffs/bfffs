@@ -9,15 +9,11 @@ license = "GPL-2.0"
 
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }
-console-subscriber = "0.2.0"
-futures = "0.3.30"
-libc = "0.2.155"
-tokio = { version = "1.36.0", features = ["rt", "rt-multi-thread", "sync", "time", "tracing"] }
-
-[dependencies.tracing-subscriber]
-version = "0.3.17"
-default-features = false
-features = [ "ansi", "env-filter", "fmt", "tracing-log" ]
+console-subscriber = { workspace = true }
+futures = { workspace = true }
+libc = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "tracing"] }
+tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt", "tracing-log"] }
 
 [lib]
 crate-type = ["cdylib"]
