@@ -44,7 +44,7 @@ thiserror = { workspace = true }
 time = { workspace = true, features = ["formatting"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }
 tokio-file = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, features = ["attributes"] }
 tracing-futures = { workspace = true }
 uuid = { workspace = true, features = ["v4", "std"] }
 zstd = { workspace = true }
