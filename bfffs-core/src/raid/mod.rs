@@ -55,9 +55,9 @@ pub enum Label {
     Raid(self::vdev_raid::Label),
 }
 
-impl<'a> Label {
+impl Label {
     #[auto_enums::auto_enum(Iterator)]
-    pub fn iter_children(&'a self) -> impl Iterator<Item=&Uuid> + 'a {
+    pub fn iter_children(&self) -> impl Iterator<Item=&Uuid> {
         match self {
             Label::Raid(l) => l.children.iter(),
             Label::NullRaid(l) => once(&l.child),
