@@ -238,6 +238,8 @@ pub unsafe extern "C" fn fio_bfffs_event(
     io_u.0
 }
 
+/// Return the number of available events to Fio.
+///
 /// Not that it's documented anywhere, but as best as I can tell fio will call
 /// .getevents() once, then call .event() n times, where n is the return value
 /// of .getevents().  .getevents should sleep until at least `min` events are
