@@ -32,7 +32,7 @@ use crate::ffi::*;
 
 impl fio_option {
     #[allow(clippy::too_many_arguments)]
-    fn new(
+    const fn new(
         name: &[u8],
         lname: &[u8],
         type_: fio_opt_type,
@@ -49,7 +49,7 @@ impl fio_option {
             off1: off1 as libc::c_uint,
             help: help as *const _ as *const libc::c_char,
             def: def as *const _ as *const libc::c_char,
-            category: u64::from(category),
+            category: category as u64,
             group,
             ..unsafe { mem::zeroed() }
         }
@@ -97,74 +97,63 @@ struct BfffsOptions {
     writeback_size: usize,
 }
 
-static mut OPTIONS: Option<[fio_option; 6]> = None;
-
-#[link_section = ".init_array"]
-#[used] //  Don't allow the optimizer to eliminate this symbol!
-pub static INITIALIZE: extern "C" fn() = rust_ctor;
-
-/// Initialize global statics.
-///
-/// If mem::zeroed were a const_fn, then we wouldn't need this.
-#[no_mangle]
-pub extern "C" fn rust_ctor() {
-    unsafe {
-        OPTIONS = Some([
-            fio_option::new(
-                b"cache_size\0",
-                b"cache_size\0",
-                fio_opt_type_FIO_OPT_INT,
-                offset_of!(BfffsOptions, cache_size),
-                b"Cache size in bytes\0",
-                b"0\0",
-                opt_category___FIO_OPT_C_ENGINE,
-                opt_category_group_FIO_OPT_G_INVALID,
-            ),
-            fio_option::new(
-                b"console\0",
-                b"console\0",
-                fio_opt_type_FIO_OPT_BOOL,
-                offset_of!(BfffsOptions, console),
-                b"Publish to tokio::console on port 6669\0",
-                b"0\0",
-                opt_category___FIO_OPT_C_ENGINE,
-                opt_category_group_FIO_OPT_G_INVALID,
-            ),
-            fio_option::new(
-                b"pool\0",
-                b"pool\0",
-                fio_opt_type_FIO_OPT_STR_STORE,
-                offset_of!(BfffsOptions, pool_name),
-                b"Name of BFFFS pool\0",
-                b"0\0",
-                opt_category___FIO_OPT_C_ENGINE,
-                opt_category_group_FIO_OPT_G_INVALID,
-            ),
-            fio_option::new(
-                b"vdevs\0",
-                b"vdevs\0",
-                fio_opt_type_FIO_OPT_STR_STORE,
-                offset_of!(BfffsOptions, vdevs),
-                b"Name of BFFFS vdev(s)\0",
-                b"\0",
-                opt_category___FIO_OPT_C_ENGINE,
-                opt_category_group_FIO_OPT_G_INVALID,
-            ),
-            fio_option::new(
-                b"writeback_size\0",
-                b"writeback_size\0",
-                fio_opt_type_FIO_OPT_INT,
-                offset_of!(BfffsOptions, writeback_size),
-                b"Writeback cache size in bytes\0",
-                b"\0",
-                opt_category___FIO_OPT_C_ENGINE,
-                opt_category_group_FIO_OPT_G_INVALID,
-            ),
-            mem::zeroed(),
-        ]);
-        IOENGINE.options = OPTIONS.as_ref().unwrap() as *const _ as *mut _;
-    }
-}
+// The only unsafe part is the mem::zeroed, and it's safe because "that's the
+// way that fio wants it".
+static mut OPTIONS: [fio_option; 6] = unsafe {
+    [
+        fio_option::new(
+            b"cache_size\0",
+            b"cache_size\0",
+            fio_opt_type_FIO_OPT_INT,
+            offset_of!(BfffsOptions, cache_size),
+            b"Cache size in bytes\0",
+            b"0\0",
+            opt_category___FIO_OPT_C_ENGINE,
+            opt_category_group_FIO_OPT_G_INVALID,
+        ),
+        fio_option::new(
+            b"console\0",
+            b"console\0",
+            fio_opt_type_FIO_OPT_BOOL,
+            offset_of!(BfffsOptions, console),
+            b"Publish to tokio::console on port 6669\0",
+            b"0\0",
+            opt_category___FIO_OPT_C_ENGINE,
+            opt_category_group_FIO_OPT_G_INVALID,
+        ),
+        fio_option::new(
+            b"pool\0",
+            b"pool\0",
+            fio_opt_type_FIO_OPT_STR_STORE,
+            offset_of!(BfffsOptions, pool_name),
+            b"Name of BFFFS pool\0",
+            b"0\0",
+            opt_category___FIO_OPT_C_ENGINE,
+            opt_category_group_FIO_OPT_G_INVALID,
+        ),
+        fio_option::new(
+            b"vdevs\0",
+            b"vdevs\0",
+            fio_opt_type_FIO_OPT_STR_STORE,
+            offset_of!(BfffsOptions, vdevs),
+            b"Name of BFFFS vdev(s)\0",
+            b"\0",
+            opt_category___FIO_OPT_C_ENGINE,
+            opt_category_group_FIO_OPT_G_INVALID,
+        ),
+        fio_option::new(
+            b"writeback_size\0",
+            b"writeback_size\0",
+            fio_opt_type_FIO_OPT_INT,
+            offset_of!(BfffsOptions, writeback_size),
+            b"Writeback cache size in bytes\0",
+            b"\0",
+            opt_category___FIO_OPT_C_ENGINE,
+            opt_category_group_FIO_OPT_G_INVALID,
+        ),
+        mem::zeroed(),
+    ]
+};
 
 static RUNTIME: LazyLock<RwLock<Runtime>> = LazyLock::new(|| {
     RwLock::new(
@@ -462,6 +451,8 @@ pub unsafe extern "C" fn fio_bfffs_queue(
 }
 
 #[export_name = "ioengine"]
+// FIO requires a mutable static for options.  There's no other way to do it.
+#[allow(static_mut_refs)]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     cancel:               None,
     cleanup:              Some(fio_bfffs_cleanup),
@@ -488,7 +479,7 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     name:                 b"bfffs\0" as *const _ as *const libc::c_char,
     open_file:            Some(fio_bfffs_open),
     option_struct_size:   mem::size_of::<BfffsOptions>() as i32,
-    options:              ptr::null_mut(),
+    options:              unsafe { OPTIONS.as_mut_ptr() },
     post_init:            None,
     prep:                 None,
     prepopulate_file:     None,
