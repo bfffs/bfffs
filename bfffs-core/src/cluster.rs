@@ -149,9 +149,6 @@ struct FreeSpaceMap {
     /// Cluster::flush?
     dirty: FixedBitSet,
 
-    /// Stores the set of dead zones.
-    //dead_zones: BTreeSet<ZoneT>,
-
     /// Stores the set of empty or dead zones with id less than zones.len().
     /// All zones with id greater than or equal to zones.len() are implicitly
     /// empty.  A zone here listed is dead if its end txg > 0, empty otherwise.
