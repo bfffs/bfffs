@@ -148,7 +148,7 @@ pub struct VdevFile<'fd> {
     erase_method:   AtomicEraseMethod,
 }
 
-impl<'fd> Vdev for VdevFile<'fd> {
+impl Vdev for VdevFile<'_> {
     fn lba2zone(&self, lba: LbaT) -> Option<ZoneT> {
         if lba >= self.reserved_space() {
             Some((lba / self.lbas_per_zone) as ZoneT)
@@ -560,7 +560,7 @@ struct ReadAt<'a> {
     fut: tokio_file::ReadAt<'a>
 }
 
-impl<'a> Future for ReadAt<'a> {
+impl Future for ReadAt<'_> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -586,7 +586,7 @@ struct WriteAt<'fd> {
     _buf: IoVec,
 }
 
-impl<'fd> Future for WriteAt<'fd> {
+impl Future for WriteAt<'_> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -614,7 +614,7 @@ struct ReadvAt<'fd> {
     _sglist: SGListMut,
 }
 
-impl<'fd> Future for ReadvAt<'fd> {
+impl Future for ReadvAt<'_> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
@@ -642,7 +642,7 @@ struct WritevAt<'a> {
     _sglist: SGList,
 }
 
-impl<'a> Future for WritevAt<'a> {
+impl Future for WritevAt<'_> {
     type Output = Result<()>;
 
     // aio_write and friends will sometimes return an error synchronously (like
