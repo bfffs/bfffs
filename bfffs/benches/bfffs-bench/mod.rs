@@ -181,6 +181,7 @@ where
     signal::kill(pid, signal::Signal::SIGINT).unwrap();
     dtrace.wait().unwrap();
     let svg = flamegraph.wait_with_output().unwrap().stdout;
+    stackcollapse.wait().unwrap();
     fs::File::create(fname).unwrap().write_all(&svg).unwrap();
 
     elapsed

@@ -904,7 +904,7 @@ pub enum Extent<'a> {
     Blob(&'a BlobExtent)
 }
 
-impl<'a> Extent<'a> {
+impl Extent<'_> {
     /// The length of this Extent, in bytes
     // An extent can never be empty, so there's no point to is_empty()
     #[allow(clippy::len_without_is_empty)]
