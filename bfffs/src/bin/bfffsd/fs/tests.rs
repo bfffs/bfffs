@@ -2445,7 +2445,6 @@ mod readdir {
     /// rust-fuse
     // libc's ino type could be either u32 or u64, depending on which
     // version of freebsd we're targeting.
-    #[allow(clippy::useless_conversion)]
     #[test]
     fn all_file_types() {
         let fh = 0xdeadbeef;
@@ -2632,7 +2631,6 @@ mod readdir {
     /// A directory containing nothing but "." and ".."
     // libc's ino type could be either u32 or u64, depending on which
     // version of freebsd we're targeting.
-    #[allow(clippy::useless_conversion)]
     #[test]
     fn empty() {
         let fh = 0xdeadbeef;
@@ -2704,7 +2702,6 @@ mod readdir {
     /// and drop the stream.  Nothing bad should happen.
     // libc's ino type could be either u32 or u64, depending on which
     // version of freebsd we're targeting.
-    #[allow(clippy::useless_conversion)]
     #[test]
     fn out_of_space() {
         let fh = 0xdeadbeef;

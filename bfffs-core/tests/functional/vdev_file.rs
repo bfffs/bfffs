@@ -1,5 +1,4 @@
 // vim: tw=80
-#![allow(clippy::redundant_clone)]   // False positive
 
 mod basic {
     use bfffs_core::{

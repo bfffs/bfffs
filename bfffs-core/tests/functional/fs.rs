@@ -1,8 +1,4 @@
 // vim: tw=80
-// Some conversions are only necessary for one of FreeBSD 11 or 12.  After libc
-// makes the switchover, delete this line and clean them up.
-#![allow(clippy::useless_conversion)]
-
 // Constructs a real filesystem and tests the common FS routines, without
 // mounting
 mod fs {

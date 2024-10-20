@@ -394,7 +394,6 @@ impl<'fd> VdevFile<'fd> {
     ///
     /// * `sglist   Scatter-gather list of buffers to receive data
     /// * `lba`     LBA to read from
-    #[allow(clippy::transmute_ptr_to_ptr)]  // Clippy false positive
     pub fn readv_at(&'fd self, mut sglist: SGListMut, lba: LbaT)
         -> VdevFileFut<'fd>
     {

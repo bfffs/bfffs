@@ -5,7 +5,6 @@
 
 use crate::types::SGList;
 use fixedbitset::FixedBitSet;
-use std::borrow::BorrowMut;
 use super::sgcursor::*;
 
 /// An encoder/decoder for Reed-Solomon Erasure coding in GF(2^8), oriented

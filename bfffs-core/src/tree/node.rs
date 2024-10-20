@@ -1534,7 +1534,6 @@ fn arc_node_eq() {
     assert!(!node.eq(&dbs));
 }
 
-#[allow(clippy::eq_op)]
 #[test]
 fn treeptr_eq() {
     assert_eq!(TreePtr::Addr::<u32, u32, u32>(0),

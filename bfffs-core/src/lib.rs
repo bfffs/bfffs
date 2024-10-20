@@ -2,11 +2,6 @@
 
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
 
-// Disable the range_plus_one lint until this bug is fixed.  It generates many
-// false positive in the Tree code.
-// https://github.com/rust-lang-nursery/rust-clippy/issues/3307
-#![allow(clippy::range_plus_one)]
-
 // I don't find this lint very helpful
 #![allow(clippy::type_complexity)]
 
@@ -17,9 +12,6 @@
 // I suppose I should probably fix this some day, but I just don't like the look
 // of e.g. "Idml" as opposed to "IDML".
 #![allow(clippy::upper_case_acronyms)]
-
-// False positive https://github.com/rust-lang/rust-clippy/issues/10498
-#![allow(clippy::let_with_type_underscore)]
 
 // error: reached the type-length limit while instantiating std::pin::Pin...
 #![type_length_limit="3790758"]
