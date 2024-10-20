@@ -57,7 +57,7 @@ impl Value for NeedsDcloneV {
 
 type NeedsDcloneNode = Arc<Node<u32, u32, NeedsDcloneV>>;
 
-#[allow(clippy::reversed_empty_ranges)]
+#[allow(clippy::reversed_empty_ranges)] // Deliberate
 #[test]
 fn ranges_overlap_test() {
     // x is empty

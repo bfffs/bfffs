@@ -308,7 +308,6 @@ pub trait HTItem: TryFrom<FSValue, Error=()> + Clone + Send + Sized + 'static {
 
     /// Create a bucket of `HTItem`s from a vector of `Self`.  Used for putting
     /// the bucket back into the Tree.
-    #[allow(clippy::wrong_self_convention)]
     fn into_bucket(selves: Vec<Self>) -> FSValue;
 
     /// Turn self into a regular `FSValue`, suitable for inserting into the Tree

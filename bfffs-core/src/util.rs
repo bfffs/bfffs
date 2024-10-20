@@ -229,7 +229,7 @@ fn test_zero_sglist() {
     assert_eq!(sg1.len(), 2);
 }
 
-#[allow(clippy::reversed_empty_ranges)]
+#[allow(clippy::reversed_empty_ranges)] // Deliberate
 #[test]
 fn range_bounds_is_empty() {
     use std::ops::RangeFull;

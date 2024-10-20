@@ -258,7 +258,6 @@ impl Pool {
 
     /// Construct a new `Pool` from some already constructed
     /// [`Cluster`](struct.Cluster.html)s.
-    #[allow(clippy::new_ret_no_self)]
     fn new(name: String, uuid: Uuid, clusters: Vec<Cluster>) -> Self
     {
         let size = clusters.iter()
@@ -309,7 +308,6 @@ impl Pool {
     /// * `(None, Some(x))`    - No closed zone this call.  Repeat the call,
     ///                          supplying `x`
     /// * `(None, None)`       - No more closed zones in this pool.
-    #[allow(clippy::collapsible_if)]
     pub fn find_closed_zone(&self, clust: ClusterT, zid: ZoneT)
         -> (Option<ClosedZone>, Option<(ClusterT, ZoneT)>)
     {
@@ -694,9 +692,6 @@ mod pool {
         assert_eq!(pool.used(), 84);
     }
 
-    // optimum_queue_depth is always a smallish integer, so exact equality
-    // testing is ok.
-    #[allow(clippy::float_cmp)]
     #[test]
     fn new() {
         let clusters = vec![

@@ -343,8 +343,6 @@ impl Controller {
     /// # Arguments
     ///
     /// - `name`    -   Name of the file system to create, including pool name
-    // Clippy false positive.
-    #[allow(clippy::unnecessary_to_owned)]
     #[tracing::instrument(skip(self))]
     pub fn new_fs(&self, name: &str)
         -> impl Future<Output = Result<Arc<Fs>>> + Send

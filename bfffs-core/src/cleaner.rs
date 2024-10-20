@@ -160,7 +160,7 @@ use super::*;
 use tokio::runtime;
 
 /// Clean in the background
-#[allow(clippy::async_yields_async)]
+#[allow(clippy::async_yields_async)]    // Not awaiting handle is deliberate
 #[test]
 fn background() {
     let mut idml = IDML::default();

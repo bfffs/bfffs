@@ -63,7 +63,6 @@ struct Syncer {
 
 impl Syncer {
     // Clippy false positive: the async block is needed for lifetime reasons
-    #[allow(clippy::redundant_async_block)]
     fn kick(&self) -> impl Future<Output=Result<()>> {
         let mut tx2 = self.tx.clone();
         async move {

@@ -1692,7 +1692,6 @@ mod t {
         }
 
         #[test]
-        #[allow(clippy::eq_op)]
         fn partial_eq() {
             let (tx0, _rx) = oneshot::channel();
             let (tx1, _rx) = oneshot::channel();
@@ -2658,7 +2657,6 @@ mod t {
 
             /// Just like VdevBlock::writev_at, VdevBlock::write_spacemap will
             /// ensure that all iovecs are a multiple of blocksize in size.
-            #[allow(clippy::async_yields_async)]
             #[rstest]
             #[tokio::test]
             async fn pad_small_tail(leaf: MockVdevFile) {
@@ -2820,7 +2818,6 @@ mod t {
 
             /// VdevBlock::writev_at will zero-pad an operation's tail, if need
             /// be, up to a multiple of an LBA.
-            #[allow(clippy::async_yields_async)]
             #[rstest]
             #[tokio::test]
             async fn pad_small_tail(leaf: MockVdevFile) {

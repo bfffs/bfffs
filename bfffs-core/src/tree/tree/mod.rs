@@ -52,8 +52,7 @@ use tracing_futures::Instrument;
 #[cfg(test)] mod tests;
 
 /// Are there any elements in common between the two Ranges?
-#[allow(clippy::if_same_then_else)]
-#[allow(clippy::needless_bool)]
+#[allow(clippy::needless_bool)] // Code looks better this way
 fn ranges_overlap<R, T, U>(x: &R, y: &Range<U>) -> bool
     where U: Borrow<T> + PartialOrd,
           R: RangeBounds<T>,
@@ -828,7 +827,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
 
     /// Fix an Int node in danger of being underfull, returning the parent guard
     /// back to the caller
-    #[allow(clippy::collapsible_if, clippy::collapsible_else_if)]
+    #[allow(clippy::collapsible_else_if)]   // Code looks better this way
     fn fix_int<Q>(
         &self,
         parent: TreeWriteGuard<A, K, V>,
@@ -1870,7 +1869,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         })
     }
 
-    #[allow(clippy::unnecessary_unwrap)]
     fn range_delete_pass2_r<R, T>(
         self: Arc<Self>,
         guard: TreeWriteGuard<A, K, V>,
@@ -2182,8 +2180,6 @@ impl<A, D, K, V> Tree<A, D, K, V>
         self.root.write()
     }
 
-    // Clippy has a false positive on `node`
-    #[allow(clippy::needless_pass_by_value)]
     fn write_leaf(
         dml: Arc<D>,
         compressor: Compression,
