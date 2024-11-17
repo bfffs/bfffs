@@ -94,7 +94,7 @@ where
             break Ok(());
         }
         if start.elapsed() > timeout {
-            break (Err(WaitForError));
+            break Err(WaitForError);
         }
         sleep(Duration::from_millis(50));
     }
