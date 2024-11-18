@@ -35,7 +35,6 @@ use std::{
     borrow::Borrow,
     cell::RefCell,
     collections::{BTreeMap, HashSet, VecDeque},
-    convert::identity,
     fmt::Debug,
     io,
     mem,
@@ -633,7 +632,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
             let children_passed = r.iter().all(|x| x.0);
             let first_key = *r[0].1.start();
             let mut last_key = K::min_value();
-            let sorted = r.iter().map(|(_passed, keys)| {
+            let sorted = r.iter().all(|(_passed, keys)| {
                 let r = if last_key > *keys.start() {
                     eprintln!(concat!("Unsorted Tree!  ",
                                       "Key {:?} precedes key {:?}"),
@@ -644,7 +643,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
                 };
                 last_key = *keys.end();
                 r
-            }).all(identity);
+            });
             (children_passed && sorted, first_key..=last_key, start..end)
         }).boxed()
     }
