@@ -279,7 +279,7 @@ dependencies = [
  "nix",
  "predicates",
  "pretty_assertions",
- "prettytable",
+ "prettytable-rs",
  "regex",
  "rstest",
  "si-scale",
@@ -2074,19 +2074,6 @@ checksum = "5f12335488a2f3b0a83b14edad48dca9879ce89b2edd10e80237e4e852dd645e"
 dependencies = [
  "proc-macro2",
  "syn 2.0.60",
-]
-
-[[package]]
-name = "prettytable"
-version = "0.10.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46480520d1b77c9a3482d39939fcf96831537a250ec62d4fd8fbdf8e0302e781"
-dependencies = [
- "encode_unicode",
- "is-terminal",
- "lazy_static",
- "term 0.7.0",
- "unicode-width",
 ]
 
 [[package]]

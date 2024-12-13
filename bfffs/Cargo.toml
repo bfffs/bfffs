@@ -23,7 +23,7 @@ futures = { workspace = true }
 lalrpop-util = { workspace = true, features = ["lexer", "std"] }
 libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
-prettytable = { workspace = true }
+prettytable-rs = { workspace = true }
 si-scale = { workspace = true }
 tabular = { workspace = true }
 thiserror = { workspace = true }
