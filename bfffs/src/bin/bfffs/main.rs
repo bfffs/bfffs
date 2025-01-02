@@ -350,6 +350,7 @@ mod fs {
                 }
                 buf.flush().unwrap();
             } else {
+                #[allow(clippy::literal_string_with_formatting_args)]
                 let row_spec = vec!["{:<}"; self.fields.len()].join(" ");
                 let mut table = tabular::Table::new(&row_spec);
                 let mut hrow = tabular::Row::new();
@@ -473,6 +474,7 @@ mod fs {
                 }
                 buf.flush().unwrap();
             } else {
+                #[allow(clippy::literal_string_with_formatting_args)]
                 let row_spec = vec!["{:<}"; self.properties.len()];
                 let mut table = tabular::Table::new(&row_spec.join(" "));
                 let mut hrow = tabular::Row::new();
