@@ -168,7 +168,7 @@ impl Inner {
         // First, remove the tree from the forest.  If this succeeds, delete it
         // from disk.  Ensure that it does not remain in the cache, too.  Do
         // this all in a single transaction.
-        let tname = name.split('/').last().unwrap();
+        let tname = name.split('/').next_back().unwrap();
         inner.dirty.store(true, Ordering::Relaxed);
 
         // First check that the tree exists ane ensure it is cached.
