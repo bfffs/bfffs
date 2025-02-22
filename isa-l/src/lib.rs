@@ -1,4 +1,5 @@
 // vim: tw=80
+#![allow(clippy::doc_overindented_list_items)]
 mod ffi;
 
 use std::{

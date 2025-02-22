@@ -658,7 +658,7 @@ pub struct ReadAt {
 impl Future for ReadAt {
     type Output = Result<()>;
 
-    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         let mut pinned = self.as_mut().project();
         if pinned.fut.is_none() {
@@ -697,7 +697,7 @@ pub struct ReadSpacemap {
 impl Future for ReadSpacemap {
     type Output = Result<()>;
 
-    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         let mut pinned = self.as_mut().project();
         if pinned.fut.is_none() {
@@ -736,7 +736,7 @@ pub struct ReadvAt {
 impl Future for ReadvAt {
     type Output = Result<()>;
 
-    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         let mut pinned = self.as_mut().project();
         if pinned.fut.is_none() {
