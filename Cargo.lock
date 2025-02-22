@@ -884,8 +884,9 @@ dependencies = [
 
 [[package]]
 name = "divbuf"
-version = "0.3.2-pre"
-source = "git+https://github.com/asomers/divbuf.git?rev=deb99e3#deb99e3abea12316caaa7b07329ce591032662e8"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0809dcae8c7e9f3a1d7a70ea495427e09a2d494088b4276cb118b51d513c6af1"
 
 [[package]]
 name = "doc-comment"
