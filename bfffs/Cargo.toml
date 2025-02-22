@@ -12,6 +12,9 @@ fuse = ["fuse3"]
 name = "bfffsd"
 required-features = ["fuse"]
 
+[lints.clippy]
+doc_overindented_list_items = "allow"
+
 [dependencies]
 bincode.workspace = true
 bfffs-core = { path = "../bfffs-core" }

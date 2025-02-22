@@ -2,6 +2,9 @@
 
 #![cfg_attr(all(feature = "nightly", test), feature(test))]
 
+// This lint wrongly triggers for argument lists.
+#![allow(clippy::doc_overindented_list_items)]
+
 // I don't find this lint very helpful
 #![allow(clippy::type_complexity)]
 

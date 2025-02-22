@@ -211,7 +211,7 @@ enum ChildReadFut {
 impl Future for ChildReadFut {
     type Output = Result<()>;
 
-    fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         match self.project() {
             ChildReadFutProj::ReadAt(f) => f.poll(cx),
@@ -231,7 +231,7 @@ enum ChildWriteFut {
 impl Future for ChildWriteFut {
     type Output = Result<()>;
 
-    fn poll<'a>(self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         match self.project() {
             ChildWriteFutProj::WriteAt(f) => f.poll(cx),
@@ -417,7 +417,7 @@ pub struct ReadSpacemap {
 impl Future for ReadSpacemap {
     type Output = Result<()>;
 
-    fn poll<'a>(mut self: Pin<&mut Self>, cx: &mut Context<'a>) -> Poll<Self::Output>
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output>
     {
         let mut pinned = self.as_mut().project();
         if pinned.fut.is_none() {
