@@ -20,7 +20,7 @@ task:
         CARGO_ARGS: --all-features
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
-        image: freebsd-14-1-release-amd64-ufs
+        image: freebsd-14-2-release-amd64-ufs
         platform: freebsd
         cpu: 4
         disk: 40
@@ -30,7 +30,7 @@ task:
         VERSION: 1.80.0
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
-        image: freebsd-13-3-release-amd64
+        image: freebsd-13-5-release-amd64
         platform: freebsd
         cpu: 4
         disk: 40
@@ -76,7 +76,7 @@ lint_task:
     VERSION: nightly
     CARGO_ARGS: --all-features
   freebsd_instance:
-    image: freebsd-13-3-release-amd64
+    image: freebsd-13-5-release-amd64
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry

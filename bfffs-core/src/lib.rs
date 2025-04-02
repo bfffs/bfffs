@@ -16,6 +16,13 @@
 // of e.g. "Idml" as opposed to "IDML".
 #![allow(clippy::upper_case_acronyms)]
 
+// There isn't yet a good way to handle this warning except by suppressing it.
+// Maybe one of these two RFCs will help.  Until then, ignore then warning, and
+// deal with the breakage (on nightly) when it happens.
+// https://github.com/rust-lang/rfcs/pull/3240
+// https://github.com/rust-lang/rfcs/pull/3624
+#![allow(unstable_name_collisions)]
+
 // error: reached the type-length limit while instantiating std::pin::Pin...
 #![type_length_limit="3790758"]
 // error: trait bounds overflowed in Database::sync_transaction_priv
