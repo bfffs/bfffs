@@ -47,7 +47,7 @@ struct Daemon {
 /// Start bfffsd and import the pool
 fn start_bfffsd(files: &Files) -> Daemon {
     let sockpath = files.tempdir.path().join("bfffsd.sock");
-    let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
+    let bfffsd: Bfffsd = Command::new(cargo_bin!("bfffsd"))
         .arg("--sock")
         .arg(sockpath.as_os_str())
         .arg(POOLNAME)

@@ -36,7 +36,7 @@ fn harness() -> Harness {
         .success();
 
     let sockpath = tempdir.path().join("bfffsd.sock");
-    let bfffsd: Bfffsd = Command::new(cargo_bin("bfffsd"))
+    let bfffsd: Bfffsd = Command::new(cargo_bin!("bfffsd"))
         .arg("--sock")
         .arg(sockpath.as_os_str())
         .arg("mypool")

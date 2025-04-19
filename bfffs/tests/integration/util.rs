@@ -4,15 +4,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use assert_cmd::prelude::*;
+use assert_cmd::cargo::cargo_bin;
 use thiserror::Error;
 
 pub fn bfffs() -> Command {
-    Command::cargo_bin("bfffs").unwrap()
+    Command::new(cargo_bin!("bfffs"))
 }
 
 pub fn bfffsd() -> Command {
-    Command::cargo_bin("bfffsd").unwrap()
+    Command::new(cargo_bin!("bfffsd"))
 }
 
 /// A wrapper for the bfffsd process that kills on Drop
