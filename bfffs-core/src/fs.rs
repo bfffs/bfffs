@@ -2310,7 +2310,7 @@ impl Fs {
             Property::RecordSize(exp) =>
                 self.record_size.store(exp, Ordering::Relaxed),
             Property::Name(_) => panic!("Immutable property"),
-            _ => panic!("Setting property {:?} is TODO", prop),
+            _ => panic!("Setting property {prop:?} is TODO"),
         }
 
         // Update on-disk properties

@@ -186,6 +186,7 @@ impl<'fd> VdevFile<'fd> {
 
     fn candelete(fd: RawFd) -> io::Result<bool> {
         let mut arg = MaybeUninit::<diocgattr_arg>::uninit();
+        #[allow(dangerous_implicit_autorefs)]
         let r = unsafe {
             let p = arg.as_mut_ptr();
             (*p).name[0..16].copy_from_slice(b"GEOM::candelete\0");
