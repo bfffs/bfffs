@@ -2030,7 +2030,7 @@ impl VdevRaidApi for VdevRaid {
                         return Ok(());
                     }
                     Err(Error::ENOENT) => continue,
-                    Err(e) => panic!("Unexpected error from Mirror::fault: {:?}", e),
+                    Err(e) => panic!("Unexpected error from Mirror::fault: {e:?}"),
                 }
             }
         }
@@ -2109,8 +2109,7 @@ impl VdevRaidApi for VdevRaid {
             // Look for a StripeBuffer that contains part of the requested
             // range.  There should only be a few zones open at any one time, so
             // it's ok to search through them all.
-            let stripe_buffer = sb_ref.iter()
-                .map(|(_, sb)| sb)
+            let stripe_buffer = sb_ref.values()
                 .find(|&stripe_buffer| {
                     !stripe_buffer.is_empty() &&
                     lba < stripe_buffer.next_lba() &&

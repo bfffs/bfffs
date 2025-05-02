@@ -60,7 +60,7 @@ impl fmt::Display for Health {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Self::Online => "Online".fmt(f),
-            Self::Degraded(n) => write!(f, "Degraded({})", n),
+            Self::Degraded(n) => write!(f, "Degraded({n})"),
             Self::Rebuilding => "Rebuilding".fmt(f),
             Self::Faulted(FaultedReason::Removed) => "Faulted(removed)".fmt(f),
             Self::Faulted(FaultedReason::User) => "Faulted(administratively)".fmt(f),

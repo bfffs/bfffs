@@ -89,7 +89,7 @@ impl Gnop {
     pub fn error_prob(&self, prob: i32) {
         let r = Command::new("gnop")
             .args(["configure", "-r"])
-            .arg(format!("{}", prob))
+            .arg(format!("{prob}"))
             .arg(self.as_path())
             .status()
             .expect("Failed to execute command")

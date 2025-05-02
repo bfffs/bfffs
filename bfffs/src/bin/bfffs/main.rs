@@ -111,7 +111,7 @@ impl Dump {
     async fn dump_fsm(self) {
         let db = self.load_db().await;
         for s in db.dump_fsm().await.into_iter() {
-            println!("{}", s)
+            println!("{s}")
         }
     }
 
@@ -662,6 +662,8 @@ mod pool {
 
     use lalrpop_util::lalrpop_mod;
     lalrpop_mod!(
+        // See https://github.com/lalrpop/lalrpop/issues/1060
+        #[allow(clippy::uninlined_format_args)]
         pub pool_create_parser
     );
     use pool_create_parser::PoolParser;
@@ -1022,7 +1024,7 @@ async fn main() {
         }
     };
     if let Err(e) = r {
-        eprintln!("{}", e);
+        eprintln!("{e}");
         std::process::exit(1);
     }
 }

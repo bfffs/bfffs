@@ -727,8 +727,8 @@ impl Database {
             let inner2 = inner.clone();
             inner.idml.advance_transaction(move |txg| async move {
                 let guard = inner2.fs_trees.read().await;
-                guard.iter()
-                    .map(move |(_, itree)| {
+                guard.values()
+                    .map(move |itree| {
                         itree.clone().flush(txg)
                     }).collect::<FuturesUnordered<_>>()
                     .try_collect::<Vec<_>>().await?;

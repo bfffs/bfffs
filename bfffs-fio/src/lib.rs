@@ -213,6 +213,7 @@ pub extern "C" fn fio_bfffs_commit(_td: *mut thread_data) -> libc::c_int {
 ///
 /// Caller must ensure validity of the pointer arguments
 #[no_mangle]
+#[allow(dangerous_implicit_autorefs)]
 pub unsafe extern "C" fn fio_bfffs_event(
     td: *mut thread_data,
     event: libc::c_int,
