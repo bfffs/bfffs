@@ -1868,6 +1868,9 @@ impl<A, D, K, V> Tree<A, D, K, V>
         })
     }
 
+    // Clippy wrongly suggests combining a Option::is_some() && <BOOL>
+    // expression into a let expression, but that's not allowed in stable Rust.
+    #[allow(clippy::unnecessary_unwrap)]
     fn range_delete_pass2_r<R, T>(
         self: Arc<Self>,
         guard: TreeWriteGuard<A, K, V>,
