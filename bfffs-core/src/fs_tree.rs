@@ -985,7 +985,7 @@ impl FSValue {
     }
 // LCOV_EXCL_STOP
 
-    pub fn as_extent(&self) -> Option<Extent> {
+    pub fn as_extent(&self) -> Option<Extent<'_>> {
         if let FSValue::InlineExtent(extent) = self {
             Some(Extent::Inline(extent))
         } else if let FSValue::BlobExtent(extent) = self {

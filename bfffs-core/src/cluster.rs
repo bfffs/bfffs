@@ -484,7 +484,7 @@ impl<'a> FreeSpaceMap {
     }
 
     /// Return an iterator over the zone IDs of all open zones
-    fn open_zone_ids(&self) -> Keys<ZoneT, OpenZone> {
+    fn open_zone_ids(&self) -> Keys<'_, ZoneT, OpenZone> {
         self.open_zones.keys()
     }
 

@@ -449,7 +449,7 @@ impl<'fd> VdevFile<'fd> {
 
     /// Sync the `Vdev`, ensuring that all data written so far reaches stable
     /// storage.
-    pub fn sync_all(&self) -> VdevFileFut
+    pub fn sync_all(&self) -> VdevFileFut<'_>
     {
         let fut = AioFileExt::sync_all(&self.fd).unwrap()
             .map_ok(drop)
@@ -504,7 +504,7 @@ impl<'fd> VdevFile<'fd> {
     ///
     /// - `sglist`:     Buffers of data to write
     /// * `lba`     LBA to write to
-    pub fn write_spacemap(&self, sglist: SGList, lba: LbaT) -> VdevFileFut
+    pub fn write_spacemap(&self, sglist: SGList, lba: LbaT) -> VdevFileFut<'_>
     {
         let bytes: u64 = sglist.iter()
             .map(DivBuf::len)
@@ -525,7 +525,7 @@ impl<'fd> VdevFile<'fd> {
         self.writev_at_unchecked(sglist, lba)
     }
 
-    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT) -> VdevFileFut
+    fn writev_at_unchecked(&self, sglist: SGList, lba: LbaT) -> VdevFileFut<'_>
     {
         let off = lba * (BYTES_PER_LBA as u64);
 
