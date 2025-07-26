@@ -62,7 +62,7 @@ impl SGCursor<'_> {
 }
 
 impl<'a, T: AsRef<[IoVec]>> From<&'a T> for SGCursor<'a> {
-    fn from(src: &T) -> SGCursor {
+    fn from(src: &T) -> SGCursor<'_> {
         SGCursor { sglist: src.as_ref(), sglist_idx: 0, iovec_idx: 0}
     }
 }

@@ -486,6 +486,7 @@ pub static mut IOENGINE: ioengine_ops = ioengine_ops {
     prepopulate_file:     None,
     report_zones:         None,
     reset_wp:             None,
+    move_zone_wp:         None,
     queue:                Some(fio_bfffs_queue),
     setup:                None,
     terminate:            None,
