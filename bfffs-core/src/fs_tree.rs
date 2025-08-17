@@ -679,8 +679,9 @@ impl Timespec {
 
 impl From<nix::sys::time::TimeSpec> for Timespec {
     fn from(ts: nix::sys::time::TimeSpec) -> Self {
+        #[allow(clippy::useless_conversion)]    // Not useless on i686
         Timespec {
-            sec: ts.tv_sec(),
+            sec: ts.tv_sec().into(),
             nsec: ts.tv_nsec() as u32
         }
     }
