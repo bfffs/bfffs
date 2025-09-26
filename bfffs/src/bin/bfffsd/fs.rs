@@ -101,13 +101,13 @@ impl FuseFs {
     fn cache_file(&self, parent_ino: u64, name: &OsStr, fd: FileDataMut) {
         let name_key = (parent_ino, name.to_owned());
         let old_ino = self.names.lock().unwrap().insert(name_key, fd.ino());
-        if old_ino.is_some() {
+        if let Some(oino) = old_ino {
             // XXX Can reach this panic after a FORGET when NFS looks up "."
             panic!(
                 "Create of an existing file: {}/{:?} was {} now {}",
                 parent_ino,
                 name,
-                old_ino.unwrap(),
+                oino,
                 fd.ino()
             );
         }
