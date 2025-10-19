@@ -141,7 +141,7 @@ mod fs {
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd0.ino());
+        assert_eq!(dirent.d_fileno, fd0.ino());
 
         // The parent dir's link count should not have increased
         let parent_attr = h.fs.getattr(&rooth).await.unwrap();
@@ -1613,14 +1613,14 @@ root:
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, c"..");
-        assert_eq!(u64::from(dotdot.d_fileno), root.ino());
+        assert_eq!(dotdot.d_fileno, root.ino());
         let (dot, _) = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, c".");
-        assert_eq!(u64::from(dot.d_fileno), fd.ino());
+        assert_eq!(dot.d_fileno, fd.ino());
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
@@ -1634,7 +1634,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
 
         // The parent dir's link count should've increased
         let parent_attr = h.fs.getattr(&rooth).await.unwrap();
@@ -1727,7 +1727,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -1780,7 +1780,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
     }
 
     /// mknod(2) should update the parent dir's timestamps
@@ -1834,7 +1834,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
     }
 
     /// mkfifo(2) should update the parent dir's timestamps
@@ -1888,7 +1888,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name, c"x");
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
     }
 
     /// mksock(2) should update the parent dir's timestamps
@@ -2277,7 +2277,7 @@ root:
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, c".");
-        assert_eq!(u64::from(dot.d_fileno), root.ino());
+        assert_eq!(dot.d_fileno, root.ino());
     }
 
     /// Readdir beginning at the offset of the last dirent.  The NFS server will
@@ -2349,7 +2349,7 @@ root:
         // filename1 happens to come first.
         let mut stream0 = Box::pin(h.fs.readdir(&rooth, 0));
         let (result0, offset0) = stream0.try_next().await.unwrap().unwrap();
-        assert_eq!(u64::from(result0.d_fileno), fd1.ino());
+        assert_eq!(result0.d_fileno, fd1.ino());
 
         // Now interrupt the stream, and resume with the supplied offset.
         let mut expected = HashSet::new();
@@ -2389,7 +2389,7 @@ root:
         // filename1 happens to come first.
         let mut stream0 = Box::pin(h.fs.readdir(&rooth, 0));
         let (result0, offset0) = stream0.try_next().await.unwrap().unwrap();
-        assert_eq!(u64::from(result0.d_fileno), fd1.ino());
+        assert_eq!(result0.d_fileno, fd1.ino());
 
         // Now interrupt the stream, remove the first has bucket entry, and
         // resume with the supplied offset.
@@ -2928,7 +2928,7 @@ root:
         let entries = readdir_all(&h.fs, &dstdir_fdh, 0).await;
         let (de, _) = entries
             .into_iter()
-            .find(|(dirent, _)| u64::from(dirent.d_fileno) == src_ino )
+            .find(|(dirent, _)| dirent.d_fileno == src_ino )
             .unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
         #[cfg(debug_assertions)]
@@ -3687,7 +3687,7 @@ root:
             CStr::from_ptr(&dirent.d_name as *const c_char)
         };
         assert_eq!(dirent_name.to_str().unwrap(), srcname.to_str().unwrap());
-        assert_eq!(u64::from(dirent.d_fileno), fd.ino());
+        assert_eq!(dirent.d_fileno, fd.ino());
 
         let attr = h.fs.getattr(&fdh).await.unwrap();
         assert_eq!(attr.mode.0, libc::S_IFLNK | 0o642);

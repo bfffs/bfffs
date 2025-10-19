@@ -41,7 +41,7 @@ histogram = "0.6"
 itertools = "0.13.0"
 lalrpop = { version = "0.22.0", default-features = false, features = ["lexer"] }
 lalrpop-util = { version = "0.22.0",default-features = false }
-libc = "0.2.158"
+libc = "0.2.176"
 mdconfig = "0.2.0"
 metrohash = "1.0.2"
 mockall = "0.13.0"
