@@ -8,7 +8,7 @@ use std::{
 };
 
 use ::bfffs::Bfffs;
-use assert_cmd::{cargo::cargo_bin, prelude::*};
+use assert_cmd::prelude::*;
 use regex::Regex;
 use tempfile::{Builder, TempDir};
 

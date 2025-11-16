@@ -12,7 +12,7 @@ use std::{
 };
 
 use ::bfffs::Bfffs;
-use assert_cmd::{cargo::cargo_bin, prelude::*};
+use assert_cmd::prelude::*;
 use tempfile::{Builder, TempDir};
 
 use super::super::super::*;
