@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use assert_cmd::{cargo::cargo_bin, prelude::*};
+use assert_cmd::prelude::*;
 use function_name::named;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};

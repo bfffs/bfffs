@@ -10,6 +10,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[macro_use]
+extern crate assert_cmd;
+
 use assert_cmd::prelude::*;
 use clap::{crate_version, Parser};
 use freebsd_libgeom as geom;
