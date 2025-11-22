@@ -477,7 +477,7 @@ impl Manager {
 
     /// Set the maximum amount of dirty cached data, in bytes.
     ///
-    /// This is independent of [`self.cache_size`].
+    /// This is independent of [`Self::cache_size`].
     pub fn writeback_size(&mut self, writeback_size: usize) {
         self.writeback_size = Some(writeback_size);
     }
