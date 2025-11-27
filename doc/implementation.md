@@ -1,7 +1,9 @@
 BFFFS Implementation
 ====================
 
-:author: Alan Somers <asomers@gmail.com>
+---
+author: Alan Somers <asomers@gmail.com>
+---
 
 Layers
 ------
