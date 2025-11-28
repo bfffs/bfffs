@@ -362,8 +362,10 @@ impl Dirent {
         let mut fs_dirent: libc::dirent = unsafe { mem::zeroed() };
         fs_dirent.d_fileno = self.ino as _;
         fs_dirent.d_off = offs as i64;
-        // TODO: is it safe to reduce d_reclen based on the actual length of
-        // d_name ?
+        // d_reclen is only important when the records are packed into a
+        // contiguous byte buffer where each dirent may have variable allocated
+        // space.  But since bfffs_core doesn't do that, we should just set it
+        // to the allocated space for this object.  Which is the struct's size.
         fs_dirent.d_reclen = DIRENT_SIZE as u16;
         fs_dirent.d_type = self.dtype;
         fs_dirent.d_namlen = namlen as _;

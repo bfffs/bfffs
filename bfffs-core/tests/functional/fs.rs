@@ -2270,12 +2270,14 @@ root:
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, c"..");
+        assert_eq!(dotdot.d_namlen, 2);
         let dot = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
         };
         assert_eq!(dot_name, c".");
+        assert_eq!(dot.d_namlen, 1);
         assert_eq!(dot.d_fileno, root.ino());
     }
 
