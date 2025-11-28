@@ -108,8 +108,7 @@ mod fs {
     }
 
     /// Helper method to read the full contents of a directory
-    async fn readdir_all(fs: &Fs, fd: &FileData, offs: i64)
-        -> Vec<(libc::dirent, i64)>
+    async fn readdir_all(fs: &Fs, fd: &FileData, offs: i64) -> Vec<libc::dirent>
     {
         fs.readdir(fd, offs)
             .try_collect::<Vec<_>>()
@@ -131,9 +130,9 @@ mod fs {
         assert_eq!(fd1.ino(), fd0.ino());
 
         // The parent dir should have an "x" directory entry
-        let (dirent, _ofs) = readdir_all(&h.fs, &rooth, 0).await
+        let dirent = readdir_all(&h.fs, &rooth, 0).await
             .into_iter()
-            .find(|(dirent, _ofs)| {
+            .find(|dirent| {
                 dirent.d_name[0] == 'x' as i8
             }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_REG);
@@ -1607,14 +1606,14 @@ root:
 
         // The new dir should have "." and ".." directory entries
         let entries = readdir_all(&h.fs, &fdh, 0).await;
-        let (dotdot, _) = entries[0];
+        let dotdot = entries[0];
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         let dotdot_name = unsafe{
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, c"..");
         assert_eq!(dotdot.d_fileno, root.ino());
-        let (dot, _) = entries[1];
+        let dot = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
@@ -1624,9 +1623,9 @@ root:
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_DIR);
@@ -1717,9 +1716,9 @@ root:
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_CHR);
@@ -1770,9 +1769,9 @@ root:
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_BLK);
@@ -1824,9 +1823,9 @@ root:
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_FIFO);
@@ -1878,9 +1877,9 @@ root:
 
         // The parent dir should have an "x" directory entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_SOCK);
@@ -2265,13 +2264,13 @@ root:
         let root = h.fs.root();
         let rooth = root.handle();
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dotdot, _) = entries[0];
+        let dotdot = entries[0];
         assert_eq!(dotdot.d_type, libc::DT_DIR);
         let dotdot_name = unsafe{
             CStr::from_ptr(&dotdot.d_name as *const c_char)
         };
         assert_eq!(dotdot_name, c"..");
-        let (dot, _) = entries[1];
+        let dot = entries[1];
         assert_eq!(dot.d_type, libc::DT_DIR);
         let dot_name = unsafe{
             CStr::from_ptr(&dot.d_name as *const c_char)
@@ -2291,7 +2290,7 @@ root:
         let entries = readdir_all(&h.fs, &rooth, 0).await;
         // Should be two entries, "." and ".."
         assert_eq!(2, entries.len());
-        let ofs = entries[1].1;
+        let ofs = entries[1].d_off;
         let entries2 = readdir_all(&h.fs, &rooth, ofs).await;
         // Nothing should be returned
         assert!(entries2.is_empty());
@@ -2318,7 +2317,7 @@ root:
         expected.insert(filename0);
         expected.insert(filename1);
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        for (entry, _) in entries.into_iter() {
+        for entry in entries.into_iter() {
             let nameptr = entry.d_name.as_ptr() as *const u8;
             let namelen = usize::from(entry.d_namlen);
             let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
@@ -2348,7 +2347,7 @@ root:
         // There's no requirement for the order of readdir's output, but
         // filename1 happens to come first.
         let mut stream0 = Box::pin(h.fs.readdir(&rooth, 0));
-        let (result0, offset0) = stream0.try_next().await.unwrap().unwrap();
+        let result0 = stream0.try_next().await.unwrap().unwrap();
         assert_eq!(result0.d_fileno, fd1.ino());
 
         // Now interrupt the stream, and resume with the supplied offset.
@@ -2357,8 +2356,8 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename0);
         drop(stream0);
-        let entries = readdir_all(&h.fs, &rooth, offset0).await;
-        for (entry, _) in entries.into_iter() {
+        let entries = readdir_all(&h.fs, &rooth, result0.d_off).await;
+        for entry in entries.into_iter() {
             let nameptr = entry.d_name.as_ptr() as *const u8;
             let namelen = usize::from(entry.d_namlen);
             let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
@@ -2388,7 +2387,7 @@ root:
         // There's no requirement for the order of readdir's output, but
         // filename1 happens to come first.
         let mut stream0 = Box::pin(h.fs.readdir(&rooth, 0));
-        let (result0, offset0) = stream0.try_next().await.unwrap().unwrap();
+        let result0 = stream0.try_next().await.unwrap().unwrap();
         assert_eq!(result0.d_fileno, fd1.ino());
 
         // Now interrupt the stream, remove the first has bucket entry, and
@@ -2400,8 +2399,8 @@ root:
         expected.insert(OsString::from(".."));
         expected.insert(filename0);
         drop(stream0);
-        let entries = readdir_all(&h.fs, &rooth, offset0).await;
-        for (entry, _) in entries.into_iter() {
+        let entries = readdir_all(&h.fs, &rooth, result0.d_off).await;
+        for entry in entries.into_iter() {
             let nameptr = entry.d_name.as_ptr() as *const u8;
             let namelen = usize::from(entry.d_namlen);
             let name_s = unsafe{slice::from_raw_parts(nameptr, namelen)};
@@ -2926,9 +2925,9 @@ root:
         let dstdir_inode = h.fs.getattr(&dstdir_fdh).await.unwrap();
         assert_eq!(dstdir_inode.nlink, 2);
         let entries = readdir_all(&h.fs, &dstdir_fdh, 0).await;
-        let (de, _) = entries
+        let de = entries
             .into_iter()
-            .find(|(dirent, _)| dirent.d_fileno == src_ino )
+            .find(|dirent| dirent.d_fileno == src_ino )
             .unwrap();
         assert_eq!(de.d_type, libc::DT_REG);
         #[cfg(debug_assertions)]
@@ -3021,7 +3020,7 @@ root:
         }
         assert!(!readdir_all(&h.fs, &rooth, 0).await
             .into_iter()
-            .any(|(dirent, _)| dirent.d_name[0] == 'x' as i8));
+            .any(|dirent| dirent.d_name[0] == 'x' as i8));
 
         // Make sure the parent dir's refcount dropped
         let inode = h.fs.getattr(&rooth).await.unwrap();
@@ -3677,9 +3676,9 @@ root:
 
         // The parent dir should have an "src" symlink entry
         let entries = readdir_all(&h.fs, &rooth, 0).await;
-        let (dirent, _ofs) = entries
+        let dirent = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 's' as i8
         }).expect("'s' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_LNK);
@@ -3747,7 +3746,7 @@ root:
         let entries = readdir_all(&h.fs, &rooth, 0).await;
         let x_de = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
@@ -3925,7 +3924,7 @@ root:
         let entries = readdir_all(&h.fs, &rooth, 0).await;
         let x_de = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
@@ -3987,7 +3986,7 @@ root:
         let entries = readdir_all(&h.fs, &rooth, 0).await;
         let x_de = entries
         .into_iter()
-        .find(|(dirent, _ofs)| {
+        .find(|dirent| {
             dirent.d_name[0] == 'x' as i8
         });
         assert!(x_de.is_none(), "Directory entry was not removed");

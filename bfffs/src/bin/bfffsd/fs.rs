@@ -789,8 +789,8 @@ impl Filesystem for FuseFs {
         let stream = self
             .fs
             .readdir(&fd, soffset)
-            .map_ok(move |(dirent, offset)| {
-                assert!(offset as u64 >= soffset as u64);
+            .map_ok(move |dirent| {
+                assert!(dirent.d_off as u64 >= soffset as u64);
                 let kind = match dirent.d_type {
                     libc::DT_FIFO => FileType::NamedPipe,
                     libc::DT_CHR => FileType::CharDevice,
@@ -808,7 +808,7 @@ impl Filesystem for FuseFs {
                     inode: dirent.d_fileno.into(),
                     kind,
                     name: OsStr::from_bytes(name).to_owned(),
-                    offset,
+                    offset: dirent.d_off,
                 }
             })
             .map_err(fuse3::Errno::from);

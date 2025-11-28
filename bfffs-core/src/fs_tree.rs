@@ -354,6 +354,27 @@ impl Dirent {
     pub fn allocated_space(&self) -> usize {
         self.name.len()
     }
+
+    pub fn into_libc_dirent(self, offs: u64) -> libc::dirent {
+        const DIRENT_SIZE: usize = mem::size_of::<libc::dirent>();
+
+        let namlen = self.name.as_bytes().len();
+        let mut fs_dirent: libc::dirent = unsafe { mem::zeroed() };
+        fs_dirent.d_fileno = self.ino as _;
+        fs_dirent.d_off = offs as i64;
+        // TODO: is it safe to reduce d_reclen based on the actual length of
+        // d_name ?
+        fs_dirent.d_reclen = DIRENT_SIZE as u16;
+        fs_dirent.d_type = self.dtype;
+        fs_dirent.d_namlen = namlen as _;
+        fs_dirent.d_name = unsafe{mem::zeroed()};
+        // libc::dirent uses "char" when it should be using
+        // "unsigned char", so we need an unsafe conversion
+        let p = self.name.as_bytes() as *const [u8]
+            as *const [i8];
+        fs_dirent.d_name[0..namlen].copy_from_slice(unsafe{&*p});
+        fs_dirent
+    }
 }
 
 impl HTItem for Dirent {

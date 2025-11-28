@@ -67,7 +67,7 @@ mock! {
         pub async fn read(&self, fd: &FileData, offset: u64, size: usize)
             -> Result<SGList, i32>;
         pub fn readdir(&self, fd: &FileData, soffs: i64)
-            -> impl Stream<Item=Result<(libc::dirent, i64), i32>> + Send;
+            -> impl Stream<Item=Result<libc::dirent, i32>> + Send;
         pub async fn readlink(&self, fd: &FileData) -> Result<OsString, i32>;
         pub async fn rename<'a>(&self, parent: &'a FileData, fd: &'a FileData,
             name: &'a OsStr, newparent: &'a FileData, newino: Option<u64>,

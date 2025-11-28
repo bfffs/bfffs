@@ -27,7 +27,6 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Debug,
     io,
-    mem,
     os::unix::ffi::OsStrExt,
     pin::Pin,
     sync::{
@@ -1852,7 +1851,7 @@ impl Fs {
     // 12+ ABI, since that has a builtin offset field.  Depends on
     // https://github.com/rust-lang/libc/pull/2406
     pub fn readdir(&self, fd: &FileData, soffs: i64)
-        -> impl Stream<Item=std::result::Result<(libc::dirent, i64), i32>> + Send
+        -> impl Stream<Item=std::result::Result<libc::dirent, i32>> + Send
     {
 
         bitfield! {
@@ -1901,8 +1900,7 @@ impl Fs {
             /// # Panics
             ///
             /// Panics if there is no contained bucket
-            fn pop_bucket(mut self: Pin<&mut Self>)
-                -> (libc::dirent, i64)
+            fn pop_bucket(mut self: Pin<&mut Self>) -> libc::dirent
             {
                 let mut bucketing = self.bucketing.take().unwrap();
                 let dirent = bucketing.bucket.pop().unwrap();
@@ -1915,11 +1913,11 @@ impl Fs {
                     self.bucketing = Some(bucketing);
                     curs
                 };
-                (dirent2dirent(dirent), curs.0 as i64)
+                dirent.into_libc_dirent(curs.0)
             }
         }
         impl Stream for ReaddirStream {
-            type Item = Result<(libc::dirent, i64)>;
+            type Item = Result<libc::dirent>;
 
             fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context)
                 -> Poll<Option<Self::Item>>
@@ -1932,8 +1930,8 @@ impl Fs {
                     Poll::Ready(Some(Ok((k, v)))) => match v {
                         FSValue::DirEntry(dirent) => {
                             let curs = Cursor::new(k.offset() + 1, 0);
-                            let de = dirent2dirent(dirent);
-                            Poll::Ready(Some(Ok((de, curs.0 as i64))))
+                            let de = dirent.into_libc_dirent(curs.0);
+                            Poll::Ready(Some(Ok(de)))
                         },
                         FSValue::DirEntries(mut bucket) => {
                             for _ in 0..self.bucket_idx {
@@ -1960,24 +1958,6 @@ impl Fs {
                     Poll::Pending => Poll::Pending,
                 }
             }
-        }
-
-        const DIRENT_SIZE: usize = mem::size_of::<libc::dirent>();
-
-        fn dirent2dirent(bfffs_dirent: Dirent) -> libc::dirent {
-            let namlen = bfffs_dirent.name.as_bytes().len();
-            let mut fs_dirent: libc::dirent = unsafe { mem::zeroed() };
-            fs_dirent.d_fileno = bfffs_dirent.ino as _;
-            fs_dirent.d_reclen = DIRENT_SIZE as u16;
-            fs_dirent.d_type = bfffs_dirent.dtype;
-            fs_dirent.d_namlen = namlen as _;
-            fs_dirent.d_name = unsafe{mem::zeroed()};
-            // libc::dirent uses "char" when it should be using
-            // "unsigned char", so we need an unsafe conversion
-            let p = bfffs_dirent.name.as_bytes() as *const [u8]
-                as *const [i8];
-            fs_dirent.d_name[0..namlen].copy_from_slice(unsafe{&*p});
-            fs_dirent
         }
 
         let ino = fd.ino;
