@@ -468,6 +468,9 @@ struct Cli {
     /// Print detailed test output
     #[clap(long = "nocapture")]
     verbose: bool,
+    /// Ignored.  For compatibility purposes only
+    #[clap(long = "test-threads")]
+    test_threads: Option<String>,
     testcase: Option<String>
 }
 
