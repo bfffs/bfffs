@@ -2443,92 +2443,95 @@ mod readdir {
 
     /// A directory containing one file of every file type recognized by
     /// rust-fuse
-    // libc's ino type could be either u32 or u64, depending on which
-    // version of freebsd we're targeting.
     #[test]
     fn all_file_types() {
         let fh = 0xdeadbeef;
-        // libc's ino type could be either u32 or u64, depending on which
-        // version of freebsd we're targeting.
         let ofs = 0;
         let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
-        let dot_ino = 42u32;
+        let dot_ino = 42u64;
         let dot_ofs = 0;
         let mut regname = [0; 256];
         regname[0] = 'r' as libc::c_char;
-        let reg_ino = 43u32;
+        let reg_ino = 43u64;
         let reg_ofs = 1;
         let mut charname = [0; 256];
         charname[0] = 'c' as libc::c_char;
-        let char_ino = 43u32;
+        let char_ino = 43u64;
         let char_ofs = 2;
         let mut blockname = [0; 256];
         blockname[0] = 'b' as libc::c_char;
-        let block_ino = 43u32;
+        let block_ino = 43u64;
         let block_ofs = 3;
         let mut pipename = [0; 256];
         pipename[0] = 'p' as libc::c_char;
-        let pipe_ino = 43u32;
+        let pipe_ino = 43u64;
         let pipe_ofs = 4;
         let mut symlinkname = [0; 256];
         symlinkname[0] = 'l' as libc::c_char;
-        let symlink_ino = 43u32;
+        let symlink_ino = 43u64;
         let symlink_ofs = 5;
         let mut sockname = [0; 256];
         sockname[0] = 's' as libc::c_char;
-        let sock_ino = 43u32;
+        let sock_ino = 43u64;
         let sock_ofs = 6;
         let mut d_dirent: libc::dirent = unsafe { mem::zeroed() };
-        d_dirent.d_fileno = dot_ino.into();
+        d_dirent.d_fileno = dot_ino;
+        d_dirent.d_off = dot_ofs;
         d_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         d_dirent.d_type = libc::DT_DIR;
         d_dirent.d_name = dotname;
         d_dirent.d_namlen = 1;
         let mut reg_dirent: libc::dirent = unsafe { mem::zeroed() };
-        reg_dirent.d_fileno = reg_ino.into();
+        reg_dirent.d_fileno = reg_ino;
+        reg_dirent.d_off = reg_ofs;
         reg_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         reg_dirent.d_type = libc::DT_REG;
         reg_dirent.d_name = regname;
         reg_dirent.d_namlen = 1;
         let mut char_dirent: libc::dirent = unsafe { mem::zeroed() };
-        char_dirent.d_fileno = char_ino.into();
+        char_dirent.d_fileno = char_ino;
+        char_dirent.d_off = char_ofs;
         char_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         char_dirent.d_type = libc::DT_CHR;
         char_dirent.d_name = charname;
         char_dirent.d_namlen = 1;
         let mut block_dirent: libc::dirent = unsafe { mem::zeroed() };
-        block_dirent.d_fileno = block_ino.into();
+        block_dirent.d_fileno = block_ino;
+        block_dirent.d_off = block_ofs;
         block_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         block_dirent.d_type = libc::DT_BLK;
         block_dirent.d_name = blockname;
         block_dirent.d_namlen = 1;
         let mut fifo_dirent: libc::dirent = unsafe { mem::zeroed() };
-        fifo_dirent.d_fileno = pipe_ino.into();
+        fifo_dirent.d_fileno = pipe_ino;
+        fifo_dirent.d_off = pipe_ofs;
         fifo_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         fifo_dirent.d_type = libc::DT_FIFO;
         fifo_dirent.d_name = pipename;
         fifo_dirent.d_namlen = 1;
         let mut lnk_dirent: libc::dirent = unsafe { mem::zeroed() };
-        lnk_dirent.d_fileno = symlink_ino.into();
+        lnk_dirent.d_fileno = symlink_ino;
+        lnk_dirent.d_off = symlink_ofs;
         lnk_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         lnk_dirent.d_type = libc::DT_LNK;
         lnk_dirent.d_name = symlinkname;
         lnk_dirent.d_namlen = 1;
         let mut sock_dirent: libc::dirent = unsafe { mem::zeroed() };
-        sock_dirent.d_fileno = sock_ino.into();
+        sock_dirent.d_fileno = sock_ino;
+        sock_dirent.d_off = sock_ofs;
         sock_dirent.d_reclen = mem::size_of::<libc::dirent>() as u16;
         sock_dirent.d_type = libc::DT_SOCK;
         sock_dirent.d_name = sockname;
         sock_dirent.d_namlen = 1;
         let contents = vec![
-            Ok((d_dirent, dot_ofs)),
-            Ok((reg_dirent, reg_ofs)),
-            Ok((char_dirent, char_ofs)),
-            Ok((block_dirent, block_ofs)),
-            Ok((fifo_dirent, pipe_ofs)),
-            Ok((lnk_dirent, symlink_ofs)),
-            Ok((sock_dirent, sock_ofs)),
+            Ok(d_dirent),
+            Ok(reg_dirent),
+            Ok(char_dirent),
+            Ok(block_dirent),
+            Ok(fifo_dirent),
+            Ok(lnk_dirent),
+            Ok(sock_dirent),
         ];
 
         let request = Request::default();
@@ -2629,13 +2632,11 @@ mod readdir {
     }
 
     /// A directory containing nothing but "." and ".."
-    // libc's ino type could be either u32 or u64, depending on which
-    // version of freebsd we're targeting.
     #[test]
     fn empty() {
         let fh = 0xdeadbeef;
-        let ino = 42u32;
-        let parent = 41u32;
+        let ino = 42u64;
+        let parent = 41u64;
         let ofs = 0;
         let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
@@ -2643,18 +2644,18 @@ mod readdir {
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
         let mut dirent0: libc::dirent = unsafe { mem::zeroed() };
-        dirent0.d_fileno = ino.into();
+        dirent0.d_fileno = ino;
         dirent0.d_reclen = mem::size_of::<libc::dirent>() as u16;
         dirent0.d_type = libc::DT_DIR;
         dirent0.d_name = dotname;
         dirent0.d_namlen = 1;
         let mut dirent1: libc::dirent = unsafe { mem::zeroed() };
-        dirent1.d_fileno = parent.into();
+        dirent1.d_fileno = parent;
         dirent1.d_reclen = mem::size_of::<libc::dirent>() as u16;
         dirent1.d_type = libc::DT_DIR;
         dirent1.d_name = dotdotname;
         dirent1.d_namlen = 2;
-        let contents = vec![Ok((dirent0, 0)), Ok((dirent1, 1))];
+        let contents = vec![Ok(dirent0), Ok(dirent1)];
 
         let request = Request::default();
 
@@ -2700,13 +2701,11 @@ mod readdir {
 
     /// If fuse3's internal buffer runs out of space, it will terminate early
     /// and drop the stream.  Nothing bad should happen.
-    // libc's ino type could be either u32 or u64, depending on which
-    // version of freebsd we're targeting.
     #[test]
     fn out_of_space() {
         let fh = 0xdeadbeef;
-        let ino = 42u32;
-        let parent = 41u32;
+        let ino = 42u64;
+        let parent = 41u64;
         let ofs = 0;
         let mut dotname = [0; 256];
         dotname[0] = '.' as libc::c_char;
@@ -2714,18 +2713,18 @@ mod readdir {
         dotdotname[0] = '.' as libc::c_char;
         dotdotname[1] = '.' as libc::c_char;
         let mut dirent0: libc::dirent = unsafe { mem::zeroed() };
-        dirent0.d_fileno = ino.into();
+        dirent0.d_fileno = ino;
         dirent0.d_reclen = mem::size_of::<libc::dirent>() as u16;
         dirent0.d_type = libc::DT_DIR;
         dirent0.d_name = dotname;
         dirent0.d_namlen = 1;
         let mut dirent1: libc::dirent = unsafe { mem::zeroed() };
-        dirent1.d_fileno = parent.into();
+        dirent1.d_fileno = parent;
         dirent1.d_reclen = mem::size_of::<libc::dirent>() as u16;
         dirent1.d_type = libc::DT_DIR;
         dirent1.d_name = dotdotname;
         dirent1.d_namlen = 2;
-        let contents = vec![Ok((dirent0, 0)), Ok((dirent1, 1))];
+        let contents = vec![Ok(dirent0), Ok(dirent1)];
 
         let request = Request::default();
 
