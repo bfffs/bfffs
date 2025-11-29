@@ -5,7 +5,7 @@ The Black Footed Ferret File System
 ## Overview
 
 BFFFS is a new copy-on-write file system written entirely in Rust.  It aims
-tohave all of the usual COW goodies (transactional integrity, snapshots,
+to have all of the usual COW goodies (transactional integrity, snapshots,
 clones, etc), but with better RAID, faster performance in some ways, and
 native support for SMR hard drives and OpenChannel SSDs.
 
