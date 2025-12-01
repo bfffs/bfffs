@@ -3,7 +3,7 @@ name = "bfffs-core"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 edition = "2021"
-rust-version = "1.80.0"
+rust-version = "1.89.0"
 
 [lib]
 # BFFFS doesn't use doctests, because it's not a real library.
@@ -19,6 +19,7 @@ bincode = { workspace = true, features = ["i128"] }
 bitfield = { workspace = true }
 blosc = { workspace = true }
 byteorder = { workspace = true }
+byteshuffle = { workspace = true }
 cfg-if.workspace = true
 divbuf.workspace = true
 downcast = { workspace = true }
@@ -31,6 +32,7 @@ itertools = { workspace = true }
 hexdump = { workspace = true }
 isa-l = { path = "../isa-l" }
 libc = { workspace = true }
+lz4_flex = { workspace = true }
 metrohash = { workspace = true }
 mockall_double = { workspace = true }
 nix = { workspace = true, features = ["feature", "fs", "ioctl", "mount", "time"] }
@@ -47,6 +49,7 @@ tokio-file = { workspace = true }
 tracing = { workspace = true }
 tracing-futures = { workspace = true }
 uuid = { workspace = true, features = ["v4", "std"] }
+zstd = { workspace = true }
 
 [dev-dependencies]
 clap = { workspace = true, features = ["derive", "wrap_help"] }
