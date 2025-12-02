@@ -20,7 +20,7 @@ task:
         CARGO_ARGS: --all-features
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
-        image: freebsd-15-0-alpha4-amd64-ufs
+        image: freebsd-15-0-release-amd64-ufs
         platform: freebsd
         cpu: 4
         disk: 40
@@ -45,19 +45,12 @@ task:
     - . $HOME/.cargo/env
     - cargo test $CARGO_ARGS --all --all-targets
   fio_script:
-    # Restrict the fio job to FreeBSD 14, because the ioengine has to be built
-    # separately for each fio version, the installed package doesn't include
-    # its header files.  It also needs to be build separately for FreeBSD 14+
-    # as for 13.
-    # https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=272960
-    - if [ `uname -U` -ge 1400092 ]; then
-    -   . $HOME/.cargo/env
-    -   pkg install -y fio
-    -   truncate -s 1g /tmp/bfffs.img
-    -   cargo run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
-    -   fio bfffs-fio/data/ci.fio
-    -   rm /tmp/bfffs.img
-    - fi
+    - . $HOME/.cargo/env
+    - pkg install -y fio
+    - truncate -s 1g /tmp/bfffs.img
+    - cargo run $CARGO_ARGS --bin bfffs -- pool create testpool /tmp/bfffs.img
+    - fio bfffs-fio/data/ci.fio
+    - rm /tmp/bfffs.img
   fuseless_script:
     - . $HOME/.cargo/env
     - cd bfffs
@@ -76,7 +69,7 @@ lint_task:
     VERSION: nightly
     CARGO_ARGS: --all-features
   freebsd_instance:
-    image: freebsd-15-0-alpha4-amd64-ufs
+    image: freebsd-15-0-release-amd64-ufs
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
