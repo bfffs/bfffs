@@ -69,7 +69,7 @@ lint_task:
     VERSION: nightly
     CARGO_ARGS: --all-features
   freebsd_instance:
-    image_family: freebsd-15-0
+    image: freebsd-15-0-release-amd64-ufs
   << : *SETUP
   cargo_cache:
     folder: $HOME/.cargo/registry
