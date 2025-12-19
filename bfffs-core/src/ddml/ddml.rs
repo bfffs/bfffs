@@ -174,7 +174,9 @@ impl DDML {
                 // Decompress
                 let db = dbs.try_const().unwrap();
                 if drp.is_compressed() {
-                    future::ok((pg, Compression::decompress(&db)))
+                    let r = Compression::decompress(&db, drp.lsize)
+                        .map(|unx| (pg, unx));
+                    future::ready(r)
                 } else {
                     future::ok((pg, dbs))
                 }.boxed()
@@ -192,7 +194,12 @@ impl DDML {
                                 if checksum == drp.checksum {
                                     // Somehow fault the stuff in bad
                                     let dbs = if drp.is_compressed() {
-                                        Compression::decompress(&rdb)
+                                        let r = Compression::decompress(&rdb,
+                                            drp.lsize);
+                                        match r {
+                                            Ok(dbs) => dbs,
+                                            Err(_) => { continue; }
+                                        }
                                     } else {
                                         let mut dbm = dbs.try_mut().unwrap();
                                         dbm[..].copy_from_slice(&rdb[..]);

@@ -59,7 +59,15 @@ async fn basic(ddml: DDML) {
 // moderately large and compressible file
 #[rstest]
 #[tokio::test]
-async fn compressible(ddml: DDML) {
+async fn compressible(
+    ddml: DDML,
+    #[values(
+        Compression::None,
+        Compression::LZ4(None),
+        Compression::Zstd(None)
+    )]
+    compression: Compression
+) {
     let txg = TxgT::from(0);
     let ddml2 = &ddml;
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -68,7 +76,7 @@ async fn compressible(ddml: DDML) {
     let mut vdev_raid_contents = Vec::new();
     file.read_to_end(&mut vdev_raid_contents).unwrap();
     let dbs = DivBufShared::from(vdev_raid_contents.clone());
-    ddml.put(dbs, Compression::Zstd(None), txg)
+    ddml.put(dbs, compression, txg)
     .and_then(|drp| {
         let drp2 = &drp;
         ddml2.get::<DivBufShared, DivBuf>(drp2)

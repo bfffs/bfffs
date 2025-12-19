@@ -42,6 +42,12 @@ pub struct DRP {
     // Must come first so PartialOrd can be derived
     pba: PBA,
     /// Is the record compressed?
+    // Don't store the full compression type, because that would take too much
+    // space, and space is at a premium for DRPs.  Instead, just store a bool
+    // flag.  The full compression type will be stored within the record itself.
+    // We don't want to store the "compressed" bool within the record, because
+    // that would commonly push uncompressed records' sizes over a block
+    // boundary.
     compressed: bool,
     /// Logical size.  Uncompressed size of the record
     lsize: u32,

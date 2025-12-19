@@ -66,6 +66,7 @@ mod persistence {
         // label will have unpredictable results if we create a root
         // filesystem.  TODO: make it predictable by using utimensat on the
         // root filesystem
+        // TODO: try bincode's fixint encoding
         // let tree_id = db.create_fs(None, "").await.unwrap();
         (db, ph.tempdir, ph.paths)
     }
