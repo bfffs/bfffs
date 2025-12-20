@@ -172,7 +172,6 @@ impl DDML {
             let checksum = hasher.finish();
             if checksum == drp.checksum {
                 // Decompress
-                let db = dbs.try_const().unwrap();
                 if drp.is_compressed() {
                     let r = Compression::decompress(&db, drp.lsize)
                         .map(|unx| (pg, unx));
