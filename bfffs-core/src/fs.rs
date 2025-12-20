@@ -870,7 +870,7 @@ impl Fs {
         let dataset4 = dataset.clone();
 
         // Deallocate any partial record on the left side of the range
-        let left_fut = if offset % rs > 0 {
+        let left_fut = if !offset.is_multiple_of(rs) {
             // Offset within the record where deallocation starts
             let recofs = offset % rs;
             // Length of the deallocated portion of this record
@@ -939,10 +939,10 @@ impl Fs {
         // different record.
         let right_fut = match len {
             Some(l) if (
-                            offset % rs == 0 ||
+                            offset.is_multiple_of(rs) ||
                             (offset + l) / rs > offset / rs
                        ) &&
-                       (offset + l) % rs != 0 =>
+                       !(offset + l).is_multiple_of(rs) =>
             {
                 let len = (offset + l) % rs;
                 let k = FSKey::new(ino, ObjKey::Extent(offset + l - len));
