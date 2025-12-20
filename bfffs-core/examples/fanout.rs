@@ -53,7 +53,7 @@ impl Stats {
         let (padding, total) = guard.iter().map(|(lsize, count)| {
             let lsize = *lsize as usize;
             let padding = {
-                if lsize % BYTES_PER_LBA != 0{
+                if !lsize.is_multiple_of(BYTES_PER_LBA) {
                     BYTES_PER_LBA - lsize % BYTES_PER_LBA
                 } else {
                     0

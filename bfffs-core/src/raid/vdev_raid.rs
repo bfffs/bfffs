@@ -127,7 +127,7 @@ impl StripeBuffer {
     }
 
     pub fn new(lba: LbaT, stripe_lbas: LbaT) -> Self {
-        assert!(lba % stripe_lbas == 0,
+        assert!(lba.is_multiple_of(stripe_lbas),
                 "Can't create a non-stripe-aligned StripeBuffer at lba {lba:?}"
         );
         let stripesize = stripe_lbas as usize * BYTES_PER_LBA;
@@ -1518,12 +1518,12 @@ impl VdevRaid {
             .map(|dbs| dbs.try_mut().unwrap());
         let stripe_offset = lba % (m as LbaT * chunksize);
 
-        let pre_lbas = if end_lba % chunksize > 0 {
+        let pre_lbas = if !end_lba.is_multiple_of(chunksize) {
             (lba % chunksize).min(end_lba % chunksize)
         } else {
             lba % chunksize
         };
-        let post_lbas = if end_lba % chunksize == 0 {
+        let post_lbas = if end_lba.is_multiple_of(chunksize) {
             0
         } else if end_lba % chunksize > lba % chunksize {
             chunksize - end_lba % chunksize

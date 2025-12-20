@@ -117,8 +117,8 @@ impl LruCache {
         } else {
             self.size += cache_space;
         }
-        if self.mru.is_some() {
-            if let Some(v) = self.store.get_mut(&self.mru.unwrap()) {
+        if let Some(mru) = &self.mru {
+            if let Some(v) = self.store.get_mut(mru) {
                 debug_assert!(v.mru.is_none());
                 v.mru = Some(key);
             }
@@ -132,14 +132,14 @@ impl LruCache {
     pub fn remove(&mut self, key: &Key) -> Option<Box<dyn Cacheable>> {
         self.store.remove(key).map(|v| {
             self.size -= v.buf.cache_space();
-            if v.mru.is_some() {
-                self.store.get_mut(&v.mru.unwrap()).unwrap().lru = v.lru;
+            if let Some(mru) = &v.mru {
+                self.store.get_mut(mru).unwrap().lru = v.lru;
             } else {
                 debug_assert_eq!(self.mru, Some(*key));
                 self.mru = v.lru;
             }
-            if v.lru.is_some() {
-                self.store.get_mut(&v.lru.unwrap()).unwrap().mru = v.mru;
+            if let Some(lru) = &v.lru {
+                self.store.get_mut(lru).unwrap().mru = v.mru;
             } else {
                 debug_assert_eq!(self.lru, Some(*key));
                 self.lru = v.mru;

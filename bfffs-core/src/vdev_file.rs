@@ -473,7 +473,7 @@ impl<'fd> VdevFile<'fd> {
         let off = lba * (BYTES_PER_LBA as u64);
         {
             let b: &[u8] = buf.borrow();
-            debug_assert!(b.len() % BYTES_PER_LBA == 0);
+            debug_assert!(b.len().is_multiple_of(BYTES_PER_LBA));
         }
 
         // Safe because fut's lifetime is equal to buf's (or rather, it will

@@ -3,7 +3,7 @@ setup: &SETUP
     HOME: /tmp # cargo needs it
     RUST_BACKTRACE: full  # Better info for debugging test failures.
   setup_script:
-    - pkg install -y c-blosc isa-l llvm pkgconf
+    - pkg install -y isa-l llvm pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal --default-toolchain $VERSION
     # In 12.2, aio on ufs is considered unsafe
@@ -27,7 +27,7 @@ task:
     # Use stable features
     - name: cargo test (stable)
       env:
-        VERSION: 1.80.0
+        VERSION: 1.89.0
       compute_engine_instance:
         image_project: freebsd-org-cloud-dev
         image: freebsd-14-3-release-amd64-ufs
