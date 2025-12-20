@@ -316,7 +316,6 @@ dependencies = [
  "auto_enums",
  "bincode",
  "bitfield",
- "blosc",
  "byteorder",
  "byteshuffle",
  "cfg-if",
@@ -457,23 +456,6 @@ checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
 dependencies = [
  "generic-array",
 ]
-
-[[package]]
-name = "blosc"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b60b176e1785436142a3ece7e8c5acd75a2d67e5a57e67fcf365eb08b6eb4d18"
-dependencies = [
- "blosc-sys",
- "libc",
- "thiserror",
-]
-
-[[package]]
-name = "blosc-sys"
-version = "1.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76569aca625203c979c5c37343cdfdf4d2f9f4fd5f6a4eb89b68e7f2549d37e9"
 
 [[package]]
 name = "bstr"

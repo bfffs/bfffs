@@ -15,7 +15,7 @@ BFFFS is currently implemented as a FUSE server, and currently runs on
 FreeBSD.  The easiest way to start using it with a single disk pool is to do:
 
 ```
-pkg install -y c-blosc isa-l fusefs-libs pkgconf
+pkg install -y isa-l fusefs-libs pkgconf
 cargo build
 truncate -s 1g /tmp/bfffs.img
 target/debug/bfffs pool create foo /tmp/bfffs.img

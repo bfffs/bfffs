@@ -17,7 +17,6 @@ atomic_enum = { workspace = true }
 auto_enums = { workspace = true }
 bincode = { workspace = true, features = ["i128"] }
 bitfield = { workspace = true }
-blosc = { workspace = true }
 byteorder = { workspace = true }
 byteshuffle = { workspace = true }
 cfg-if.workspace = true

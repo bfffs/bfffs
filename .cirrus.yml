@@ -3,7 +3,7 @@ setup: &SETUP
     HOME: /tmp # cargo needs it
     RUST_BACKTRACE: full  # Better info for debugging test failures.
   setup_script:
-    - pkg install -y c-blosc isa-l llvm pkgconf
+    - pkg install -y isa-l llvm pkgconf
     - fetch https://sh.rustup.rs -o rustup.sh
     - sh rustup.sh -y --profile=minimal --default-toolchain $VERSION
     # In 12.2, aio on ufs is considered unsafe

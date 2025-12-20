@@ -1,8 +1,8 @@
 // vim: tw=80
 //! Compares different compression algorithms on BFFFS metadata
 //!
-//! This program compares different BLOSC algorithms and settings on binary
-//! metadata nodes as produced by `examples/fanout --save`
+//! This program compares different Compression algorithms and settings on
+//! binary metadata nodes as produced by `examples/fanout --save`
 
 use std::{
     collections::HashMap,
@@ -18,7 +18,6 @@ use zstd::bulk as zstd;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum Compressor {
-    Blosc(blosc::Compressor),
     Lz4Flex,
     Zstd
 }
@@ -42,13 +41,7 @@ impl Score {
 }
 
 const COMPRESSORS: &[Compressor] = &[
-    Compressor::Blosc(blosc::Compressor::BloscLZ),
-    Compressor::Blosc(blosc::Compressor::LZ4),
     Compressor::Lz4Flex,
-    Compressor::Blosc(blosc::Compressor::LZ4HC),
-    Compressor::Blosc(blosc::Compressor::Snappy),
-    Compressor::Blosc(blosc::Compressor::Zlib),
-    Compressor::Blosc(blosc::Compressor::Zstd),
     Compressor::Zstd,
 ];
 
@@ -63,10 +56,14 @@ const DATASETS: [(&str, usize); 6] = [
     ("fs.36", 36),
 ];
 
-const SHUFFLES: [(&str, blosc::ShuffleMode); 3] = [
-    ("none", blosc::ShuffleMode::None),
-    ("byte", blosc::ShuffleMode::Byte),
-    ("bit", blosc::ShuffleMode::Bit),
+enum ShuffleMode {
+    None,
+    Byte
+}
+
+const SHUFFLES: [(&str, ShuffleMode); 2] = [
+    ("none", ShuffleMode::None),
+    ("byte", ShuffleMode::Byte),
 ];
 
 fn main() {
@@ -87,29 +84,15 @@ fn main() {
                 for (shufname, shufmode) in SHUFFLES.iter() {
                     let start = time::Instant::now();
                     let (zbuf, csize_adjust) = match z {
-                        Compressor::Blosc(z) => {
-                            let zbuf = blosc::Context::new()
-                                .compressor(*z)
-                                .unwrap()
-                                .shuffle(*shufmode)
-                                .typesize(Some(*typesize))
-                                .compress(&buf[0..lsize])
-                                .into();
-                            (zbuf, 0)
-                        },
                         Compressor::Lz4Flex => {
                             let zbuf = match shufmode {
-                                blosc::ShuffleMode::Byte => {
+                                ShuffleMode::Byte => {
                                     let shuffled = shuffle(*typesize,
                                         &buf[0..lsize]);
                                     lz4::compress(&shuffled[..])
                                 },
-                                blosc::ShuffleMode::None => 
+                                ShuffleMode::None => 
                                     lz4::compress(&buf[0..lsize]),
-                                _ => {
-                                    // No bitshuffle outside of Blosc.
-                                    continue;
-                                }
                             };
                             // Add an extra 5 bytes due to the need for us to
                             // manually tag the compressed buffer.
@@ -117,17 +100,13 @@ fn main() {
                         }
                         Compressor::Zstd => {
                             let zbuf = match shufmode {
-                                blosc::ShuffleMode::Byte => {
+                                ShuffleMode::Byte => {
                                     let shuffled = shuffle(*typesize,
                                         &buf[0..lsize]);
                                     zstd::compress(&shuffled[..], 0).unwrap()
                                 },
-                                blosc::ShuffleMode::None => 
+                                ShuffleMode::None => 
                                     zstd::compress(&buf[0..lsize], 0).unwrap(),
-                                _ => {
-                                    // No bitshuffle outside of Blosc.
-                                    continue;
-                                }
                             };
                             // Add an extra 5 bytes due to the need for us to
                             // manually tag the compressed buffer.
