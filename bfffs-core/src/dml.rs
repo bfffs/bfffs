@@ -90,7 +90,7 @@ impl Compression {
     }
 
     // TODO: accept a byte slice instead of a DivBuf
-    pub fn decompress(input: &IoVec, lsize: u32) -> Result<DivBufShared> {
+    pub fn decompress(input: &[u8], lsize: u32) -> Result<DivBufShared> {
         let lsize = lsize as usize;
         let tag = &input[(input.len() - Self::TAGSIZE)..input.len()];
         let compressed = &input[0..(input.len() - Self::TAGSIZE)];
@@ -304,9 +304,7 @@ mod t {
             let mut v = vec![0u8; csize];
             v[csize - Compression::TAGSIZE..csize].copy_from_slice(
                 &[0xde, 0xad, 0xbe, 0xef, 0x42][..]);
-            let dbs = DivBufShared::from(v);
-            let db = dbs.try_const().unwrap();
-            let e = Compression::decompress(&db, lsize).unwrap_err();
+            let e = Compression::decompress(&v[..], lsize).unwrap_err();
             assert_eq!(Error::EINTEGRITY, e);
         }
 
@@ -365,9 +363,7 @@ mod t {
             let mut v = vec![0u8; csize];
             let tagslice = &mut v[csize - Compression::TAGSIZE..csize];
             Compression::encoder().serialize_into(tagslice, &tag).unwrap();
-            let dbs = DivBufShared::from(v);
-            let db = dbs.try_const().unwrap();
-            let e = Compression::decompress(&db, lsize).unwrap_err();
+            let e = Compression::decompress(&v[..], lsize).unwrap_err();
             assert_eq!(Error::EINTEGRITY, e);
         }
     }
