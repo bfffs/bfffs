@@ -457,14 +457,50 @@ fn test_error() {
 #[test]
 fn pba_typical_size() {
     assert_eq!(PBA::TYPICAL_SIZE,
-               bincode::serialized_size(&PBA::default()).unwrap() as usize);
+        bincode::serialized_size(&PBA::default()).unwrap() as usize);
 }
 
 #[test]
 fn rid_typical_size() {
     assert_eq!(RID::TYPICAL_SIZE,
-               bincode::serialized_size(&RID::default()).unwrap() as usize);
+        bincode::serialized_size(&RID::default()).unwrap() as usize);
 }
 
+mod uuid {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    const BIN: [u8; 17] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+        0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        0xFF
+    ];
+    const STR: &str = "00010203-0405-0607-0809-0a0b0c0d0e0f";
+
+    mod deserialize {
+        use super::*;
+        use pretty_assertions::assert_eq;
+
+        #[test]
+        fn ok() {
+            let uuid: Uuid = bincode::deserialize(&BIN).unwrap();
+            let want = Uuid::parse_str(STR).unwrap();
+            assert_eq!(uuid, want);
+        }
+
+        #[test]
+        fn too_short() {
+            bincode::deserialize::<Uuid>(&BIN[0..15]).unwrap_err();
+        }
+    }
+
+    #[test]
+    fn serialize() {
+        let uuid = Uuid::parse_str(STR).unwrap();
+        let buf = bincode::serialize(&uuid).unwrap();
+        assert_eq!(buf.len(), 16);
+        assert_eq!(&buf[..], &BIN[0..16]);
+    }
+}
 }
 // LCOV_EXCL_STOP

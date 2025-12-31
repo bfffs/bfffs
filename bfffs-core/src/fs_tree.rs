@@ -1264,11 +1264,36 @@ use pretty_assertions::assert_eq;
 use super::*;
 
 #[test]
+fn blob_extattr_serdes() {
+    let extent = BlobExtent {lsize: 4096, rid: RID(0xdeadbeef)};
+    let extattr = BlobExtAttr {
+        namespace: ExtAttrNamespace::User,
+        name: OsString::from("foobar"),
+        extent
+    };
+    let v = bincode::serialize(&extattr).unwrap();
+    let extattr2 = bincode::deserialize(&v[..]).unwrap();
+    assert_eq!(extattr, extattr2);
+}
+
+#[test]
+fn dirent_serdes() {
+    let dirent = Dirent {
+        ino: 42,
+        dtype: libc::DT_REG,
+        name: OsString::from("foobar")
+    };
+    let v = bincode::serialize(&dirent).unwrap();
+    let dirent2 = bincode::deserialize(&v[..]).unwrap();
+    assert_eq!(dirent, dirent2);
+}
+
+#[test]
 fn fskey_typical_size() {
     let ok = ObjKey::Extent(0);
     let fsk = FSKey::new(0, ok);
-    let v: Vec<u8> = bincode::serialize(&fsk).unwrap();
-    assert_eq!(v.len(), FSKey::TYPICAL_SIZE);
+    let size = bincode::serialized_size(&fsk).unwrap() as usize;
+    assert_eq!(FSKey::TYPICAL_SIZE, size);
 }
 
 #[test]
@@ -1277,8 +1302,8 @@ fn fsvalue_typical_size() {
         lsize: 0xdead_beef,
         rid: RID(0x0001_0203_0405_0607)
     });
-    let v: Vec<u8> = bincode::serialize(&fsv).unwrap();
-    assert_eq!(FSValue::TYPICAL_SIZE, v.len());
+    let size = bincode::serialized_size(&fsv).unwrap() as usize;
+    assert_eq!(FSValue::TYPICAL_SIZE, size);
 }
 
 /// Print the size of every FSValue variant.  Not really a test, but useful for
@@ -1371,6 +1396,18 @@ fn fsvalue_flush_inline_extent_short() {
     let ile = InlineExtent::new(data);
     let unflushed = FSValue::InlineExtent(ile);
     assert!(!unflushed.needs_flush());
+}
+
+#[test]
+fn inline_extattr_serdes() {
+    let extattr = InlineExtAttr {
+        namespace: ExtAttrNamespace::User,
+        name: OsString::from("foobar"),
+        extent: InlineExtent::new(Arc::new(DivBufShared::from(vec![1,2,3,4,5])))
+    };
+    let v = bincode::serialize(&extattr).unwrap();
+    let extattr2 = bincode::deserialize(&v[..]).unwrap();
+    assert_eq!(extattr, extattr2);
 }
 
 /// For best locality of reference, keys of the same object should always

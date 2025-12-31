@@ -75,8 +75,6 @@ impl Compression {
                     }
                 }
             };
-            let tagsize = Self::encoder().serialized_size(&self.tag()).unwrap();
-            debug_assert_eq!(tagsize, Self::TAGSIZE as u64);
             Self::encoder().serialize_into(&mut buffer, &self.tag()).unwrap();
             let dbs = DivBufShared::from(buffer);
             let compressed_lbas = dbs.len().div_ceil(BYTES_PER_LBA);
@@ -258,6 +256,13 @@ mod t {
         assert_eq!(compression, Compression::None);
     }
 
+    #[test]
+    fn compression_taglen() {
+        let tag = Compression::LZ4(None).tag();
+        let tagsize = Compression::encoder().serialized_size(&tag).unwrap();
+        assert_eq!(tagsize, Compression::TAGSIZE as u64);
+    }
+
     /// Incompressible data should not be compressed, even when compression is
     /// enabled.
     #[test]
@@ -345,8 +350,8 @@ mod t {
             assert_eq!(decompressed_db, db);
         }
 
-        /// Attempt to decompress a buffer that's marked as LZ4 but isn't should
-        /// fail gracefully.
+        /// Attempting to decompress a buffer that's marked as compressed but
+        /// isn't should fail gracefully.
         #[rstest]
         fn undecompressible(
             #[values(
