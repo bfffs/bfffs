@@ -22,7 +22,7 @@ use futures::Future;
 };
 #[cfg(test)] use mockall::*;
 use mockall_double::double;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     collections::BTreeMap,
     iter::once,
@@ -49,7 +49,7 @@ pub use self::null_raid::NullRaid;
 pub use self::vdev_raid::VdevRaid;
 pub use self::vdev_raid_api::VdevRaidApi;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub enum Label {
     NullRaid(self::null_raid::Label),
     Raid(self::vdev_raid::Label),

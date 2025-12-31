@@ -35,9 +35,9 @@ mod persistence {
         // Height as 64 bits
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
-        0x4c, 0x00,
+        0x55, 0x00,
         // max_int_fanout as 16 bits
-                    0x2e, 0x01,
+                    0x54, 0x01,
         // min_leaf_fanout as 16 bits
                                 0x5b, 0x00,
         // max_leaf_fanout as 16 bits
@@ -87,7 +87,7 @@ mod persistence {
         let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, pool, and idml labels
-        f.seek(SeekFrom::Start(334)).unwrap();
+        f.seek(SeekFrom::Start(322)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {
@@ -140,8 +140,8 @@ mod database {
         let forest = String::from_utf8(buf).unwrap();
         let expected =
 r#"limits:
-  min_int_fanout: 76
-  max_int_fanout: 302
+  min_int_fanout: 85
+  max_int_fanout: 340
   min_leaf_fanout: 91
   max_leaf_fanout: 363
   _max_size: 4194304
@@ -167,8 +167,8 @@ root:
         height: 1
         _reserved: 0
         limits:
-          min_int_fanout: 91
-          max_int_fanout: 364
+          min_int_fanout: 103
+          max_int_fanout: 410
           min_leaf_fanout: 576
           max_leaf_fanout: 2302
           _max_size: 4194304

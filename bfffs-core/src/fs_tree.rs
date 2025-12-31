@@ -25,6 +25,7 @@ use num_enum::FromPrimitive;
 use pin_project::pin_project;
 use serde_derive::{Deserialize, Serialize};
 use serde::ser::{Serialize, Serializer, SerializeStruct};
+use speedy::{Readable, Reader, Writable, Writer};
 use std::{
     any::Any,
     collections::BTreeMap,
@@ -33,7 +34,7 @@ use std::{
     hash::{Hash, Hasher},
     mem,
     ops::{Bound, Range, RangeBounds},
-    os::unix::ffi::OsStrExt,
+    os::unix::ffi::{OsStrExt, OsStringExt},
     pin::Pin,
     sync::Arc
 };
@@ -48,6 +49,32 @@ pub enum ExtAttrNamespace {
     User = libc::EXTATTR_NAMESPACE_USER as isize,
     System = libc::EXTATTR_NAMESPACE_SYSTEM as isize
 }
+
+impl<'a, C> Readable<'a, C> for ExtAttrNamespace
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let discriminant = u32::read_from(reader)?;
+        match discriminant as i32 {
+            libc::EXTATTR_NAMESPACE_USER => Ok(Self::User),
+            libc::EXTATTR_NAMESPACE_SYSTEM => Ok(Self::System),
+            _ => Err(speedy::Error::custom("Invalid ExtAttrNamespace value").into())
+        }
+    }
+}
+
+impl<C> Writable<C> for ExtAttrNamespace
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_u32(*self as u32)
+    }
+}
+
 
 /// Constants that discriminate different `ObjKey`s.  Only needed for the
 /// `<FSKey as Debug>::fmt` function.
@@ -148,9 +175,52 @@ impl ObjKey {
     }
 }
 
+impl<'a, C> Readable<'a, C> for ObjKey
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let discriminant = reader.read_u8()?;
+        match discriminant {
+            x if x == ObjKeyDiscriminant::DirEntry as u8 =>
+                Ok(Self::DirEntry(reader.read_value()?)),
+            x if x == ObjKeyDiscriminant::Inode as u8 => Ok(Self::Inode),
+            x if x == ObjKeyDiscriminant::Extent as u8 =>
+                Ok(Self::Extent(reader.read_value()?)),
+            x if x == ObjKeyDiscriminant::ExtAttr as u8 =>
+                Ok(Self::ExtAttr(reader.read_value()?)),
+            x if x == ObjKeyDiscriminant::Property as u8 =>
+                Ok(Self::Property(reader.read_value()?)),
+            x if x == ObjKeyDiscriminant::DyingInode as u8 =>
+                Ok(Self::DyingInode(reader.read_value()?)),
+            _ => Err(speedy::Error::custom("Invalid ObjKeyDiscriminant").into())
+        }
+    }
+}
+
+impl<C> Writable<C> for ObjKey
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_u8(self.discriminant())?;
+        match self {
+            ObjKey::DirEntry(hash) => w.write_value(hash),
+            ObjKey::Inode => Ok(()),    // Nothing to do
+            ObjKey::Extent(offset) => w.write_value(offset),
+            ObjKey::ExtAttr(hash) => w.write_value(hash),
+            ObjKey::Property(propname) => w.write_value(propname),
+            ObjKey::DyingInode(ino) => w.write_value(ino),
+        }
+    }
+}
+
 bitfield! {
     /// B-Tree keys for a Filesystem tree
-    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord)]
+    #[derive(Clone, Copy, Deserialize, Eq, PartialEq, PartialOrd, Ord,
+             Readable, Writable)]
     pub struct FSKey(u128);
     u64; pub object, _: 127, 64;
     u8; pub objtype, _: 63, 56;
@@ -335,7 +405,7 @@ fn serialize_dirent_name<S>(name: &OsString, s: S)
         // When dumping to YAML, print the name as a legible string
         name.to_string_lossy().serialize(s)
     } else {
-        // but for Bincode, use the default representation as bytes
+        // but for binary, use the default representation as bytes
         name.serialize(s)
     }
 }
@@ -376,6 +446,38 @@ impl Dirent {
             as *const [i8];
         fs_dirent.d_name[0..namlen].copy_from_slice(unsafe{&*p});
         fs_dirent
+    }
+}
+
+impl<'a, C> Readable<'a, C> for Dirent
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let ino = reader.read_value()?;
+        let dtype = reader.read_value()?;
+        let namebytes = Vec::<u8>::read_from(reader)?;
+        let name = OsString::from_vec(namebytes);
+        Ok(Self {
+            ino,
+            dtype,
+            name
+        })
+    }
+}
+
+impl<C> Writable<C> for Dirent
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_u64(self.ino)?;
+        w.write_u8(self.dtype)?;
+        let namebytes = self.name.as_encoded_bytes();
+        w.write_u32(namebytes.len() as u32)?;
+        w.write_bytes(namebytes)
     }
 }
 
@@ -423,7 +525,7 @@ impl TryFrom<FSValue> for Dirent {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Readable, Writable)]
 pub struct DyingInode(u64);
 
 impl DyingInode {
@@ -491,6 +593,38 @@ impl InlineExtAttr {
     }
 }
 
+impl<'a, C> Readable<'a, C> for InlineExtAttr
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let namespace = reader.read_value()?;
+        let namebytes = Vec::<u8>::read_from(reader)?;
+        let name = OsString::from_vec(namebytes);
+        let extent = reader.read_value()?;
+        Ok(Self {
+            namespace,
+            name,
+            extent
+        })
+    }
+}
+
+impl<C> Writable<C> for InlineExtAttr
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_value(&self.namespace)?;
+        let namebytes = self.name.as_encoded_bytes();
+        w.write_u32(namebytes.len() as u32)?;
+        w.write_bytes(namebytes)?;
+        w.write_value(&self.extent)
+    }
+}
+
 /// In-memory representation of a large extended attribute
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlobExtAttr {
@@ -499,9 +633,41 @@ pub struct BlobExtAttr {
     pub extent: BlobExtent
 }
 
+impl<'a, C> Readable<'a, C> for BlobExtAttr
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let namespace = reader.read_value()?;
+        let namebytes = Vec::<u8>::read_from(reader)?;
+        let name = OsString::from_vec(namebytes);
+        let extent = reader.read_value()?;
+        Ok(Self {
+            namespace,
+            name,
+            extent
+        })
+    }
+}
+
+impl<C> Writable<C> for BlobExtAttr
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_value(&self.namespace)?;
+        let namebytes = self.name.as_encoded_bytes();
+        w.write_u32(namebytes.len() as u32)?;
+        w.write_bytes(namebytes)?;
+        w.write_value(&self.extent)
+    }
+}
+
 // TODO: consider flattening this into FSValue to reduce the in-memory size of
 // FSValue.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Readable, Writable)]
 pub enum ExtAttr {
     Inline(InlineExtAttr),
     Blob(BlobExtAttr)
@@ -679,10 +845,54 @@ impl FileType {
     }
 }
 
+impl<'a, C> Readable<'a, C> for FileType
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let discriminant = reader.read_u8()?;
+        match discriminant {
+            libc::DT_FIFO => Ok(Self::Fifo),
+            libc::DT_CHR => Ok(Self::Char(reader.read_value()?)),
+            libc::DT_DIR => Ok(Self::Dir),
+            libc::DT_BLK => Ok(Self::Block(reader.read_value()?)),
+            libc::DT_REG => Ok(Self::Reg(reader.read_value()?)),
+            libc::DT_LNK => {
+                let v = Vec::<u8>::read_from(reader)?;
+                Ok(Self::Link(OsString::from_vec(v)))
+            },
+            libc::DT_SOCK => Ok(Self::Socket),
+            _ => Err(speedy::Error::custom("Invalid FileType").into())
+        }
+    }
+}
+
+impl<C> Writable<C> for FileType
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_u8(self.dtype())?;
+        match self {
+            FileType::Char(c) => w.write_value(&c),
+            FileType::Block(b) => w.write_value(&b),
+            FileType::Reg(r) => w.write_value(&r),
+            FileType::Link(l) => {
+                let bytes = l.as_encoded_bytes();
+                w.write_u32(bytes.len() as u32)?;
+                w.write_bytes(bytes)
+            },
+            _ => Ok(()),    // Nothing to do
+        }
+    }
+}
+            
 /// BFFFS's timestamp data type.  Very close to FUSE's.
 ///
 /// Unlike libc and Nix, the nsec field is 32 bits wide
-#[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Deserialize, Eq, PartialEq, Readable, Writable)]
 pub struct Timespec {
     pub sec: i64,
     pub nsec: u32
@@ -728,7 +938,7 @@ impl Serialize for Timespec {
                 .unwrap()
                 .serialize(serializer)
         } else {
-            // But for bincode, encode it compactly
+            // But for binary, encode it compactly
             let mut state = serializer.serialize_struct("Timespec", 3)?;
             state.serialize_field("sec", &self.sec)?;
             state.serialize_field("nsec", &self.nsec)?;
@@ -738,7 +948,8 @@ impl Serialize for Timespec {
 }
 
 /// In-memory representation of an Inode
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize,
+         Readable, Writable)]
 pub struct Inode {
     /// File size in bytes.
     pub size:       u64,
@@ -889,6 +1100,31 @@ impl PartialEq for InlineExtent {
     }
 }
 
+impl<'a, C> Readable<'a, C> for InlineExtent
+    where C: speedy::Context,
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let v = Vec::<u8>::read_from(reader)?;
+        let buf = Arc::new(DivBufShared::from(v));
+        Ok(Self{buf})
+    }
+}
+
+impl<C> Writable<C> for InlineExtent
+    where C: speedy::Context,
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        w.write_u32(self.buf.len() as u32)?;
+        w.write_bytes(&self.buf.try_const().unwrap()[..])?;
+        Ok(())
+    }
+}
+
+
 /// Return type of `InlineExtent::flush`
 #[pin_project]
 pub struct InlineExtentFlush<K> {
@@ -915,7 +1151,8 @@ impl<K: Key> Future for InlineExtentFlush<K>
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize,
+         Readable, Writable)]
 pub struct BlobExtent {
     pub lsize: u32,
     pub rid: RID,
@@ -939,7 +1176,8 @@ impl Extent<'_> {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize,
+         Readable, Writable)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Box<Inode>),
@@ -1261,6 +1499,7 @@ mod t {
 
 use crate::idml::IDML;
 use pretty_assertions::assert_eq;
+use speedy::LittleEndian;
 use super::*;
 
 #[test]
@@ -1271,8 +1510,8 @@ fn blob_extattr_serdes() {
         name: OsString::from("foobar"),
         extent
     };
-    let v = bincode::serialize(&extattr).unwrap();
-    let extattr2 = bincode::deserialize(&v[..]).unwrap();
+    let v = extattr.write_to_vec().unwrap();
+    let extattr2 = BlobExtAttr::read_from_buffer(&v[..]).unwrap();
     assert_eq!(extattr, extattr2);
 }
 
@@ -1283,8 +1522,8 @@ fn dirent_serdes() {
         dtype: libc::DT_REG,
         name: OsString::from("foobar")
     };
-    let v = bincode::serialize(&dirent).unwrap();
-    let dirent2 = bincode::deserialize(&v[..]).unwrap();
+    let v = dirent.write_to_vec().unwrap();
+    let dirent2 = Dirent::read_from_buffer(&v[..]).unwrap();
     assert_eq!(dirent, dirent2);
 }
 
@@ -1292,7 +1531,7 @@ fn dirent_serdes() {
 fn fskey_typical_size() {
     let ok = ObjKey::Extent(0);
     let fsk = FSKey::new(0, ok);
-    let size = bincode::serialized_size(&fsk).unwrap() as usize;
+    let size = Writable::<LittleEndian>::bytes_needed(&fsk).unwrap();
     assert_eq!(FSKey::TYPICAL_SIZE, size);
 }
 
@@ -1302,7 +1541,7 @@ fn fsvalue_typical_size() {
         lsize: 0xdead_beef,
         rid: RID(0x0001_0203_0405_0607)
     });
-    let size = bincode::serialized_size(&fsv).unwrap() as usize;
+    let size = Writable::<LittleEndian>::bytes_needed(&fsv).unwrap();
     assert_eq!(FSValue::TYPICAL_SIZE, size);
 }
 
@@ -1405,8 +1644,8 @@ fn inline_extattr_serdes() {
         name: OsString::from("foobar"),
         extent: InlineExtent::new(Arc::new(DivBufShared::from(vec![1,2,3,4,5])))
     };
-    let v = bincode::serialize(&extattr).unwrap();
-    let extattr2 = bincode::deserialize(&v[..]).unwrap();
+    let v = extattr.write_to_vec().unwrap();
+    let extattr2 = InlineExtAttr::read_from_buffer(&v[..]).unwrap();
     assert_eq!(extattr, extattr2);
 }
 

@@ -53,17 +53,18 @@ mod persistence {
 
     // To regenerate this literal, dump the binary label using this command:
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
-    const GOLDEN_POOL_LABEL: [u8; 72] = [
+    const GOLDEN_POOL_LABEL: [u8; 64] = [
         // Past the VdevRaid::Label, we have a Pool::Label
-        // First is the Pool's name as a String, beginning with a 64-bit length
-        0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x54, 0x65, 0x73, 0x74, 0x50, 0x6f, 0x6f, 0x6c, // TestPool
+        // First is the Pool's name as a String, beginning with a 32-bit length
+        0x08, 0x00, 0x00, 0x00, 0x54, 0x65, 0x73, 0x74, //     Test
+        0x50, 0x6f, 0x6f, 0x6c,                         // Pool
         // Then the Pool's UUID
-        0x62, 0x2d, 0x3e, 0xa4, 0x92, 0x74, 0x4b, 0xfa,
-        0x8b, 0x41, 0xda, 0x1b, 0xfb, 0x44, 0xe0, 0xc9,
+                                0x62, 0x2d, 0x3e, 0xa4,
+        0x92, 0x74, 0x4b, 0xfa, 0x8b, 0x41, 0xda, 0x1b,
+        0xfb, 0x44, 0xe0, 0xc9,
         // Then a vector of VdevRaid children.  First the count of children as a
-        // 64-bit number, then each child's UUID as a 128-bit number.
-        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // 32-bit number, then each child's UUID as a 128-bit number.
+                                0x02, 0x00, 0x00, 0x00,
         0xca, 0x17, 0x16, 0xba, 0x78, 0xe5, 0x46, 0xe0,
         0x96, 0x5e, 0x2c, 0x04, 0x3f, 0xab, 0x65, 0x0a,
         0xbe, 0x55, 0x44, 0x83, 0xac, 0x4a, 0x4f, 0x5b,
@@ -99,8 +100,8 @@ mod persistence {
         for path in ph.paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            // Skip leaf, raid, and cluster labels
-            f.seek(SeekFrom::Start(148)).unwrap();
+            // Skip leaf, mirror, raid, and cluster labels
+            f.seek(SeekFrom::Start(144)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {
@@ -111,10 +112,10 @@ mod persistence {
             } */
             // Compare against the golden master, skipping the checksum and UUID
             // fields
-            assert_eq!(&v[0..16], &GOLDEN_POOL_LABEL[0..16]);
-            assert_eq!(&v[32..40], &GOLDEN_POOL_LABEL[32..40]);
+            assert_eq!(&v[0..12], &GOLDEN_POOL_LABEL[0..12]);
+            assert_eq!(&v[28..32], &GOLDEN_POOL_LABEL[28..32]);
             // Rest of the buffer should be zero-filled
-            assert!(v[72..].iter().all(|&x| x == 0));
+            assert!(v[64..].iter().all(|&x| x == 0));
         }
     }
 }

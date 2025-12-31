@@ -10,6 +10,7 @@ use serde::{
     de::{Deserialize, Deserializer},
     ser::SerializeTuple
 };
+use speedy::{Readable, Reader, Writable, Writer};
 use thiserror::Error;
 use std::{
     fmt::{self, Display, Formatter},
@@ -19,7 +20,7 @@ use std::{
 };
 
 /// Objects that implement this trait have a typical size when serialized with
-/// bincode
+/// speedy
 pub trait TypicalSize {
     const TYPICAL_SIZE: usize;
 }
@@ -46,7 +47,7 @@ pub type IoVecMut = DivBufMut;
 pub type LbaT = u64;
 
 /// BFFFS's error type.  Basically just an errno
-#[derive(Clone, Copy, Debug, Deserialize, Error, Eq, PartialEq, Primitive, Serialize)]
+#[derive(Clone, Copy, Debug, Error, Eq, PartialEq, Primitive)]
 pub enum Error {
     // Standard errnos
     #[error("Operation not permitted")]
@@ -265,6 +266,24 @@ impl Error {
     }
 }
 
+impl<'a, C: speedy::Context> Readable<'a, C> for Error {
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let e: Error = Self::from_i16(reader.read_i16()?)
+            .unwrap_or(Error::EUNKNOWN);
+        Ok(e)
+    }
+}
+
+impl<C: speedy::Context> Writable<C> for Error {
+    fn write_to<W>(&self, writer: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        writer.write_i16(self.to_i16().unwrap())
+    }
+}
+
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
         e.raw_os_error()
@@ -294,7 +313,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
-         Serialize)]
+         Readable, Serialize, Writable)]
 pub struct TxgT(pub u32);
 
 impl Add<u32> for TxgT {
@@ -336,7 +355,7 @@ impl Sub<u32> for TxgT {
 /// Locates a block of storage within a pool.  A block is the smallest amount of
 /// data that can be transferred to/from a disk.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, Eq, Hash, Ord,
-         PartialEq, PartialOrd)]
+         PartialEq, PartialOrd, Readable, Writable)]
 pub struct PBA {
     pub cluster: ClusterT,
     pub lba: LbaT
@@ -356,7 +375,7 @@ impl TypicalSize for PBA {
 ///
 /// Uniquely identifies each indirect record.  Record IDs are never reused.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Hash, PartialEq,
-         PartialOrd, Ord, Serialize)]
+         PartialOrd, Ord, Serialize, Readable, Writable)]
 pub struct RID(pub u64);
 
 impl Display for RID {
@@ -374,9 +393,12 @@ impl TypicalSize for RID {
 /// This is just like the `Uuid` from the `uuid` crate, except that it
 /// serializes as a fixed-size array instead of a slice
 // The Uuid crate serializes to a slice, and its maintainers have ruled out ever
-// serializing to a fixed-size array instead.
+// serializing to a fixed-size array instead.  Speedy sensibly serializes to a
+// fixed-size array.  But we still need the wrapper to make the YAML
+// serialization use a fixed-sizes array.
 // See Also [Uuid #557](https://github.com/uuid-rs/uuid/issues/557)
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, PartialOrd, Ord,
+         Readable, Writable)]
 pub struct Uuid(uuid::Uuid);
 
 impl Uuid {
@@ -446,6 +468,7 @@ pub type ZoneT = u32;
 #[cfg(test)]
 mod t {
 use pretty_assertions::assert_eq;
+use speedy::LittleEndian;
 use super::*;
 
 #[test]
@@ -456,14 +479,16 @@ fn test_error() {
 
 #[test]
 fn pba_typical_size() {
+    let pba = PBA::default();
     assert_eq!(PBA::TYPICAL_SIZE,
-        bincode::serialized_size(&PBA::default()).unwrap() as usize);
+               Writable::<LittleEndian>::bytes_needed(&pba).unwrap());
 }
 
 #[test]
 fn rid_typical_size() {
+    let rid = RID::default();
     assert_eq!(RID::TYPICAL_SIZE,
-        bincode::serialized_size(&RID::default()).unwrap() as usize);
+               Writable::<LittleEndian>::bytes_needed(&rid).unwrap());
 }
 
 mod uuid {
@@ -483,21 +508,21 @@ mod uuid {
 
         #[test]
         fn ok() {
-            let uuid: Uuid = bincode::deserialize(&BIN).unwrap();
+            let uuid: Uuid = Uuid::read_from_buffer(&BIN).unwrap();
             let want = Uuid::parse_str(STR).unwrap();
             assert_eq!(uuid, want);
         }
 
         #[test]
         fn too_short() {
-            bincode::deserialize::<Uuid>(&BIN[0..15]).unwrap_err();
+            Uuid::read_from_buffer(&BIN[0..15]).unwrap_err();
         }
     }
 
     #[test]
     fn serialize() {
         let uuid = Uuid::parse_str(STR).unwrap();
-        let buf = bincode::serialize(&uuid).unwrap();
+        let buf = uuid.write_to_vec().unwrap();
         assert_eq!(buf.len(), 16);
         assert_eq!(&buf[..], &BIN[0..16]);
     }

@@ -16,6 +16,7 @@ pub use bfffs_core::{
 };
 use bfffs_core::{rpc, Uuid};
 use futures::{stream, FutureExt, Stream, StreamExt, TryFutureExt};
+use speedy::{Readable, Writable};
 use thiserror::Error as ThisError;
 use tokio_seqpacket::UnixSeqpacket;
 
@@ -321,7 +322,7 @@ impl Bfffs {
     async fn call(&self, req: rpc::Request) -> Result<rpc::Response> {
         const BUFSIZ: usize = 4096;
 
-        let encoded: Vec<u8> = bincode::serialize(&req).unwrap();
+        let encoded: Vec<u8> = req.write_to_vec().unwrap();
         let nwrite = self.peer.send(&encoded).await.map_err(Error::from)?;
         assert_eq!(nwrite, encoded.len());
 
@@ -333,7 +334,7 @@ impl Bfffs {
             Err(Error::TooLarge(nread))
         } else {
             buf.truncate(nread);
-            let resp = bincode::deserialize::<rpc::Response>(&buf[..])
+            let resp = rpc::Response::read_from_buffer(&buf[..])
                 .map_err(|_| Error::CorruptResponse)?;
             Ok(resp)
         }

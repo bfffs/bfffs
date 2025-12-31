@@ -6,6 +6,7 @@
 use crate::dml::MockDML;
 use divbuf::{DivBufShared, DivBuf};
 use mockall::mock;
+use speedy::{Readable, Writable};
 use super::*;
 use super::super::LeafData;
 
@@ -26,7 +27,8 @@ mock! {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize,
+         Readable, Writable)]
 struct NeedsDcloneV(u32);
 
 impl TypicalSize for NeedsDcloneV {

@@ -23,6 +23,7 @@ use futures::{
 use itertools::{Itertools, multizip};
 use mockall_double::double;
 use pin_project::pin_project;
+use speedy::{Readable, Writable};
 use std::{
     collections::BTreeMap,
     cmp,
@@ -33,7 +34,6 @@ use std::{
     ptr,
     sync::{Arc, RwLock}
 };
-use serde_derive::{Deserialize, Serialize};
 use super::{
     LocatorImpl,
     Status,
@@ -54,7 +54,7 @@ mod tests;
 ///
 /// This algorithm maps RAID chunks to specific disks and offsets.  It does not
 /// encode or decode parity.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Readable, Writable)]
 pub enum LayoutAlgorithm {
     /// A good declustered algorithm for any prime number of disks
     PrimeS,
@@ -387,7 +387,7 @@ impl Child {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
     pub uuid:           Uuid,

@@ -5,7 +5,7 @@ use std::{
     num::NonZeroU8,
     pin::Pin
 };
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use futures::Future;
 use crate::types::*;
 
@@ -13,7 +13,7 @@ use crate::types::*;
 use crate::raid::RaidImpl;
 
 /// The reason why a vdev is faulted.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Readable, Writable)]
 pub enum FaultedReason {
     /// Faulted by request of the user
     User,
@@ -28,7 +28,7 @@ pub enum FaultedReason {
 /// The ordering reflects which Health is "sicker".  That is, a degraded vdev is
 /// sicker than an online one, a doubly-degraded vdev is sicker than a
 /// singly-degraded one, etc.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord, Readable, Writable)]
 pub enum Health {
     /// Perfectly healthy
     Online,

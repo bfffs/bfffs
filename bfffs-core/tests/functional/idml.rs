@@ -26,9 +26,9 @@ mod persistence {
         // Height as 64 bits
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
-        0x4e, 0x00,
+        0x55, 0x00,
         // max_int_fanout as 16 bits
-                    0x38, 0x01,
+                    0x54, 0x01,
         // min_leaf_fanout as 16 bits
                                 0xe4, 0x04,
         // max_leaf_fanout as 16 bits
@@ -44,13 +44,13 @@ mod persistence {
         // Compression enabled as 8 bits
                     0x00,
         // lsize as 32 bits
-                          0x0c, 0x00, 0x00, 0x00,
+                          0x08, 0x00, 0x00, 0x00,
         // csize as 32 bits
-                                                  0x0c,
+                                                  0x08,
         0x00, 0x00, 0x00,
         // checksum as 64 bits
-                          0x9f, 0xfa, 0xe3, 0x4c, 0xa2,
-        0x4d, 0xea, 0x69,
+                          0x37, 0xb3, 0x1d, 0x49, 0x58,
+        0xde, 0xe1, 0xbd,
         // Root node's TXG range as a pair of 32-bit numbers
                           0x2a, 0x00, 0x00, 0x00, 0x2b,
         0x00, 0x00, 0x00,
@@ -62,9 +62,9 @@ mod persistence {
                           0x01, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
-                          0x6d, 0x00,
+                          0x77, 0x00,
         // max_int_fanout as 16 bits
-                                      0xb1, 0x01,
+                                      0xd9, 0x01,
         // min_leaf_fanout as 16 bits
                                                   0x86,
         0x00,
@@ -82,13 +82,13 @@ mod persistence {
         // Compression enabled as 8 bits
                                       0x00,
         // lsize as 32 bits
-                                            0x0c, 0x00,
+                                            0x08, 0x00,
         0x00, 0x00,
         // csize as 32 bits
-                    0x0c, 0x00, 0x00, 0x00,
+                    0x08, 0x00, 0x00, 0x00,
         // checksum as 64 bits
-                                            0x9f, 0xfa,
-        0xe3, 0x4c, 0xa2, 0x4d, 0xea, 0x69,
+                                            0x37, 0xb3,
+        0x1d, 0x49, 0x58, 0xde, 0xe1, 0xbd,
         // Root node's TXG range as a pair of 32-bit numbers
                                             0x2a, 0x00,
         0x00, 0x00, 0x2b, 0x00, 0x00, 0x00,
@@ -156,7 +156,7 @@ mod persistence {
         let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, mirror, raid, cluster, and pool labels
-        f.seek(SeekFrom::Start(204)).unwrap();
+        f.seek(SeekFrom::Start(192)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

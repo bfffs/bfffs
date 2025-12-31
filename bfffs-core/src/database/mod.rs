@@ -27,6 +27,7 @@ use futures::{
 use metrohash::MetroHash64;
 use mockall_double::*;
 use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     hash::Hasher,
     io,
@@ -49,7 +50,7 @@ pub use self::database::ReadWriteFilesystem;
 
 /// Unique identifier for a tree, like a ZFS guid
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
+         Serialize, Readable, Writable)]
 // NB: might need to make this cryptographic, to support send/recv
 pub struct TreeID(pub u64);
 
@@ -62,7 +63,7 @@ impl TreeID {
 
 /// Keys into the Forest
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
+         Serialize, Readable, Writable)]
 struct ForestKey {
     /// The TreeID of this tree's parent, or 0 if this is the root file system
     tree_id: TreeID,
@@ -117,7 +118,7 @@ impl MinValue for ForestKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Readable, Writable)]
 struct Tree {
     parent: Option<TreeID>,
     /// Serialized version of this Tree.
@@ -132,7 +133,7 @@ impl Tree {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Readable, Writable)]
 pub struct TreeEnt {
     /// ID of the tree
     pub tree_id:    TreeID,
@@ -142,7 +143,7 @@ pub struct TreeEnt {
 }
 
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Readable, Writable)]
 enum ForestValue {
     Tree(Tree),
     TreeEnt(TreeEnt)
@@ -489,12 +490,13 @@ impl Manager {
 mod t {
 mod forest_key {
     use pretty_assertions::assert_eq;
+    use speedy::{LittleEndian, Writable};
     use super::super::*;
 
     #[test]
     fn typical_size() {
         let key = ForestKey::min_value();
-        let size = bincode::serialized_size(&key).unwrap() as usize;
+        let size = Writable::<LittleEndian>::bytes_needed(&key).unwrap();
         assert_eq!(ForestKey::TYPICAL_SIZE, size);
     }
 }

@@ -852,8 +852,8 @@ mod fs {
         let fs_tree = String::from_utf8(buf).unwrap();
         let expected =
 r#"limits:
-  min_int_fanout: 91
-  max_int_fanout: 364
+  min_int_fanout: 103
+  max_int_fanout: 410
   min_leaf_fanout: 576
   max_leaf_fanout: 2302
   _max_size: 4194304

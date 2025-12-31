@@ -20,7 +20,7 @@ use futures::{
 use futures::StreamExt;
 use pin_project::pin_project;
 #[cfg(test)] use mockall::automock;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     ops::Range,
     pin::Pin,
@@ -58,7 +58,7 @@ pub struct ClosedZone {
     pub zid: ZoneT
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub struct Label {
     /// Human-readable name
     pub name:               String,

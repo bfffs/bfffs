@@ -15,7 +15,7 @@ use futures::{
 };
 use futures_locks::{RwLock, RwLockReadFut};
 #[cfg(test)] use mockall::mock;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     io,
     pin::Pin,
@@ -669,7 +669,7 @@ impl DML for IDML {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 struct Label {
     alloct:             TreeOnDisk<DRP>,
     next_rid:           u64,
@@ -757,6 +757,7 @@ mod t {
     use futures::{channel::oneshot, future};
     use pretty_assertions::assert_eq;
     use mockall::{Sequence, predicate::*};
+    use speedy::LittleEndian;
     use std::sync::Mutex;
 
     /// Inject a record into the RIDT and AllocT
@@ -783,8 +784,8 @@ mod t {
     #[test]
     fn ridtentry_typical_size() {
         let typical = RidtEntry::new(DRP::default());
-        assert_eq!(RidtEntry::TYPICAL_SIZE,
-                   bincode::serialized_size(&typical).unwrap() as usize);
+        let size = Writable::<LittleEndian>::bytes_needed(&typical).unwrap();
+        assert_eq!(RidtEntry::TYPICAL_SIZE, size);
     }
 
     mod check_ridt {

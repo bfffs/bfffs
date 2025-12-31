@@ -8,14 +8,14 @@ use crate::{
     controller::TreeID,
     Result,
 };
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 
 pub mod fs {
     use crate::property::{Property, PropertyName, PropertySource};
     use super::Request;
-    use serde_derive::{Deserialize, Serialize};
+    use speedy::{Readable, Writable};
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Create {
         pub name: String,
         pub props: Vec<Property>,
@@ -25,7 +25,7 @@ pub mod fs {
         Request::FsCreate(Create{name, props})
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Destroy {
         pub name: String,
     }
@@ -34,14 +34,14 @@ pub mod fs {
         Request::FsDestroy(Destroy{name})
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct DsInfo {
         pub name:   String,
         pub props:  Vec<(Property, PropertySource)>,
         pub offset: u64
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct List {
         pub name: String,
         pub props: Vec<PropertyName>,
@@ -59,7 +59,7 @@ pub mod fs {
         Request::FsList(List{name, props, offset})
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Mount {
         /// Comma-separated mount options
         pub opts: String,
@@ -74,7 +74,7 @@ pub mod fs {
         })
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Set {
         /// File system name, including the pool
         pub name: String,
@@ -89,7 +89,7 @@ pub mod fs {
         })
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Stat {
         pub name: String,
         pub props: Vec<PropertyName>,
@@ -100,7 +100,7 @@ pub mod fs {
         Request::FsStat(Stat{name, props})
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Unmount {
         /// Forcibly unmount, even if in-use
         pub force: bool,
@@ -118,12 +118,16 @@ pub mod fs {
 }
 
 pub mod pool {
-    use std::path::PathBuf;
+    use std::{
+        ffi::OsString,
+        os::unix::ffi::OsStringExt,
+        path::PathBuf
+    };
     use super::Request;
-    use serde_derive::{Deserialize, Serialize};
+    use speedy::{Readable, Reader, Writable, Writer};
     use crate::{vdev::Health, Uuid};
 
-    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Eq, PartialEq, Readable, Writable)]
     pub struct PoolInfo {
         /// Pool name.
         pub name: String,
@@ -131,21 +135,51 @@ pub mod pool {
         pub offs: u64
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct LeafStatus {
         pub health: Health,
         pub path: PathBuf,
         pub uuid: Uuid
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    /// TODO: add support for serializing PathBuf upstream in speedy
+    /// https://github.com/koute/speedy/issues/30
+    impl<'a, C: speedy::Context> Readable<'a, C> for LeafStatus {
+        fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+            where R: Reader<'a, C>
+        {
+            let health = Health::read_from(reader)?;
+            let pathbytes = Vec::<u8>::read_from(reader)?;
+            let path = PathBuf::from(OsString::from_vec(pathbytes));
+            let uuid = Uuid::read_from(reader)?;
+            Ok(Self {
+                health,
+                path,
+                uuid
+            })
+        }
+    }
+
+    impl<C: speedy::Context> Writable<C> for LeafStatus {
+        fn write_to<W>(&self, writer: &mut W) -> std::result::Result<(), C::Error>
+            where W: ?Sized + Writer<C>
+        {
+            self.health.write_to(writer)?;
+            let pathbytes = self.path.as_os_str().as_encoded_bytes();
+            writer.write_u32(pathbytes.len() as u32)?;
+            writer.write_bytes(pathbytes)?;
+            self.uuid.write_to(writer)
+        }
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq, Readable, Writable)]
     pub struct MirrorStatus {
         pub leaves: Vec<LeafStatus>,
         pub health: Health,
         pub uuid: Uuid
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Eq, PartialEq, Readable, Writable)]
     pub struct ClusterStatus {
         pub health: Health,
         pub codec: String,
@@ -153,7 +187,7 @@ pub mod pool {
         pub uuid: Uuid
     }
 
-    #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+    #[derive(Clone, Debug, Eq, PartialEq, Readable, Writable)]
     pub struct PoolStatus {
         pub health: Health,
         pub name: String,
@@ -161,7 +195,7 @@ pub mod pool {
         pub uuid: Uuid
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Clean {
         pub pool: String
     }
@@ -172,7 +206,7 @@ pub mod pool {
         })
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Fault {
         pub pool: String,
         pub device: Uuid
@@ -182,7 +216,7 @@ pub mod pool {
         Request::PoolFault(Fault { pool, device })
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct List {
         pub pool: Option<String>,
         pub offset: Option<u64>
@@ -197,7 +231,7 @@ pub mod pool {
         Request::PoolList(List { pool, offset })
     }
 
-    #[derive(Debug, Deserialize, Serialize)]
+    #[derive(Debug, Readable, Writable)]
     pub struct Status {
         pub pool: String
     }
@@ -209,7 +243,7 @@ pub mod pool {
 }
 
 /// An RPC request from bfffs to bfffsd
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Readable, Writable)]
 pub enum Request {
     DebugDropCache,
     FsCreate(fs::Create),
@@ -225,7 +259,7 @@ pub enum Request {
     PoolStatus(pool::Status)
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Readable, Writable)]
 pub enum Response {
     DebugDropCache(Result<()>),
     FsCreate(Result<TreeID>),

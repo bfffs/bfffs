@@ -23,6 +23,7 @@ use serde::{
     ser::SerializeStruct,
 };
 use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Reader, Writable, Writer};
 use std::{
     borrow::Borrow,
     cmp::max,
@@ -71,14 +72,18 @@ impl MinValue for TxgT {
 }
 
 pub trait Addr: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send +
-    Sync + Serialize + TypicalSize + 'static {}
+    Sync + Serialize + TypicalSize + for<'a> Readable<'a, speedy::LittleEndian>
+     + Writable<speedy::LittleEndian> + 'static  {}
 
 impl<T> Addr for T
 where T: Copy + Debug + DeserializeOwned + Eq + Ord + PartialEq + Send +
-    Sync + Serialize + TypicalSize + 'static {}
+    Sync + Serialize + TypicalSize + for<'a> Readable<'a, speedy::LittleEndian>
+    + Writable<speedy::LittleEndian> + 'static {}
 
 pub trait Key: Copy + Debug + DeserializeOwned + Ord + PartialEq + MinValue +
-    Send + Sync + Serialize + TypicalSize + 'static
+    Send + Sync + Serialize + TypicalSize +
+    for<'a> Readable<'a, speedy::LittleEndian> + Writable<speedy::LittleEndian>
+    + 'static
 {
     /// Do write operations in trees that use this Key type require writeback
     /// credit?
@@ -101,7 +106,8 @@ impl Key for RID {
 impl Key for u32 {}
 
 pub trait Value: Clone + Debug + DeserializeOwned + PartialEq + Send + Sync +
-    Serialize + TypicalSize + 'static
+    Serialize + TypicalSize + for<'a> Readable<'a, speedy::LittleEndian>
+     + Writable<speedy::LittleEndian> + 'static
 {
     /// Does this Value type require flushing?
     const NEEDS_FLUSH: bool = false;
@@ -263,6 +269,35 @@ impl<A: Addr, K: Key, V: Value> PartialEq  for TreePtr<A, K, V> {
     }
 }
 
+impl<'a, A, C, K, V> Readable<'a, C> for TreePtr<A, K, V>
+    where A: Addr + Readable<'a, C>,
+          C: speedy::Context,
+          K: Key,
+          V: Value
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let addr = reader.read_value()?;
+        Ok(Self::Addr(addr))
+    }
+}
+
+impl<A, C, K, V> Writable<C> for TreePtr<A, K, V>
+    where A: Addr + Writable<C>,
+          C: speedy::Context,
+          K: Key,
+          V: Value
+{
+    fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
+        where W: ?Sized + Writer<C>
+    {
+        let addr = self.as_addr();
+        w.write_value(addr)?;
+        Ok(())
+    }
+}
+
 /// For YAML, use singleton_map because nested enums aren't supported by
 /// serde_yaml_ng 0.10.0
 mod node_serializer {
@@ -324,14 +359,13 @@ impl<K: Key, V: Value> Future for LeafDataFlush<K, V> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Writable)]
 pub struct LeafData<K: Key, V> {
     /// WriteBack credit, if this `LeafData` is dirty.  Anytime the node is
     /// dirty and not exclusively locked, this should be at least as great as
     /// `wb_space()`.
     // Is there any way to eliminate this based on K::USES_CREDIT?
-    // TODO: don't serialize credit for Bincode.  For YAML, need to decide if
-    // it's useful enough in the unit tests.
+    #[speedy(skip)]
     credit: Credit,
     #[cfg(test)] pub(super) items: BTreeMap<K, V>,
     #[cfg(not(test))] items: BTreeMap<K, V>,
@@ -593,6 +627,20 @@ impl<K: Key, V: Value> PartialEq for LeafData<K, V> {
     }
 }
 
+impl<'a, C, K, V> Readable<'a, C> for LeafData<K, V>
+    where C: speedy::Context,
+          K: Key + Readable<'a, C>,
+          V: Value + Readable<'a, C>
+{
+    fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+        where R: Reader<'a, C>
+    {
+        let items = reader.read_value()?;
+        let credit = Credit::null();
+        Ok(Self { credit, items} )
+    }
+}
+
 impl<'de, K: Key, V: Value> Deserialize<'de> for LeafData<K, V> {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
         where D: Deserializer<'de>
@@ -680,7 +728,7 @@ impl<K: Key, V: Value> Serialize for LeafData<K, V> {
             ss.serialize_field("items", &self.items)?;
             ss.end()
         } else {
-            // But for Bincode, omit it, because it should always be 0.
+            // But for binary, omit it, because it should always be 0.
             let mut ss = serializer.serialize_struct("LeafData", 1)?;
             ss.serialize_field("items", &self.items)?;
             ss.end()
@@ -689,7 +737,8 @@ impl<K: Key, V: Value> Serialize for LeafData<K, V> {
 }
 
 /// Node size limits
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize,
+         Readable, Writable)]
 #[cfg_attr(test, derive(Default))]
 pub struct Limits {
     /// Minimum interior node fanout.  Smaller nodes will be merged, or will
@@ -951,7 +1000,7 @@ impl<A: Addr, K: Key, V: Value> DerefMut for TreeWriteGuard<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, Readable, Writable)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub struct IntElem<A: Addr, K: Key + DeserializeOwned, V: Value> {
     pub key: K,
@@ -970,7 +1019,6 @@ impl<A: Addr, K: Key, V: Value> TypicalSize for IntElem<A, K, V> {
     const TYPICAL_SIZE: usize =
         K::TYPICAL_SIZE     // key
         + 4 * 2             // Range<TxgT>
-        + 4                 // TreePtr discriminant
         + A::TYPICAL_SIZE;  // TreePtr contents
 }
 
@@ -1036,7 +1084,7 @@ impl<A: Addr, K: Key, V: Value> Default for IntElem<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, Readable, Writable)]
 #[serde(bound(deserialize = "A: DeserializeOwned, K: DeserializeOwned"))]
 pub struct IntData<A: Addr, K: Key, V: Value> {
     pub children: Vec<IntElem<A, K, V>>
@@ -1096,7 +1144,7 @@ impl<A: Addr, K: Key, V: Value> IntData<A, K, V> {
     }
 }
 
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Deserialize, PartialEq, Serialize, Readable, Writable)]
 #[serde(bound(deserialize = "K: DeserializeOwned"))]
 pub enum NodeData<A: Addr, K: Key, V: Value> {
     Leaf(LeafData<K, V>),
@@ -1376,10 +1424,15 @@ impl<A: Addr, K: Key, V: Value> NodeData<A, K, V> {
     }
 }
 
-impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
+impl<A, K, V> Cacheable for Arc<Node<A, K, V>>
+    where A: Addr,
+          K: Key,
+          V: Value
+{
     fn deserialize(dbs: DivBufShared) -> Self where Self: Sized {
         let db = dbs.try_const().unwrap();
-        let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
+        let node_data = Readable::<'_, speedy::LittleEndian>::read_from_buffer(
+            &db[..]).unwrap();
         Arc::new(Node(RwLock::new(node_data)))
     }
 
@@ -1454,7 +1507,7 @@ impl<A: Addr, K: Key, V: Value> Cacheable for Arc<Node<A, K, V>> {
 impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     fn deserialize(dbs: DivBufShared) -> Box<dyn Cacheable> where Self: Sized {
         let db = dbs.try_const().unwrap();
-        let node_data: NodeData<A, K, V> = bincode::deserialize(&db[..]).unwrap();
+        let node_data = NodeData::<A, K, V>::read_from_buffer(&db[..]).unwrap();
         let node = Arc::new(Node(RwLock::new(node_data)));
         Box::new(node)
     }
@@ -1462,7 +1515,7 @@ impl<A: Addr, K: Key, V: Value> CacheRef for Arc<Node<A, K, V>> {
     fn serialize(&self) -> DivBuf {
         let g = self.0.try_read().expect(
             "Shouldn't be serializing a Node that's locked for writing");
-        let v = bincode::serialize(&g.deref()).unwrap();
+        let v = g.deref().write_to_vec().unwrap();
         let dbs = DivBufShared::from(v);
         dbs.try_const().unwrap()
     }
@@ -1602,16 +1655,16 @@ use crate::{
     ddml::DRP
 };
 use pretty_assertions::assert_eq;
+use speedy::LittleEndian;
 use super::*;
 
 #[test]
 fn deserialize_int() {
     let serialized = DivBufShared::from(vec![
         1u8, 0, 0, 0, // enum variant 0 for IntNode
-        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+        2, 0, 0, 0,                 // 2 elements in the vector
            0, 0, 0, 0,              // K=0
            1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
-           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0,                       // Not compressed
@@ -1620,7 +1673,6 @@ fn deserialize_int() {
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
            2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
-           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1,                       // Compressed
@@ -1648,7 +1700,7 @@ fn deserialize_int() {
 fn deserialize_leaf() {
     let serialized = DivBufShared::from(vec![
         0u8, 0, 0, 0, // enum variant 0 for LeafNode
-        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        3, 0, 0, 0,                 // 3 elements in the map
             0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
             1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
             99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
@@ -1669,17 +1721,16 @@ fn intelem_typical_size() {
     let int_elem = IntElem::<DRP, PBA, RID>::new(pba,
                                                  TxgT::from(1)..TxgT::from(9),
                                                  TreePtr::Addr(drp));
-    let size = bincode::serialized_size(&int_elem).unwrap() as usize;
+    let size = Writable::<LittleEndian>::bytes_needed(&int_elem).unwrap();
     assert_eq!(IntElem::<DRP, PBA, RID>::TYPICAL_SIZE, size);
 }
 
 #[test]
 fn serialize_int() {
     let expected = [1u8, 0, 0, 0, // enum variant 0 for IntNode
-        2, 0, 0, 0, 0, 0, 0, 0,     // 2 elements in the vector
+        2, 0, 0, 0,                 // 2 elements in the vector
            0, 0, 0, 0,              // K=0
            1, 0, 0, 0, 9, 0, 0, 0,  // TXG range 1..9
-           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 0, 0, 0, 0, 0, 0, 0,  // LBA 0
            0,                       // Not compressed
@@ -1688,7 +1739,6 @@ fn serialize_int() {
            0xef, 0xbe, 0xad, 0xde, 0, 0, 0, 0,  // checksum
            0, 1, 0, 0,              // K=256
            2, 0, 0, 0, 8, 0, 0, 0,  // TXG range 1..9
-           0u8, 0, 0, 0,            // enum variant 0 for TreePtr::Addr
                0, 0,                // Cluster 0
                0, 1, 0, 0, 0, 0, 0, 0,  // LBA 256
            1,                       // Compressed
@@ -1714,7 +1764,7 @@ fn serialize_int() {
 #[test]
 fn serialize_leaf() {
     let expected = [0u8, 0, 0, 0, // enum variant 0 for LeafNode
-        3, 0, 0, 0, 0, 0, 0, 0,     // 3 elements in the map
+        3, 0, 0, 0,                 // 3 elements in the map
         0, 0, 0, 0, 100, 0, 0, 0,   // K=0, V=100 in little endian
         1, 0, 0, 0, 200, 0, 0, 0,   // K=1, V=200
         99, 0, 0, 0, 80, 195, 0, 0  // K=99, V=50000
@@ -1727,6 +1777,50 @@ fn serialize_leaf() {
     let db = node.serialize();
     assert_eq!(&expected[..], &db[..]);
     drop(db);
+}
+
+/// Round-trip a Leaf through serialization
+#[test]
+fn serdes_leaf() {
+    let mut items: BTreeMap<u32, u32> = BTreeMap::new();
+    items.insert(0, 100);
+    items.insert(1, 200);
+    items.insert(99, 50_000);
+    let node1: Arc<Node<DRP, u32, u32>> = Arc::new(leaf_node!(items));
+    let db = node1.serialize();
+    let dbs = DivBufShared::from(&db[..]);
+
+    let node2: Arc<Node<DRP, u32, u32>> = Cacheable::deserialize(dbs);
+    let guard1 = node1.0.try_read().unwrap();
+    let guard2 = node2.0.try_read().unwrap();
+    let leaf_data1 = guard1.deref().as_leaf();
+    let leaf_data2 = guard2.deref().as_leaf();
+    assert_eq!(leaf_data1, leaf_data2);
+}
+
+/// Round-trip an Int node through serialization
+#[test]
+fn serdes_int() {
+    let drp0 = DRP::new(PBA::new(0, 0), Compression::None, 40000, 40000,
+                        0xdead_beef);
+    let drp1 = DRP::new(PBA::new(0, 256), Compression::Zstd(None),
+                        16000, 8000, 0x1a7e_babe);
+    let children = vec![
+        IntElem::new(0u32, TxgT::from(1)..TxgT::from(9), TreePtr::Addr(drp0)),
+        IntElem::new(256u32, TxgT::from(2)..TxgT::from(8), TreePtr::Addr(drp1)),
+    ];
+    let node_data = NodeData::Int(IntData::new(children));
+    let node1: Node<DRP, u32, u32> = Node(RwLock::new(node_data));
+    let node1 = Arc::new(node1);
+    let db = node1.serialize();
+    let dbs = DivBufShared::from(&db[..]);
+
+    let node2: Arc<Node<DRP, u32, u32>> = Cacheable::deserialize(dbs);
+    let guard1 = node1.0.try_read().unwrap();
+    let guard2 = node2.0.try_read().unwrap();
+    let int_data1 = guard1.deref().as_int();
+    let int_data2 = guard2.deref().as_int();
+    assert_eq!(int_data1, int_data2);
 }
 
 }
