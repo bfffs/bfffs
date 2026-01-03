@@ -498,7 +498,7 @@ impl<'a> IDML {
             txg,
         };
         labeller.serialize(&label).unwrap();
-        self.ddml.write_label(labeller)
+        self.ddml.write_label(labeller, txg)
     }
 
     /// Get the soft limit for the bytes in the writeback cache

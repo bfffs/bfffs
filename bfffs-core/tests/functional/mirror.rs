@@ -10,6 +10,7 @@ use bfffs_core::{
     vdev::{FaultedReason, Health},
     Error,
     LbaT,
+    TxgT,
     Uuid,
     BYTES_PER_LBA,
 };
@@ -102,7 +103,8 @@ mod open {
         let (old_vdev, _tempdir, paths) = harness;
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_vdev.write_label(label_writer).await.unwrap();
+        let txg = TxgT::from(1);
+        old_vdev.write_label(label_writer, txg).await.unwrap();
         let old_status = old_vdev.status();
         drop(old_vdev);
 
@@ -152,7 +154,7 @@ mod persistence {
         let (old_vdev, _tempdir, paths) = harness;
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_vdev.write_label(label_writer).await.unwrap();
+        old_vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         drop(old_vdev);
 
         let mut manager = Manager::default();
@@ -167,12 +169,12 @@ mod persistence {
     #[tokio::test]
     async fn write_label(harness: Harness) {
         let label_writer = LabelWriter::new(0);
-        harness.0.write_label(label_writer).await.unwrap();
+        harness.0.write_label(label_writer, TxgT::from(1)).await.unwrap();
 
         for path in harness.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
+            f.seek(SeekFrom::Start(76)).unwrap();   // Skip the VdevBlock label
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

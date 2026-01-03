@@ -23,6 +23,7 @@ use bfffs_core::{
     BYTES_PER_LBA,
     Error,
     LbaT,
+    TxgT,
     label::*,
     mirror::Mirror,
     vdev::{FaultedReason, Health, Vdev},
@@ -1010,7 +1011,7 @@ mod open {
     {
         let uuid = harness.vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        harness.vdev.write_label(label_writer).await.unwrap();
+        harness.vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         let old_status = harness.vdev.status();
         drop(harness.vdev);
 
@@ -1087,7 +1088,7 @@ mod persistence {
     async fn open_after_write(#[future] harness: Harness) {
         let uuid = harness.vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        harness.vdev.write_label(label_writer).await.unwrap();
+        harness.vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         drop(harness.vdev);
 
         let mut manager = Manager::default();
@@ -1103,11 +1104,11 @@ mod persistence {
     #[awt]
     async fn write_label(#[future] harness: Harness) {
         let label_writer = LabelWriter::new(0);
-        harness.vdev.write_label(label_writer).await.unwrap();
+        harness.vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         for path in harness.paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(108)).unwrap();   // Skip leaf, mirror labels
+            f.seek(SeekFrom::Start(112)).unwrap();   // Skip leaf, mirror labels
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

@@ -24,6 +24,7 @@ use rand_xorshift::XorShiftRng;
 use bfffs_core::{
     BYTES_PER_LBA,
     LbaT,
+    TxgT,
     label::LabelWriter,
     mirror::Mirror,
     raid::{self, Manager, RaidImpl, VdevRaidApi},
@@ -58,7 +59,8 @@ async fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
     let cs = NonZeroU64::new(chunksize);
     let vdev = raid::create(cs, k, f, mirrors);
     let label_writer = LabelWriter::new(0);
-    vdev.write_label(label_writer).await.unwrap();
+    let txg = TxgT::from(1);
+    vdev.write_label(label_writer, txg).await.unwrap();
     Harness{vdev, _tempdir: tempdir, paths, k, f, chunksize}
 }
 

@@ -78,8 +78,10 @@ mod persistence {
         let name = harness.pool.name().to_string();
         let uuid = harness.pool.uuid();
         let label_writer = LabelWriter::new(0);
-        future::try_join(harness.pool.flush(0), harness.pool.write_label(label_writer))
-            .await.unwrap();
+        future::try_join(
+            harness.pool.flush(0),
+            harness.pool.write_label(label_writer, TxgT::from(1))
+        ).await.unwrap();
         drop(harness.pool);
 
         let mut manager = Manager::default();
@@ -96,12 +98,12 @@ mod persistence {
     async fn write_label(harness: crate::PoolHarness) {
         let ph = harness;
         let label_writer = LabelWriter::new(0);
-        ph.pool.write_label(label_writer).await.unwrap();
+        ph.pool.write_label(label_writer, TxgT::from(1)).await.unwrap();
         for path in ph.paths {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
             // Skip leaf, mirror, raid, and cluster labels
-            f.seek(SeekFrom::Start(144)).unwrap();
+            f.seek(SeekFrom::Start(148)).unwrap();
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {

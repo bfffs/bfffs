@@ -156,7 +156,7 @@ mod persistence {
         let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, mirror, raid, cluster, and pool labels
-        f.seek(SeekFrom::Start(192)).unwrap();
+        f.seek(SeekFrom::Start(196)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

@@ -1063,9 +1063,9 @@ impl Cluster {
 
     /// Asynchronously write this cluster's label to all component devices
     /// All data and spacemap should be written and synced first!
-    pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
-        self.vdev.write_label(labeller)
+        self.vdev.write_label(labeller, txg)
     }
 }
 

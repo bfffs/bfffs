@@ -199,8 +199,10 @@ impl Child {
         self.as_present().map(|bd| bd.write_at(buf, lba))
     }
 
-    fn write_label(&self, labeller: LabelWriter) -> Option<VdevBlockFut> {
-        self.as_present().map(|vb| vb.write_label(labeller))
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+        -> Option<VdevBlockFut>
+    {
+        self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -402,6 +404,8 @@ impl Mirror {
         assert!(!leaves.is_empty(), "Must have at least one child");
         let mut children = Vec::with_capacity(label.children.len());
         for lchild in label.children.iter() {
+            // TODO: verify the child's txg.  If it's old, the child must go
+            // into the Rebuilding state.
             if let Some(vb) = leaves.remove(lchild) {
                 children.push(Child::present(vb));
             } else {
@@ -585,7 +589,8 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    pub fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+        -> BoxVdevFut
     {
         let children_uuids = self.children.iter().map(Child::uuid)
             .collect::<Vec<_>>();
@@ -595,7 +600,7 @@ impl Mirror {
         };
         labeller.serialize(&label).unwrap();
         let fut = self.children.iter().filter_map(|bd| {
-           bd.write_label(labeller.clone())
+           bd.write_label(labeller.clone(), txg)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -787,7 +792,8 @@ mock! {
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+            -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
         pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
@@ -1854,14 +1860,17 @@ mod t {
                 let mut bd = mock_vdev_block();
                 bd.expect_write_label()
                 .once()
-                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
                 Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1]);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller).now_or_never().unwrap().unwrap();
+            mirror.write_label(labeller, TxgT::from(1))
+                .now_or_never()
+                .unwrap()
+                .unwrap();
         }
 
         #[test]
@@ -1869,14 +1878,17 @@ mod t {
             let mut bd1 = mock_vdev_block();
             bd1.expect_write_label()
                 .once()
-                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
             let children = vec![
                 Child::missing(Uuid::new_v4()),
                 Child::present(bd1),
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller).now_or_never().unwrap().unwrap();
+            mirror.write_label(labeller, TxgT::from(1))
+                .now_or_never()
+                .unwrap()
+                .unwrap();
         }
     }
 

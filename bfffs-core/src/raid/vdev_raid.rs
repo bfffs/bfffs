@@ -344,8 +344,8 @@ impl Child {
         }
     }
 
-    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut {
-        self.as_present().unwrap().write_label(labeller)
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut {
+        self.as_present().unwrap().write_label(labeller, txg)
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -2338,7 +2338,7 @@ impl VdevRaidApi for VdevRaid {
         Box::pin(futs.try_collect::<Vec<_>>().map_ok(drop))
     }
 
-    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
         let children_uuids = self.inner.children.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
@@ -2353,7 +2353,7 @@ impl VdevRaidApi for VdevRaid {
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
         let fut = self.inner.children.iter().map(|bd| {
-           bd.write_label(labeller.clone())
+           bd.write_label(labeller.clone(), txg)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);

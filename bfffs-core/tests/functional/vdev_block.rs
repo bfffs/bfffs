@@ -132,24 +132,26 @@ mod persistence {
     };
     use tempfile::{Builder, TempDir};
 
-    const GOLDEN: [u8; 72] = [
+    const GOLDEN: [u8; 76] = [
         // First 16 bytes are file magic
         0x42, 0x46, 0x46, 0x46, 0x53, 0x20, 0x56, 0x64, // BFFFS Vd
         0x65, 0x76, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // ev......
         // Next 8 bytes are a checksum
-        0x2e, 0x43, 0xc2, 0x5d, 0x1f, 0x55, 0x20, 0x3b,
+        0xc8, 0xdc, 0x2a, 0xd9, 0xac, 0x54, 0xfd, 0xd1,
         // Next 8 bytes are the contents length, in BE
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x28,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2c,
         // The rest is a serialized VdevBlock::Label object.
         // First comes the VdevBlock's UUID.
-        0x3f, 0xa1, 0xf6, 0xb9, 0x54, 0xb1, 0x4a, 0x10,
-        0xbc, 0x6b, 0x5b, 0x2a, 0x15, 0xe8, 0xa0, 0x3d,
+        0xdc, 0x3e, 0xa5, 0x16, 0xd4, 0xf0, 0x4b, 0x44,
+        0x96, 0x34, 0x6a, 0x9e, 0x60, 0x13, 0x1f, 0xb1,
         // Then the number of LBAS per zone
         0xbe, 0xba, 0x7e, 0x1a, 0xef, 0xbe, 0xad, 0xde,
         // Then the number of LBAs as a 64-bit number
         0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        // Finally the number of LBAs reserved for the spacemap
+        // The number of LBAs reserved for the spacemap
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        // And finally the label's transaction number
+        0x04, 0x03, 0x02, 0x01
     ];
 
     type Harness = (PathBuf, TempDir);
@@ -171,7 +173,7 @@ mod persistence {
     #[tokio::test]
     async fn open(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
-            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
+            "dc3ea516-d4f0-4b44-9634-6a9e60131fb1").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -218,7 +220,7 @@ mod persistence {
     #[tokio::test]
     async fn open_first_label_only(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
-            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
+            "dc3ea516-d4f0-4b44-9634-6a9e60131fb1").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -250,7 +252,7 @@ mod persistence {
     #[tokio::test]
     async fn open_second_label_only(harness: Harness) {
         let golden_uuid = Uuid::parse_str(
-            "3fa1f6b9-54b1-4a10-bc6b-5b2a15e8a03d").unwrap();
+            "dc3ea516-d4f0-4b44-9634-6a9e60131fb1").unwrap();
         {
             let f = std::fs::OpenOptions::new()
                 .write(true)
@@ -274,7 +276,8 @@ mod persistence {
         let vdev = VdevBlock::create(harness.0.clone(), lbas_per_zone)
             .unwrap();
         let label_writer = LabelWriter::new(0);
-        vdev.write_label(label_writer).await.unwrap();
+        let txg = TxgT::from(0x01020304);
+        vdev.write_label(label_writer, txg).await.unwrap();
 
         let mut f = std::fs::File::open(harness.0).unwrap();
         let mut v = vec![0; 4096];

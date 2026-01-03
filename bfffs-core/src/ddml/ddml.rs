@@ -310,11 +310,11 @@ impl DDML {
         self.pool.read().map(|p| p.used())
     }
 
-    pub fn write_label(&self, labeller: LabelWriter)
+    pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send
     {
         self.pool.read()
-            .then(move |pool| pool.write_label(labeller))
+            .then(move |pool| pool.write_label(labeller, txg))
     }
 }
 
@@ -426,7 +426,7 @@ mock! {
         pub fn size(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
         pub fn status(&self) -> Pin<Box<dyn Future<Output=Status> + Send>>;
         pub fn used(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
-        pub fn write_label(&self, labeller: LabelWriter)
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }
     impl DML for DDML {

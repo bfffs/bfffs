@@ -96,7 +96,7 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut;
 
     /// Asynchronously write to the Vdev's spacemap area.
     ///

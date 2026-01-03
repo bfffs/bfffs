@@ -6,7 +6,8 @@ use bfffs_core::{
     vdev::{FaultedReason, Health},
     raid::{Manager, NullRaid, VdevRaidApi},
     Uuid,
-    Error
+    Error,
+    TxgT
 };
 use nonzero_ext::nonzero;
 use rstest::rstest;
@@ -115,7 +116,7 @@ mod persistence {
     async fn open_after_write(#[case] h: Harness) {
         let uuid = h.vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        h.vdev.write_label(label_writer).await.unwrap();
+        h.vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         drop(h.vdev);
 
         let mut manager = Manager::default();
@@ -129,10 +130,10 @@ mod persistence {
     #[tokio::test]
     async fn write_label(#[case] h: Harness) {
         let label_writer = LabelWriter::new(0);
-        h.vdev.write_label(label_writer).await.unwrap();
+        h.vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         let mut f = fs::File::open(&h.paths[0]).unwrap();
         let mut v = vec![0; 8192];
-        f.seek(SeekFrom::Start(108)).unwrap();   // Skip the leaf, mirror labels
+        f.seek(SeekFrom::Start(112)).unwrap();   // Skip the leaf, mirror labels
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

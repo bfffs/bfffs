@@ -177,7 +177,7 @@ impl VdevRaidApi for NullRaid {
         }
     }
 
-    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
         let nullraid_label = Label {
             uuid: self.uuid,
@@ -185,7 +185,7 @@ impl VdevRaidApi for NullRaid {
         };
         let label = super::Label::NullRaid(nullraid_label);
         labeller.serialize(&label).unwrap();
-        Box::pin(self.mirror.write_label(labeller))
+        Box::pin(self.mirror.write_label(labeller, txg))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

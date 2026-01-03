@@ -1060,13 +1060,15 @@ impl VdevBlock {
         self.new_fut(block_op, receiver)
     }
 
-    pub fn write_label(&self, mut labeller: LabelWriter) -> VdevBlockFut
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+        -> VdevBlockFut
     {
         let label = Label {
             uuid: self.uuid,
             spacemap_space: self.spacemap_space,
             lbas_per_zone: self.lbas_per_zone,
-            lbas: self.size
+            lbas: self.size,
+            txg,
         };
         labeller.serialize(&label).unwrap();
         let (sender, receiver) = oneshot::channel::<Result<()>>();
@@ -1139,6 +1141,8 @@ pub struct Label {
     lbas:           LbaT,
     /// LBAs in the first zone reserved for storing each spacemap.
     spacemap_space: LbaT,
+    /// The most recently synced transaction group recorded on this disk
+    txg:            TxgT
 }
 
 /// Holds a VdevLeaf that has already been tasted
@@ -1253,7 +1257,8 @@ mock! {
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+            -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
         pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;

@@ -475,7 +475,7 @@ impl Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter)
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send + Sync
     {
         let cluster_uuids = self.clusters.iter().map(Cluster::uuid)
@@ -487,7 +487,7 @@ impl Pool {
         };
         labeller.serialize(&label).unwrap();
         self.clusters.iter()
-        .map(|cluster| cluster.write_label(labeller.clone()))
+        .map(|cluster| cluster.write_label(labeller.clone(), txg))
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop)

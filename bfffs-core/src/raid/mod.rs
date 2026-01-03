@@ -243,7 +243,7 @@ mock!{
         fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
-        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut;
         fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             -> BoxVdevFut;
     }
