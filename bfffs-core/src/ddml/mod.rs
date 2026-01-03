@@ -15,6 +15,7 @@ use crate::{
 #[cfg(test)] use rand::Rng;
 
 use cfg_if::cfg_if;
+use speedy::{Readable, Writable};
 use std::{
     path::Path,
     sync::{Arc, Mutex}
@@ -36,7 +37,8 @@ pub use self::ddml::DDML;
 ///
 /// A Record is a local unit of data on disk.  It may be larger or smaller than
 /// a Block, but Records are always read/written in their entirety.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq,
+         PartialOrd, Serialize, Readable, Writable)]
 pub struct DRP {
     /// Physical Block Address.  The record's location on disk.
     // Must come first so PartialOrd can be derived

@@ -33,6 +33,7 @@ use nix::{
     sys::stat::Mode,
     unistd,
 };
+use speedy::{Readable, Writable};
 use tokio_seqpacket::{UCred, UnixSeqpacket, UnixSeqpacketListener};
 use tracing::{error, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -130,10 +131,10 @@ impl Bfffsd {
                 break;
             } else {
                 buf.truncate(nread);
-                let req: rpc::Request = bincode::deserialize(&buf[..]).unwrap();
+                let req = rpc::Request::read_from_buffer(&buf[..]).unwrap();
                 let creds = peer.peer_cred().unwrap();
                 let resp = self.process_rpc(req, creds).await;
-                let encoded: Vec<u8> = bincode::serialize(&resp).unwrap();
+                let encoded: Vec<u8> = resp.write_to_vec().unwrap();
                 let nwrite = peer.send(&encoded).await;
                 if nwrite.is_err() || nwrite.unwrap() != encoded.len() {
                     warn!("Client disconnected before reading response");

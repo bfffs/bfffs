@@ -5,6 +5,7 @@ use std::{
     str::FromStr
 };
 use serde_derive::*;
+use speedy::{Readable, Writable};
 use thiserror::Error;
 
 /// All dataset properties are associated with this fake inode number.
@@ -18,7 +19,8 @@ pub const PROPERTY_OBJECT: u64 = 0;
 ///
 /// This enum is not used for User Properties.  User Properties are stored as
 /// extended attributes on inode 0.
-#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize,
+         Readable, Writable)]
 pub enum Property {
     /// Access time.
     ///
@@ -190,7 +192,7 @@ impl FromStr for Property {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
+         Serialize, Readable, Writable)]
 pub enum PropertyName {
     Atime,
     BaseMountpoint,
@@ -255,7 +257,7 @@ impl FromStr for PropertyName {
 // ...
 // None     -   Default value
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, PartialOrd, Ord,
-         Serialize)]
+         Serialize, Readable, Writable)]
 pub enum PropertySource {
     /// This is a pseudoproperty that has no source.
     None,

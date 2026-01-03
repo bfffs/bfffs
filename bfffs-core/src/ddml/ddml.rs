@@ -452,6 +452,7 @@ mock! {
 mod t {
 mod drp {
     use pretty_assertions::assert_eq;
+    use speedy::{LittleEndian, Writable};
     use super::super::*;
 
     #[test]
@@ -479,7 +480,7 @@ mod drp {
     #[test]
     fn typical_size() {
         let drp = DRP::random(Compression::Zstd(None), 5000);
-        let size = bincode::serialized_size(&drp).unwrap() as usize;
+        let size = Writable::<LittleEndian>::bytes_needed(&drp).unwrap();
         assert_eq!(DRP::TYPICAL_SIZE, size);
     }
 }

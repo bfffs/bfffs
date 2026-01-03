@@ -15,7 +15,7 @@ use crate::{
 use divbuf::DivBufShared;
 use futures::{Future, FutureExt, TryFutureExt, future};
 use mockall_double::double;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use super::{
     Status,
     vdev_raid_api::*,
@@ -24,7 +24,7 @@ use super::{
 #[double]
 use crate::mirror::Mirror;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
     pub uuid:   Uuid,

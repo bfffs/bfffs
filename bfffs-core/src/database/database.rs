@@ -26,7 +26,7 @@ use futures::{
 };
 use futures_locks::RwLock;
 #[cfg(test)] use mockall::automock;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::collections::BTreeMap;
 use std::{
     ffi::{OsString, OsStr},
@@ -132,7 +132,7 @@ impl Syncer {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 struct Label {
     forest: TreeOnDisk<RID>
 }

@@ -15,7 +15,6 @@ nightly = [ "mockall/nightly" ]
 [dependencies]
 atomic_enum = { workspace = true }
 auto_enums = { workspace = true }
-bincode = { workspace = true, features = ["i128"] }
 bitfield = { workspace = true }
 byteorder = { workspace = true }
 byteshuffle = { workspace = true }
@@ -41,6 +40,7 @@ pin-project = { workspace = true }
 serde = { workspace = true }
 serde_derive = { workspace = true }
 serde_yaml_ng = { workspace = true }
+speedy = { workspace = true , features = ["uuid"] }
 thiserror = { workspace = true }
 time = { workspace = true, features = ["formatting"] }
 tokio = { workspace = true, features = ["rt", "sync", "time"] }

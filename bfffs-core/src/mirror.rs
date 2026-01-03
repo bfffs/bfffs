@@ -31,7 +31,7 @@ use futures::{
     task::{Context, Poll}
 };
 use pin_project::pin_project;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 
 use crate::{
     label::*,
@@ -53,7 +53,7 @@ cfg_if! {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
     pub uuid:           Uuid,

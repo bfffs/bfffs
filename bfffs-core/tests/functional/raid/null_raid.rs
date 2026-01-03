@@ -132,7 +132,7 @@ mod persistence {
         h.vdev.write_label(label_writer).await.unwrap();
         let mut f = fs::File::open(&h.paths[0]).unwrap();
         let mut v = vec![0; 8192];
-        f.seek(SeekFrom::Start(112)).unwrap();   // Skip the leaf, mirror labels
+        f.seek(SeekFrom::Start(108)).unwrap();   // Skip the leaf, mirror labels
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {

@@ -7,11 +7,10 @@ use crate::{
     types::*,
     util::*
 };
-use bincode::Options;
 use divbuf::DivBufShared;
 use futures::Future;
 #[cfg(test)] use mockall::automock;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     num::NonZeroU8,
     pin::Pin
@@ -32,9 +31,10 @@ pub enum Compression {
 }
 
 /// The on-disk identification of a Compression
-// We have to represent it like this because bincode refuses to use a fixed-size
+// We have to represent it like this because speedy refuses to use a fixed-size
 // format for Compression.
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq,
+         PartialOrd, Readable, Writable)]
 enum CompressionTag {
     LZ4(u8),
     Zstd(u8)
@@ -75,9 +75,9 @@ impl Compression {
                     }
                 }
             };
-            let tagsize = Self::encoder().serialized_size(&self.tag()).unwrap();
-            debug_assert_eq!(tagsize, Self::TAGSIZE as u64);
-            Self::encoder().serialize_into(&mut buffer, &self.tag()).unwrap();
+            let xlen = buffer.len();
+            buffer.resize(xlen + Self::TAGSIZE, 0);
+            self.tag().write_to_buffer(&mut buffer[xlen..]).unwrap();
             let dbs = DivBufShared::from(buffer);
             let compressed_lbas = dbs.len().div_ceil(BYTES_PER_LBA);
             let uncompressed_lbas = lsize.div_ceil(BYTES_PER_LBA);
@@ -94,8 +94,7 @@ impl Compression {
         let lsize = lsize as usize;
         let tag = &input[(input.len() - Self::TAGSIZE)..input.len()];
         let compressed = &input[0..(input.len() - Self::TAGSIZE)];
-        let tag: CompressionTag = Self::encoder()
-            .deserialize(tag)
+        let tag = CompressionTag::read_from_buffer(tag)
             .map_err(|_| Error::EINTEGRITY)?;
         let compression = Compression::from(tag);
         let v = match compression {
@@ -122,13 +121,6 @@ impl Compression {
             }
         };
         Ok(DivBufShared::from(v))
-    }
-
-    fn encoder() -> impl bincode::Options {
-        bincode::DefaultOptions::new()
-            .with_fixint_encoding()
-            .with_little_endian()
-            .allow_trailing_bytes()
     }
 
     /// Does this compression algorithm compress the data at all?
@@ -208,6 +200,7 @@ mod t {
     use rand::{RngCore, SeedableRng};
     use rand_xorshift::XorShiftRng;
     use rstest::rstest;
+    use speedy::{LittleEndian, Writable};
     use super::*;
 
     /// Compressible data should not be compressed, if doing so would save < 1
@@ -256,6 +249,13 @@ mod t {
         let (zdb, compression) = Compression::Zstd(None).compress(db);
         assert_eq!(zdb.len(), lsize);
         assert_eq!(compression, Compression::None);
+    }
+
+    #[test]
+    fn compression_taglen() {
+        let tag = Compression::LZ4(None).tag();
+        let tagsize = Writable::<LittleEndian>::bytes_needed(&tag).unwrap();
+        assert_eq!(tagsize, Compression::TAGSIZE);
     }
 
     /// Incompressible data should not be compressed, even when compression is
@@ -345,8 +345,8 @@ mod t {
             assert_eq!(decompressed_db, db);
         }
 
-        /// Attempt to decompress a buffer that's marked as LZ4 but isn't should
-        /// fail gracefully.
+        /// Attempting to decompress a buffer that's marked as compressed but
+        /// isn't should fail gracefully.
         #[rstest]
         fn undecompressible(
             #[values(
@@ -362,7 +362,7 @@ mod t {
             let tag = compression.tag();
             let mut v = vec![0u8; csize];
             let tagslice = &mut v[csize - Compression::TAGSIZE..csize];
-            Compression::encoder().serialize_into(tagslice, &tag).unwrap();
+            tag.write_to_buffer(tagslice).unwrap();
             let e = Compression::decompress(&v[..], lsize).unwrap_err();
             assert_eq!(Error::EINTEGRITY, e);
         }

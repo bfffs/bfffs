@@ -7,7 +7,7 @@ use crate::{
 };
 use divbuf::{DivBuf, DivBufShared};
 use metrohash::MetroHash64;
-use serde::{de::DeserializeOwned, Serialize};
+use speedy::{LittleEndian, Readable, Writable};
 use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
 
 /*
@@ -16,18 +16,18 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
- * VdevFile:    variable    bincode-encoded VdevFile::Label
- * VdevRaid:    variable    bincode-encoded VdevRaid::Label
- * Pool:        variable    bincode-encoded Pool::Label
- * IDML:        variable    bincode-encoded IDML::Label
- * Database:    variable    bincode-encoded Database::Label
+ * VdevFile:    variable    speedy-encoded VdevFile::Label
+ * VdevRaid:    variable    speedy-encoded VdevRaid::Label
+ * Pool:        variable    speedy-encoded Pool::Label
+ * IDML:        variable    speedy-encoded IDML::Label
+ * Database:    variable    speedy-encoded Database::Label
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
  *
  * On-disk Reserved Region Format:
  *
  * Label 0      4 LBAs
  * Label 1      4 LBAs
- * Spacemap0    variable    bincode-encoded spacemap.  Size is determined at
+ * Spacemap0    variable    speedy-encoded spacemap.  Size is determined at
  *                          format-time.
  * Spacemap1    variable
  */
@@ -57,10 +57,12 @@ pub struct LabelReader {
 
 impl LabelReader {
     /// Attempt to read a `T` out of the label
-    pub fn deserialize<T>(&mut self) -> bincode::Result<T>
-        where T: DeserializeOwned
+    pub fn deserialize<'a, T>(&mut self) -> std::result::Result<T, speedy::Error>
+        where T: Readable<'a, LittleEndian>
     {
-        bincode::deserialize_from(&mut self.cursor)
+        // TODO: use read_from_buffer and track a pointer ourselves.  That
+        // wasn't possible with bincode, but with speedy it is.
+        T::read_from_stream_unbuffered(&mut self.cursor)
     }
 
     /// Construct a `LabelReader` using the raw buffer read from disk
@@ -127,8 +129,10 @@ impl LabelWriter {
     /// Multiple calls to `serialize` take effect in LIFO order.  That is, the
     /// last `serialize` call's data will be encoded into the lowest position in
     /// the label.
-    pub fn serialize<T: Serialize>(&mut self, t: &T) -> bincode::Result<()> {
-        bincode::serialize(t).map(|v| {
+    pub fn serialize<T>(&mut self, t: &T) -> std::result::Result<(), speedy::Error>
+        where T: Writable<LittleEndian>
+    {
+        T::write_to_vec(t).map(|v| {
             let dbs = DivBufShared::from(v);
             self.buffers.push(dbs.try_const().unwrap());
         })

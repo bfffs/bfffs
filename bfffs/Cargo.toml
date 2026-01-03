@@ -16,7 +16,6 @@ required-features = ["fuse"]
 doc_overindented_list_items = "allow"
 
 [dependencies]
-bincode.workspace = true
 bfffs-core = { path = "../bfffs-core" }
 bytes = { workspace = true }
 cfg-if.workspace = true
@@ -28,6 +27,7 @@ libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
 prettytable-rs = { workspace = true }
 si-scale = { workspace = true }
+speedy = { workspace = true , features = ["uuid"] }
 tabular = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }

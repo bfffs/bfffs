@@ -20,7 +20,7 @@ use futures::{
 };
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::automock;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, btree_map::Keys},
@@ -550,11 +550,11 @@ impl<'a> FreeSpaceMap {
                 ZoneOnDisk{allocated_blocks, freed_blocks, txgs}
             }).collect::<Vec<_>>();
             let sod = SpacemapOnDisk::new(u64::from(block), v);
-            let dbs = DivBufShared::from(bincode::serialize(&sod).unwrap());
+            let dbs = DivBufShared::from(sod.write_to_vec().unwrap());
             // TODO: if dbs isn't a multiple of a blocksize, and it's the last
             // block in the FSM, zero-extend it up to a full blocksize, so lower
             // levels won't have to copy the data.  Then remove the zero-padding
-            // parts downstac,.
+            // parts downstack.
             (LbaT::from(block), dbs)
         })
     }
@@ -694,7 +694,7 @@ impl Display for FreeSpaceMap {
 }
 
 /// Persists the `FreeSpaceMap` in the reserved region of the disk
-#[derive(Serialize, Deserialize, Debug, Hash)]
+#[derive(Debug, Hash, Readable, Writable)]
 struct ZoneOnDisk {
     /// The number of blocks that have been allocated in each Zone.  If zero,
     /// then the zone is dead or empty.  If `u32::MAX`, then the zone is
@@ -716,7 +716,7 @@ struct ZoneOnDisk {
 /// Persists the `FreeSpaceMap` in the reserved region of the disk.  Each one of
 /// these structures stores the allocations of as many zones as can fit into
 /// 4KB.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 struct SpacemapOnDisk {
     /// MetroHash64 self-checksum.  Includes the index of this `SpacemapOnDisk`
     /// within the overall spacemap, to detect misdirected writes.
@@ -726,9 +726,9 @@ struct SpacemapOnDisk {
 
 impl SpacemapOnDisk {
     fn deserialize(block: LbaT, buf: &DivBuf)
-        -> bincode::Result<Result<Self>>
+        -> std::result::Result<Result<Self>, speedy::Error>
     {
-        bincode::deserialize::<SpacemapOnDisk>(&buf[..])
+        SpacemapOnDisk::read_from_buffer(&buf[..])
         .map(|sod| {
             let mut hasher = MetroHash64::new();
             hasher.write_u64(block);
@@ -1326,9 +1326,9 @@ mod cluster {
     #[test]
     fn freespacemap_open() {
         // Serialized spacemap
-        const SPACEMAP: [u8; 112] = [
+        const SPACEMAP: [u8; 108] = [
             0x0b, 0xed, 0xf7, 0xb2, 0xb7, 0x81, 0x79, 0x37, // Checksum
-            6, 0, 0, 0, 0, 0, 0, 0,         // 5 entries
+            6, 0, 0, 0,                     // 5 entries
             255, 255, 255, 255,             // zone0: allocated_blocks
             0, 0, 0, 0,                     // zone0: freed blocks
             0, 0, 0, 0, 2, 0, 0, 0,         // zone0 txgs: 0..2
@@ -1356,8 +1356,8 @@ mod cluster {
             .once()
             .returning(|mut dbm, _idx| {
                  assert_eq!(dbm.len(), BYTES_PER_LBA);
-                 dbm[0..112].copy_from_slice(&SPACEMAP[..]);
-                 dbm[112..4096].iter_mut().set_from(iter::repeat(0));
+                 dbm[0..108].copy_from_slice(&SPACEMAP[..]);
+                 dbm[108..4096].iter_mut().set_from(iter::repeat(0));
                  Box::pin(future::ok(()))
             });
 
@@ -1410,17 +1410,17 @@ mod cluster {
     #[test]
     fn freespacemap_open_300_zones() {
         // Serialized spacemap
-        const SPACEMAP_B0: [u8; 32] = [
+        const SPACEMAP_B0: [u8; 28] = [
             0x5e, 0xe9, 0x96, 0x17, 0xc2, 0xfe, 0xa0, 0x8e, // Checksum
-            255, 0, 0, 0, 0, 0, 0, 0,       // 255 entries
+            255, 0, 0, 0,                   // 255 entries
             255, 255, 255, 255,             // zone0: allocated_blocks
             0, 0, 0, 0,                     // zone0: freed blocks
             0, 0, 0, 0, 2, 0, 0, 0,         // zone0 txgs: 0..2
             // Rest is all 0, indicating empty zones
         ];
-        const SPACEMAP_B1: [u8; 32] = [
+        const SPACEMAP_B1: [u8; 28] = [
             0x07, 0x5e, 0x95, 0xf0, 0x93, 0x3f, 0xa7, 0xb0, // Checksum
-            45, 0, 0, 0, 0, 0, 0, 0,        // 45 entries
+            45, 0, 0, 0,                    // 45 entries
             255, 255, 255, 255,             // zone255: allocated_blocks
             1, 0, 0, 0,                     // zone255: freed blocks
             3, 0, 0, 0, 4, 0, 0, 0,         // zone255 txgs: 3..4
@@ -1434,10 +1434,10 @@ mod cluster {
             .once()
             .returning(|mut dbm, _idx| {
                 assert_eq!(dbm.len(), 8192);
-                dbm[0..32].copy_from_slice(&SPACEMAP_B0[..]);
-                dbm[32..4096].iter_mut().set_from(iter::repeat(0));
-                dbm[4096..4128].copy_from_slice(&SPACEMAP_B1[..]);
-                dbm[4192..8192].iter_mut().set_from(iter::repeat(0));
+                dbm[0..28].copy_from_slice(&SPACEMAP_B0[..]);
+                dbm[28..4096].iter_mut().set_from(iter::repeat(0));
+                dbm[4096..4124].copy_from_slice(&SPACEMAP_B1[..]);
+                dbm[4188..8192].iter_mut().set_from(iter::repeat(0));
                 Box::pin(future::ok(()))
             });
 
@@ -2424,9 +2424,9 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
     // 5. A trailing empty zone
     #[test]
     fn serialize() {
-        const EXPECTED: [u8; 112] = [
+        const EXPECTED: [u8; 108] = [
             61, 213, 211, 6, 223, 126, 49, 158, // Checksum
-            6, 0, 0, 0, 0, 0, 0, 0,         // 6 ZODs
+            6, 0, 0, 0,                     // 6 ZODs
             255, 255, 255, 255,             // zone0: allocated_blocks
             26, 0, 0, 0,                    // zone0: freed blocks
             1, 0, 0, 0, 3, 0, 0, 0,         // zone0 txgs: 1..3
@@ -2465,8 +2465,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let (block, dbs) = fsm_iter.next().unwrap();
         assert_eq!(0, block);
         let db = dbs.try_const().unwrap();
-        assert_eq!(&EXPECTED[..], &db[..112]);
-        assert!(&db[112..].iter().all(|&x| x == 0));
+        assert_eq!(&EXPECTED[..], &db[..108]);
+        assert!(&db[108..].iter().all(|&x| x == 0));
         assert!(fsm_iter.next().is_none());
     }
 

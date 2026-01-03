@@ -9,7 +9,7 @@ use futures::{
 use futures::{TryFutureExt, future};
 use nix::unistd::{sysconf, SysconfVar};
 use pin_project::pin_project;
-use serde_derive::{Deserialize, Serialize};
+use speedy::{Readable, Writable};
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, BTreeMap, VecDeque},
@@ -1129,7 +1129,7 @@ impl Vdev for VdevBlock {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Debug, Readable, Writable)]
 pub struct Label {
     /// Vdev UUID, fixed at format time
     uuid:           Uuid,

@@ -12,6 +12,7 @@ use mockall::{
     predicate::{always, eq}
 };
 use pretty_assertions::assert_eq;
+use speedy::{Writable, LittleEndian};
 use std::{
     ffi::OsStr,
     os::unix::ffi::OsStrExt,
@@ -1930,8 +1931,8 @@ root:
         checksum: 0x0807060504030201
   "#);
     let typical_tod = typical_tree.serialize().unwrap();
-    assert_eq!(TreeOnDisk::<DRP>::TYPICAL_SIZE,
-               bincode::serialized_size(&typical_tod).unwrap() as usize);
+    let size = Writable::<LittleEndian>::bytes_needed(&typical_tod).unwrap();
+    assert_eq!(TreeOnDisk::<DRP>::TYPICAL_SIZE, size);
 }
 
 // This test mimics what Database does with its forest object
@@ -1959,8 +1960,8 @@ root:
   "#);
 
     let typical_tod = typical_tree.serialize().unwrap();
-    assert_eq!(TreeOnDisk::<RID>::TYPICAL_SIZE,
-               bincode::serialized_size(&typical_tod).unwrap() as usize);
+    let size = Writable::<LittleEndian>::bytes_needed(&typical_tod).unwrap();
+    assert_eq!(TreeOnDisk::<RID>::TYPICAL_SIZE, size);
 }
 
 // Tree::serialize should serialize the Tree::Inner object
