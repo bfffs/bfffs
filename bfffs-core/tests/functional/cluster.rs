@@ -86,7 +86,7 @@ mod persistence {
 
     // Test Cluster::open
     #[rstest]
-    #[tokio::test]
+    #[test_log::test(tokio::test)]
     async fn open(objects: (Cluster, TempDir, String)) {
         {
             let mut f = fs::OpenOptions::new()

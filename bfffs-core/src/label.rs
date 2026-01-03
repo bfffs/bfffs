@@ -75,7 +75,7 @@ impl LabelReader {
             return Err(Error::EINVAL);
         }
 
-        let checksum = BigEndian::read_u64(
+        let stored_checksum = BigEndian::read_u64(
             &buffer[MAGIC_LEN..MAGIC_LEN + CHECKSUM_LEN]);
         let length_start = MAGIC_LEN + CHECKSUM_LEN;
         let contents_start = length_start + LENGTH_LEN;
@@ -88,7 +88,10 @@ impl LabelReader {
             contents_len.to_be().hash(&mut hasher);
             hasher.write(contents);
         }
-        if checksum != hasher.finish() {
+        let calc_checksum = hasher.finish();
+        if stored_checksum != calc_checksum {
+            tracing::warn!("Checksum mismatch in label: {:#x} != {:#x}",
+                           stored_checksum, calc_checksum);
             return Err(Error::EINTEGRITY);
         }
 
