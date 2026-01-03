@@ -854,8 +854,8 @@ mod fs {
 r#"limits:
   min_int_fanout: 103
   max_int_fanout: 410
-  min_leaf_fanout: 576
-  max_leaf_fanout: 2302
+  min_leaf_fanout: 635
+  max_leaf_fanout: 2540
   _max_size: 4194304
 root:
   height: 1

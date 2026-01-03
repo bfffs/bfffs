@@ -31,7 +31,6 @@ mod persistence {
     // hexdump -e '8/1 "0x%02x, " " // "' -e '8/1 "%_p" "\n"' /tmp/label.bin
     const GOLDEN_DB_LABEL: [u8; 40] = [
         // The database's label only has one member: the forest
-        // First comes the allocation table
         // Height as 64 bits
         0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         // min_int_fanout as 16 bits
@@ -169,8 +168,8 @@ root:
         limits:
           min_int_fanout: 103
           max_int_fanout: 410
-          min_leaf_fanout: 576
-          max_leaf_fanout: 2302
+          min_leaf_fanout: 635
+          max_leaf_fanout: 2540
           _max_size: 4194304
         root: 1
         txgs:

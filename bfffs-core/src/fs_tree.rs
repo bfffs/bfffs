@@ -56,7 +56,7 @@ impl<'a, C> Readable<'a, C> for ExtAttrNamespace
     fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
         where R: Reader<'a, C>
     {
-        let discriminant = u32::read_from(reader)?;
+        let discriminant = u8::read_from(reader)?;
         match discriminant as i32 {
             libc::EXTATTR_NAMESPACE_USER => Ok(Self::User),
             libc::EXTATTR_NAMESPACE_SYSTEM => Ok(Self::System),
@@ -71,7 +71,7 @@ impl<C> Writable<C> for ExtAttrNamespace
     fn write_to<W>(&self, w: &mut W) -> std::result::Result<(), C::Error>
         where W: ?Sized + Writer<C>
     {
-        w.write_u32(*self as u32)
+        w.write_u8(*self as u8)
     }
 }
 
@@ -668,6 +668,7 @@ impl<C> Writable<C> for BlobExtAttr
 // TODO: consider flattening this into FSValue to reduce the in-memory size of
 // FSValue.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize, Readable, Writable)]
+#[speedy(tag_type = u8)]
 pub enum ExtAttr {
     Inline(InlineExtAttr),
     Blob(BlobExtAttr)
@@ -1178,6 +1179,7 @@ impl Extent<'_> {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize,
          Readable, Writable)]
+#[speedy(tag_type = u8)]
 pub enum FSValue {
     DirEntry(Dirent),
     Inode(Box<Inode>),
@@ -1351,7 +1353,7 @@ impl FSValue {
 impl TypicalSize for FSValue {
     // FSValue can have variable size.  But the most common variant is likely to
     // be FSValue::BlobExtent, which has size 16.
-    const TYPICAL_SIZE: usize = 16;
+    const TYPICAL_SIZE: usize = 13;
 }
 
 impl Value for FSValue {
