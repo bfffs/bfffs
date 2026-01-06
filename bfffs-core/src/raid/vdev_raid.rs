@@ -323,6 +323,21 @@ impl Child {
         }
     }
 
+    fn repair_zone(&self, zone: ZoneT) ->
+        Option<impl Future<Output=Result<()>> + Send + Sync>
+    {
+        match self {
+            Child::Present(m) => {
+                if m.status().health == Health::Rebuilding {
+                    Some(m.repair_zone(zone))
+                } else {
+                    None
+                }
+            },
+            _ => None
+        }
+    }
+
     fn status(&self) -> Option<mirror::Status> {
         match self {
             Child::Present(m) => Some(m.status()),
@@ -2208,6 +2223,22 @@ impl VdevRaidApi for VdevRaid {
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut
     {
         self.open_zone_priv(zone, allocated)
+    }
+
+    fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        /*
+         * Outline:
+         * For each mirror child, if the child is in the repairing state,
+         * forward the repair_zone request to it.
+         * In the future, if a mirror child is Rebuilding but has no valid
+         * copies, do a RAID rebuild.
+         */
+        let fut = self.inner.children.iter()
+            .filter_map(|child| child.repair_zone(zone))
+            .collect::<FuturesUnordered<_>>()
+            .try_collect::<Vec<_>>()
+            .map_ok(drop);
+        Box::pin(fut)
     }
 
     fn status(&self) -> Status {

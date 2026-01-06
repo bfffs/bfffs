@@ -34,6 +34,7 @@ pub enum Health {
     Online,
     /// Operating with reduced redundancy
     Degraded(NonZeroU8),
+    // TODO: distinguish between "Degraded" and "Degraded but Rebuilding".
     /// Rebuild in progress.  Not all data is present.  Reads may not be
     /// possible.
     Rebuilding,

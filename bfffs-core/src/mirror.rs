@@ -11,7 +11,6 @@ use std::{
     mem,
     num::{NonZeroU8, NonZeroU64},
     path::Path,
-    ops::Range,
     pin::Pin,
     sync::{
         Arc,
@@ -574,11 +573,16 @@ impl Mirror {
         }
     }
 
-    /// Repair any degraded children by rewriting the given LBA range, if
-    /// necessary.
+    /// Repair any degraded children by rewriting the given Zone, if
+    /// necessary.  Implicitly handles any required zone operations, like
+    /// erase/open.
+    // If multiple mirror children are repairing, then this function will repair
+    // all of them, in lockstep.  This strategy avoids reading the same data
+    // multiple times, which would be necessary if we were to repair each child
+    // independently.
     // TODO: return a different error code for errors during read than for
     // errors during write.  In the former case, RAID error recovery may help.
-    pub fn repair_at(&self, mut lbas: Range<LbaT>)
+    pub fn repair_zone(&self, zone: ZoneT)
         -> impl Future<Output=Result<()>> + Send + Sync
     {
         /* Outline:
@@ -592,6 +596,7 @@ impl Mirror {
         const BLOCKSIZE_LBAS: LbaT = (BLOCKSIZE_BYTES / BYTES_PER_LBA) as LbaT;
         const QDEPTH: usize = 1;
 
+        let (mut start, end) = self.zone_limits(zone);
         let read_children = self.children.iter()
             .filter_map(Child::as_present)
             .cloned()
@@ -605,19 +610,19 @@ impl Mirror {
 
         let (mut tx, rx) = mpsc::channel(QDEPTH);
         let mut idx = self.read_idx();
-        let mut wlba = lbas.start;
+        let mut wlba = start;
         let reader = async move {
-            while lbas.start < lbas.end && have_writers {
-                let bufsize = BLOCKSIZE_LBAS.min(lbas.end - lbas.start) as usize *
+            while start < end && have_writers {
+                let bufsize = BLOCKSIZE_LBAS.min(end - start) as usize *
                     BYTES_PER_LBA;
                 let dbs = DivBufShared::uninitialized(bufsize);
                 let dbm = dbs.try_mut().unwrap();
                 let child = idx % read_children.len();
                 // TODO: recover from a read EIO, if there are other children.
                 // Can't use Mirror::read_at, because we lack `self`.
-                read_children[child].read_at(dbm, lbas.start).await?;
+                read_children[child].read_at(dbm, start).await?;
                 idx += 1;
-                lbas.start += BLOCKSIZE_LBAS;
+                start += BLOCKSIZE_LBAS;
                 tx.feed(dbs).await.map_err(|_| Error::EPIPE)?;
             }
             Ok(())
@@ -906,7 +911,7 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
-        pub fn repair_at(&self, mut lbas: Range<LbaT>) -> BoxVdevFut;
+        pub fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut;
         pub fn status(&self) -> Status;
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
@@ -1808,7 +1813,7 @@ mod t {
         }
     }
 
-    mod repair_at {
+    mod repair_zone {
         use mockall::Sequence;
         use super::*;
 
@@ -1840,8 +1845,7 @@ mod t {
                 Child::present(bd1)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            let e = mirror.repair_at(start..end).await.unwrap_err();
+            let e = mirror.repair_zone(0).await.unwrap_err();
             assert_eq!(e, Error::EIO);
         }
 
@@ -1888,8 +1892,7 @@ mod t {
                 Child::present(bd2)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            mirror.repair_at(start..end).await.unwrap();
+            mirror.repair_zone(0).await.unwrap();
         }
 
         /// Errors during write should be handled gracefully
@@ -1918,8 +1921,7 @@ mod t {
                 Child::present(bd1)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            let e = mirror.repair_at(start..end).await.unwrap_err();
+            let e = mirror.repair_zone(0).await.unwrap_err();
             assert_eq!(e, Error::EIO);
         }
 
@@ -1980,8 +1982,7 @@ mod t {
                 Child::present(bd1)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(1);
-            mirror.repair_at(start..end).await.unwrap();
+            mirror.repair_zone(1).await.unwrap();
         }
 
         /// If no children need to be repaired, then no reads are necessary.
@@ -1996,8 +1997,7 @@ mod t {
                 Child::missing(faulty_uuid)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            mirror.repair_at(start..end).await.unwrap();
+            mirror.repair_zone(0).await.unwrap();
         }
 
         #[tokio::test]
@@ -2025,8 +2025,7 @@ mod t {
                 Child::present(bd1)
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            mirror.repair_at(start..end).await.unwrap();
+            mirror.repair_zone(0).await.unwrap();
         }
 
         #[tokio::test]
@@ -2064,8 +2063,7 @@ mod t {
                 Child::rebuilding(bd2),
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
-            let (start, end) = mirror.zone_limits(0);
-            mirror.repair_at(start..end).await.unwrap();
+            mirror.repair_zone(0).await.unwrap();
         }
     }
 

@@ -142,6 +142,10 @@ impl VdevRaidApi for NullRaid {
         Box::pin(future::ok(()))
     }
 
+    fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut {
+        Box::pin(self.mirror.repair_zone(zone))
+    }
+
     fn status(&self) -> Status {
         let codec = String::from("NonRedundant");
         let child = self.mirror.status();

@@ -76,6 +76,10 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///                        in this zone.
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
 
+    /// Repair any degraded children by rewriting the Zone, if
+    /// necessary.
+    fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut;
+
     /// Return information about the health and composition of this RAID vdev.
     fn status(&self) -> Status;
 

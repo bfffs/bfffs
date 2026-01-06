@@ -239,6 +239,7 @@ mock!{
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+        fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn status(&self) -> Status;
         fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
