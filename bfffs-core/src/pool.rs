@@ -157,6 +157,8 @@ pub struct Status {
     pub health: Health,
     pub name: String,
     pub clusters: Vec<cluster::Status>,
+    /// Is a rebuild happening at any level?
+    pub rebuilding: bool,
     pub uuid: Uuid
 }
 
@@ -426,6 +428,7 @@ impl Pool {
             health,
             name: self.name().to_string(),
             clusters,
+            rebuilding: false,      // reserved for future use
             uuid: self.uuid
         }
     }
@@ -848,11 +851,11 @@ mod pool {
         /// clusters.
         #[rstest]
         #[case(Online, vec![Online, Online])]
-        #[case(Rebuilding, vec![Online, Rebuilding])]
+        #[case(Degraded(nonzero!(1u8)), vec![Online, Degraded(nonzero!(1u8))])]
         #[case(Faulted(FaultedReason::InsufficientRedundancy),
-            vec![Rebuilding, Faulted(FaultedReason::InsufficientRedundancy)])]
-        #[case(Degraded(nonzero!(1u8)),
-            vec![Online, Degraded(nonzero!(1u8))])]
+            vec![Degraded(nonzero!(1u8)),
+                 Faulted(FaultedReason::InsufficientRedundancy)]
+        )]
         #[case(Degraded(nonzero!(3u8)),
             vec![Degraded(nonzero!(3u8)),
                  Degraded(nonzero!(1u8))])]
@@ -871,9 +874,11 @@ mod pool {
                                 uuid: Default::default(),
                                 path: PathBuf::default()
                             }],
-                            uuid: Uuid::new_v4()
+                            uuid: Uuid::new_v4(),
+                            rebuilding: false,
                         }],
-                        uuid: Uuid::new_v4()
+                        uuid: Uuid::new_v4(),
+                        rebuilding: false,
                     });
                 c
             };

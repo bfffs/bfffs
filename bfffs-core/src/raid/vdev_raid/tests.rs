@@ -1028,7 +1028,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: m0_uuid
+                uuid: m0_uuid,
+                rebuilding: false,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = m1.uuid();
@@ -1039,7 +1040,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m1_uuid
+                uuid: m1_uuid,
+                rebuilding: false,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = m2.uuid();
@@ -1050,7 +1052,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m2_uuid
+                uuid: m2_uuid,
+                rebuilding: false,
             });
         mirrors.push(Child::present(m0));
         mirrors.push(Child::present(m1));
@@ -1621,7 +1624,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m0_uuid
+                uuid: m0_uuid,
+                rebuilding: false,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = Uuid::new_v4();
@@ -1631,7 +1635,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m1_uuid
+                uuid: m1_uuid,
+                rebuilding: false,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = Uuid::new_v4();
@@ -1641,7 +1646,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Faulted(FaultedReason::User),
                 leaves: Vec::new(),
-                uuid: m2_uuid
+                uuid: m2_uuid,
+                rebuilding: false,
             });
         let label = vdev_raid::Label {
             uuid: Uuid::new_v4(),
@@ -1676,7 +1682,8 @@ mod open {
                 .return_const(mirror::Status {
                     health: Health::Online,
                     leaves: Vec::new(),
-                    uuid: *child_uuid
+                    uuid: *child_uuid,
+                    rebuilding: false,
                 });
             m
         }
@@ -2224,16 +2231,18 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false,
             });
         mirrors.push(Child::present(m0));
 
         let mut m1 = mock_mirror();
         m1.expect_status()
             .returning(|| mirror::Status {
-                health: Health::Rebuilding,
+                health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: true,
             });
         m1.expect_repair_zone()
             .once()
@@ -2246,7 +2255,8 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Faulted(FaultedReason::Removed),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false
             });
         mirrors.push(Child::present(m2));
 
@@ -2274,16 +2284,18 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false,
             });
 
         mirrors.push(Child::present(m0));
         let mut m1 = mock_mirror();
         m1.expect_status()
             .returning(|| mirror::Status {
-                health: Health::Rebuilding,
+                health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: true,
             });
         m1.expect_repair_zone()
             .once()
@@ -2317,16 +2329,18 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false
             });
 
         mirrors.push(Child::present(m0));
         let mut m1 = mock_mirror();
         m1.expect_status()
             .returning(|| mirror::Status {
-                health: Health::Rebuilding,
+                health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: true
             });
         m1.expect_repair_zone()
             .once()
@@ -2339,7 +2353,8 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false
             });
         mirrors.push(Child::present(m2));
 
@@ -2367,16 +2382,18 @@ mod repair_zone {
             .returning(|| mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: false,
             });
 
         mirrors.push(Child::present(m0));
         let mut m1 = mock_mirror();
         m1.expect_status()
             .returning(|| mirror::Status {
-                health: Health::Rebuilding,
+                health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: true,
             });
         m1.expect_repair_zone()
             .once()
@@ -2387,9 +2404,10 @@ mod repair_zone {
         let mut m2 = mock_mirror();
         m2.expect_status()
             .returning(|| mirror::Status {
-                health: Health::Rebuilding,
+                health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: Uuid::new_v4()
+                uuid: Uuid::new_v4(),
+                rebuilding: true,
             });
         m2.expect_repair_zone()
             .once()
@@ -2421,8 +2439,6 @@ mod status {
     #[case(Online, vec![Online, Online, Online])]
     #[case(Degraded(nonzero!(3u8)),
         vec![Online, Online, Faulted(FaultedReason::Removed)])]
-    #[case(Degraded(nonzero!(3u8)),
-        vec![Online, Rebuilding, Online])]
     #[case(Degraded(nonzero!(1u8)),
         vec![Degraded(nonzero!(1u8)), Online, Online])]
     #[case(Degraded(nonzero!(2u8)),
@@ -2457,7 +2473,8 @@ mod status {
                 .return_const(crate::mirror::Status {
                     health: mirror_health,
                     leaves,
-                    uuid: muuid
+                    uuid: muuid,
+                    rebuilding: false,
                 });
             match mirror_health {
                 Health::Faulted(_) => Child::faulted(m),

@@ -31,6 +31,7 @@ use futures::{
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
+use nonzero_ext::nonzero;
 use pin_project::pin_project;
 use speedy::{Readable, Writable};
 
@@ -121,6 +122,9 @@ impl Manager {
 pub struct Status {
     pub health: Health,
     pub leaves: Vec<vdev_block::Status>,
+    /// Is a rebuild of one or more Mirror children in progress?
+    //TODO: add a txg number
+    pub rebuilding: bool,
     pub uuid: Uuid
 }
 
@@ -187,7 +191,6 @@ impl Child {
         matches!(self, Child::Present(_))
     }
 
-    #[cfg(test)]
     fn is_rebuilding(&self) -> bool {
         matches!(self, Child::Rebuilding(_))
     }
@@ -217,7 +220,7 @@ impl Child {
             },
             Child::Rebuilding(vb) => {
                 let mut status = vb.status();
-                status.health = Health::Rebuilding;
+                status.health = Health::Degraded(nonzero!(1u8));
                 Some(status)
             },
             Child::Missing(_) => None
@@ -669,6 +672,7 @@ impl Mirror {
             });
             leaves.push(cs);
         }
+        let rebuilding = self.children.iter().any(Child::is_rebuilding);
         let sick_children = leaves.iter()
             .filter(|l| l.health != Health::Online)
             .count();
@@ -682,6 +686,7 @@ impl Mirror {
         Status {
             health,
             leaves,
+            rebuilding,
             uuid: self.uuid()
         }
     }
@@ -941,7 +946,6 @@ mod t {
     use futures::future;
     use itertools::Itertools;
     use mockall::predicate::*;
-    use nonzero_ext::nonzero;
     use rstest::rstest;
     use super::*;
 
@@ -1004,8 +1008,6 @@ mod t {
 
     mod fault {
         use super::*;
-
-        use nonzero_ext::nonzero;
 
         fn mock() -> VdevBlock {
             let mut bd = mock_vdev_block();
@@ -2070,8 +2072,6 @@ mod t {
     mod restore {
         use super::*;
 
-        use nonzero_ext::nonzero;
-
         fn mock() -> VdevBlock {
             let mut bd = mock_vdev_block();
             bd.expect_status()
@@ -2105,8 +2105,9 @@ mod t {
             mirror.restore(bd1_uuid).unwrap();
             let status = mirror.status();
             assert_eq!(status.leaves[1].health,
-                       Health::Rebuilding);
+                       Health::Degraded(nonzero!(1u8)));
             assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+            assert!(status.rebuilding);
         }
 
         /// A missing disk cannot be restored

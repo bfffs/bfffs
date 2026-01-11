@@ -328,7 +328,7 @@ impl Child {
     {
         match self {
             Child::Present(m) => {
-                if m.status().health == Health::Rebuilding {
+                if m.status().rebuilding {
                     Some(m.repair_zone(zone))
                 } else {
                     None
@@ -2251,6 +2251,7 @@ impl VdevRaidApi for VdevRaid {
             let cs = child.status().unwrap_or(mirror::Status {
                 health: Health::Faulted(FaultedReason::Removed),
                 uuid: child.uuid(),
+                rebuilding: false,
                 leaves: Vec::new()
             });
             mirrors.push(cs);
@@ -2283,6 +2284,7 @@ impl VdevRaidApi for VdevRaid {
             health,
             codec,
             mirrors,
+            rebuilding: false,     // reserved for future use
             uuid: self.uuid
         }
     }

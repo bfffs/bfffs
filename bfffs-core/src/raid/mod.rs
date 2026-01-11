@@ -156,6 +156,9 @@ pub struct Status {
     pub health: Health,
     pub codec: String,
     pub mirrors: Vec<mirror::Status>,
+    /// Is a RAID rebuild in progress (not a mirror rebuild)?
+    /// TODO: add a TXG number.
+    pub rebuilding: bool,
     pub uuid: Uuid
 }
 
