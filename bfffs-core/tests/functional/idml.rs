@@ -106,7 +106,7 @@ mod persistence {
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         (idml, ph.tempdir, ph.paths)
     }
@@ -194,7 +194,7 @@ mod t {
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         (idml, ph.tempdir)
     }

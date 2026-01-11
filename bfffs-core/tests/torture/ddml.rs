@@ -64,7 +64,7 @@ mod fault {
                 .build();
             let uuid = ph.pool.status().clusters[0].mirrors[0].leaves[1].uuid;
             let cache = Cache::with_capacity(1_000_000_000);
-            let ddml = DDML::new(ph.pool, Arc::new(Mutex::new(cache)));
+            let ddml = DDML::create(ph.pool, Arc::new(Mutex::new(cache)));
             do_test(ddml, uuid).await;
         }
     }
@@ -73,14 +73,14 @@ mod fault {
     async fn raid() {
         for _i in 0..unsafe{test_scale().floor().to_int_unchecked()} {
             let ph = PoolBuilder::new()
-                .name("torture_ddml_fault_mirror")
+                .name("torture_ddml_fault_raid")
                 .disks(3)
                 .stripe_size(3)
                 .redundancy_level(1)
                 .build();
             let uuid = ph.pool.status().clusters[0].mirrors[1].leaves[0].uuid;
             let cache = Cache::with_capacity(1_000_000_000);
-            let ddml = DDML::new(ph.pool, Arc::new(Mutex::new(cache)));
+            let ddml = DDML::create(ph.pool, Arc::new(Mutex::new(cache)));
             do_test(ddml, uuid).await;
         }
     }

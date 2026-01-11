@@ -76,9 +76,17 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///                        in this zone.
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
 
-    /// Repair any degraded children by rewriting the Zone, if
-    /// necessary.
-    fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut;
+    /// Repair any degraded children by their Zone, using mirroring.
+    // NB: we could save a Box here , because VdevRaid::repair_mirror_zone and
+    // NullRaid::repair_mirror_zone do the exact same thing.
+    // TODO: add a max LBA argument, so we know how much of the zone to repair.
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut;
+
+    /// Repair any degraded children by rewriting the Zone, reconstructing it
+    /// using RAID parity.
+    // NB: we could save a Box here, because NullRaid::repair_raid_zone never
+    // returns.
+    fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
     /// Return information about the health and composition of this RAID vdev.
     fn status(&self) -> Status;

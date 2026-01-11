@@ -3,7 +3,7 @@ use crate::{
     cache::{self, Cache, Key},
     dml::*,
     label::*,
-    pool::ClosedZone,
+    pool::{self, ClosedZone},
     types::*,
     util::*,
     writeback::Credit
@@ -61,6 +61,58 @@ impl Iterator for ListClosedZones {
     }
 }
 
+struct MirrorRepairTask {
+}
+
+impl MirrorRepairTask {
+    pub fn spawn(pool: &Arc<RwLock<Pool>>, txg: TxgT, cl_idx: usize, m_idx: usize)
+    {
+        // Outline:
+        // * Start a mirror rebuild on the Pool.
+        // * Continue to rebuild, passing the supplied bookmark, until
+        //   Pool::rebuild returns None.  Make sure to drop the lock in between
+        //   each iteration so we don't block other DDML operations that need
+        //   writable access to the pool, like DDML::fault, for too long.
+        // * Once Pool::repair_mirror returns None, lock the pool exclusively:
+        //   - Rebuild any Zones that have been modified since the last
+        //     Pool::repair_mirror operation completed.  Maybe we'll have to
+        //     rebuild any open Zones?
+        //   - Restore the rebuilding vdev to the Online state.
+        let wpool = Arc::downgrade(pool);
+        tokio::spawn( async move {
+            let mut task = if let Some(pool) = wpool.upgrade() {
+                let pool_guard = pool.read().await;
+                pool_guard.repair_mirror(cl_idx, m_idx, txg..)
+            } else {
+                // pool got dropped.  Probably bfffs is shutting down
+                return;
+            };
+            loop {
+                if let Some(pool) = wpool.upgrade() {
+                    let more = pool.read().await.repair_mirror_step(&mut task).await.expect("TODO: handle errors");
+                    if !more {
+                        break;
+                    }
+                } else {
+                    tracing::debug!("Pool got dropped with an active MirrorRebuildTask");
+                    break;
+                }
+            }
+            if let Some(pool) = wpool.upgrade() {
+                let pool_guard = pool.write().await;
+                loop {
+                    if !pool_guard.repair_mirror_step(&mut task).await.expect("TODO: handle errors") {
+                        break;
+                    }
+                }
+                todo!("repair open zones, and restore the faulted disk");
+            } else {
+                tracing::debug!("Pool got dropped with an active MirrorRebuildTask");
+            }
+        });
+    }
+}
+
 /// Direct Data Management Layer for a single `Pool`
 pub struct DDML {
     // Sadly, the Cache needs to be Mutex-protected because updating the LRU
@@ -68,7 +120,9 @@ pub struct DDML {
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
     cache: Arc<Mutex<Cache>>,
-    pool: RwLock<Pool>,
+    // We'll never use Arc::clone, and very rarely use Arc::downgrade, so the
+    // performance impact of the Arc should be minimal.
+    pool: Arc<RwLock<Pool>>,
     pool_name: String
 }
 
@@ -91,6 +145,11 @@ impl DDML {
     {
         self.pool.read()
             .map(move |pool| pool.assert_clean_zone(cluster, zone, txg))
+    }
+
+    /// Create a new DDML from a freshly-formatted Pool
+    pub fn create(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+        DDML::new(pool, cache)
     }
 
     /// Free a record's storage, ignoring the Cache
@@ -119,9 +178,9 @@ impl DDML {
             .then(move |pool| pool.flush(idx))
     }
 
-    pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+    fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
         let pool_name = pool.name().to_owned();
-        DDML{pool: RwLock::new(pool), cache, pool_name}
+        DDML{pool: Arc::new(RwLock::new(pool)), cache, pool_name}
     }
 
     /// Get directly from disk, bypassing cache
@@ -223,7 +282,10 @@ impl DDML {
     /// * `cache`:      An already constructed `Cache`
     /// * `pool`:       An already constructed `Pool`
     pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
-        DDML::new(pool, cache)
+        let pool_status = pool.status();
+        let ddml = DDML::new(pool, cache);
+        ddml.repair_all(pool_status);
+        ddml
     }
 
     /// Read a record and return ownership of it, bypassing Cache
@@ -292,6 +354,17 @@ impl DDML {
         where T: borrow::Borrow<dyn CacheRef>
     {
         self.put_common(cacheref, compression, txg)
+    }
+
+    /// Begin a repair task for any vdev that needs it
+    fn repair_all(&self, pool_status: pool::Status) {
+        for (cl_idx, cl) in pool_status.clusters.iter().enumerate() {
+            for (m_idx, m) in cl.mirrors.iter().enumerate() {
+                if let Some(rtxg) = m.rebuilding {
+                    MirrorRepairTask::spawn(&self.pool, rtxg, cl_idx, m_idx)
+                }
+            }
+        }
     }
 
     /// Return approximately the usable storage space in LBAs.
@@ -410,7 +483,7 @@ mock! {
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
-        pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         pub fn list_closed_zones(&self)

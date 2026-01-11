@@ -1029,7 +1029,7 @@ mod fault {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: m0_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = m1.uuid();
@@ -1041,7 +1041,7 @@ mod fault {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: m1_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = m2.uuid();
@@ -1053,7 +1053,7 @@ mod fault {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: m2_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         mirrors.push(Child::present(m0));
         mirrors.push(Child::present(m1));
@@ -1625,7 +1625,7 @@ mod open {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: m0_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = Uuid::new_v4();
@@ -1636,7 +1636,7 @@ mod open {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: m1_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = Uuid::new_v4();
@@ -1647,7 +1647,7 @@ mod open {
                 health: Health::Faulted(FaultedReason::User),
                 leaves: Vec::new(),
                 uuid: m2_uuid,
-                rebuilding: false,
+                rebuilding: None,
             });
         let label = vdev_raid::Label {
             uuid: Uuid::new_v4(),
@@ -1683,7 +1683,7 @@ mod open {
                     health: Health::Online,
                     leaves: Vec::new(),
                     uuid: *child_uuid,
-                    rebuilding: false,
+                    rebuilding: None,
                 });
             m
         }
@@ -2210,14 +2210,14 @@ mod read_at {
 
 }
 
-mod repair_zone {
+mod repair_mirror_zone {
     use super::*;
 
     // TODO:
     // [ ] No rebuilding children
     /// A VdevRaid with one faulted child and one rebuilding child should
     /// still be able to repair the rebuilding child.  Faulted children should
-    /// not get repair_zone operations.
+    /// not get repair_mirror_zone operations.
     #[test]
     fn one_faulted_child() {
         let k = 3;
@@ -2232,7 +2232,7 @@ mod repair_zone {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false,
+                rebuilding: None,
             });
         mirrors.push(Child::present(m0));
 
@@ -2242,7 +2242,7 @@ mod repair_zone {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: true,
+                rebuilding: Some(TxgT::from(0)),
             });
         m1.expect_repair_zone()
             .once()
@@ -2256,7 +2256,7 @@ mod repair_zone {
                 health: Health::Faulted(FaultedReason::Removed),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false
+                rebuilding: None
             });
         mirrors.push(Child::present(m2));
 
@@ -2264,7 +2264,7 @@ mod repair_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_zone(2)
+        vdev_raid.repair_mirror_zone(1, 2)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -2285,7 +2285,7 @@ mod repair_zone {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false,
+                rebuilding: None,
             });
 
         mirrors.push(Child::present(m0));
@@ -2295,7 +2295,7 @@ mod repair_zone {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: true,
+                rebuilding: Some(TxgT::from(0)),
             });
         m1.expect_repair_zone()
             .once()
@@ -2309,14 +2309,14 @@ mod repair_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_zone(2)
+        vdev_raid.repair_mirror_zone(1, 2)
             .now_or_never()
             .unwrap()
             .unwrap();
     }
 
-    /// A VdevRaid with one rebuilding child should forward repair_zone to that
-    /// child alone, at the correct zones.
+    /// A VdevRaid with one rebuilding child should forward repair_mirror_zone
+    /// to that child alone, at the correct zones.
     #[test]
     fn one_rebuilding_child() {
         let k = 3;
@@ -2330,7 +2330,7 @@ mod repair_zone {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false
+                rebuilding: None
             });
 
         mirrors.push(Child::present(m0));
@@ -2340,7 +2340,7 @@ mod repair_zone {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: true
+                rebuilding: Some(TxgT::from(0))
             });
         m1.expect_repair_zone()
             .once()
@@ -2354,7 +2354,7 @@ mod repair_zone {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false
+                rebuilding: None
             });
         mirrors.push(Child::present(m2));
 
@@ -2362,14 +2362,17 @@ mod repair_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_zone(2)
+        vdev_raid.repair_mirror_zone(1, 2)
             .now_or_never()
             .unwrap()
             .unwrap();
     }
 
-    /// A VdevRaid with two rebuilding children should forward repair_zone to
-    /// those children, at the correct zones.
+    /// A VdevRaid with two rebuilding children should forward
+    /// repair_mirror_zone to those children, at the correct zones.
+    // TODO: this test is kind of dumb, since "First attempt at Cluster::repair"
+    // moved the which-child-to-rebuild logic up from VdevRaid to Cluster.
+    // Remove the test?
     #[test]
     fn two_rebuilding_children() {
         let k = 3;
@@ -2383,7 +2386,7 @@ mod repair_zone {
                 health: Health::Online,
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: false,
+                rebuilding: None,
             });
 
         mirrors.push(Child::present(m0));
@@ -2393,7 +2396,7 @@ mod repair_zone {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: true,
+                rebuilding: Some(TxgT::from(0)),
             });
         m1.expect_repair_zone()
             .once()
@@ -2407,7 +2410,7 @@ mod repair_zone {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
                 uuid: Uuid::new_v4(),
-                rebuilding: true,
+                rebuilding: Some(TxgT::from(0)),
             });
         m2.expect_repair_zone()
             .once()
@@ -2419,7 +2422,11 @@ mod repair_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_zone(2)
+        vdev_raid.repair_mirror_zone(1, 2)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        vdev_raid.repair_mirror_zone(2, 2)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -2474,7 +2481,7 @@ mod status {
                     health: mirror_health,
                     leaves,
                     uuid: muuid,
-                    rebuilding: false,
+                    rebuilding: None,
                 });
             match mirror_health {
                 Health::Faulted(_) => Child::faulted(m),

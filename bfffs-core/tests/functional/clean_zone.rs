@@ -26,7 +26,7 @@ async fn harness(devsize: u64, zone_size: u64) -> Harness {
             Cache::with_capacity(32_000_000)
         )
     );
-    let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+    let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
     let db = Arc::new(Database::create(Arc::new(idml)));
     let tree_id = db.create_fs(None, "").await.unwrap();

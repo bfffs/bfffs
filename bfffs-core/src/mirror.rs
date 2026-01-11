@@ -122,9 +122,8 @@ impl Manager {
 pub struct Status {
     pub health: Health,
     pub leaves: Vec<vdev_block::Status>,
-    /// Is a rebuild of one or more Mirror children in progress?
-    //TODO: add a txg number
-    pub rebuilding: bool,
+    /// The oldest transaction number that is synced to rebuilding children.
+    pub rebuilding: Option<TxgT>,
     pub uuid: Uuid
 }
 
@@ -169,6 +168,14 @@ impl Child {
         }
     }
 
+    fn as_rebuilding(&self) -> Option<&Arc<VdevBlock>> {
+        if let Child::Rebuilding(vb) = self {
+            Some(vb)
+        } else {
+            None
+        }
+    }
+
     fn erase_zone(&self, start: LbaT, end: LbaT) -> Option<VdevBlockFut> {
         self.as_present().map(|bd| bd.erase_zone(start, end))
     }
@@ -191,6 +198,7 @@ impl Child {
         matches!(self, Child::Present(_))
     }
 
+    #[cfg(test)]
     fn is_rebuilding(&self) -> bool {
         matches!(self, Child::Rebuilding(_))
     }
@@ -234,6 +242,8 @@ impl Child {
     fn write_label(&self, labeller: LabelWriter, txg: TxgT)
         -> Option<VdevBlockFut>
     {
+        // Notably: don't write the label for Rebuilding disks, because they
+        // don't have every part of this txg.
         self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
@@ -441,8 +451,6 @@ impl Mirror {
         assert!(!leaves.is_empty(), "Must have at least one child");
         let mut children = Vec::with_capacity(label.children.len());
         for lchild in label.children.iter() {
-            // TODO: verify the child's txg.  If it's old, the child must go
-            // into the Rebuilding state.
             if let Some(vb) = leaves.remove(lchild) {
                 if vb.txg() == highest_txg {
                     children.push(Child::present(vb));
@@ -585,6 +593,7 @@ impl Mirror {
     // independently.
     // TODO: return a different error code for errors during read than for
     // errors during write.  In the former case, RAID error recovery may help.
+    // TODO: handle Open Zones by supplying some kind of maximum LBA argument.
     pub fn repair_zone(&self, zone: ZoneT)
         -> impl Future<Output=Result<()>> + Send + Sync
     {
@@ -672,7 +681,6 @@ impl Mirror {
             });
             leaves.push(cs);
         }
-        let rebuilding = self.children.iter().any(Child::is_rebuilding);
         let sick_children = leaves.iter()
             .filter(|l| l.health != Health::Online)
             .count();
@@ -683,6 +691,10 @@ impl Mirror {
                 .map(Health::Degraded)
                 .unwrap_or(Health::Online)
         };
+        let rebuilding = self.children.iter()
+            .filter_map(Child::as_rebuilding)
+            .map(|vb| vb.txg())
+            .min();
         Status {
             health,
             leaves,
@@ -2094,8 +2106,11 @@ mod t {
 
         #[test]
         fn faulted() {
+            let txg = TxgT::from(42);
             let bd0 = mock();
-            let bd1 = mock();
+            let mut bd1 = mock();
+            bd1.expect_txg()
+                .return_const(txg);
             let bd1_uuid = bd1.uuid();
             let children = vec![
                 Child::present(bd0),
@@ -2107,7 +2122,7 @@ mod t {
             assert_eq!(status.leaves[1].health,
                        Health::Degraded(nonzero!(1u8)));
             assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
-            assert!(status.rebuilding);
+            assert_eq!(status.rebuilding, Some(txg));
         }
 
         /// A missing disk cannot be restored

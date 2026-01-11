@@ -1090,6 +1090,7 @@ impl VdevBlock {
         let block_op = BlockOp::write_label(labeller, sender);
         // Use Relaxed ordering for now, because I'm not sure if this will
         // _ever_ be read.
+        // TODO: change Ordering appropriately.  See Mirror::status().
         self.txg.store(txg.into(), atomic::Ordering::Relaxed);
         self.new_fut(block_op, receiver)
     }

@@ -25,7 +25,7 @@ fn ddml() -> DDML {
         .chunksize(1)
         .build();
     let cache = Cache::with_capacity(1_000_000_000);
-    DDML::new(ph.pool, Arc::new(Mutex::new(cache)))
+    DDML::create(ph.pool, Arc::new(Mutex::new(cache)))
 }
 
 #[rstest]
@@ -134,7 +134,7 @@ mod integrity {
 
     async fn do_test(ph: PoolHarness, ulbas: usize, alignment_lbas: LbaT) {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
-        let ddml = DDML::new(ph.pool, cache);
+        let ddml = DDML::create(ph.pool, cache);
         let txg = TxgT::from(0);
         let compression = Compression::None;
 

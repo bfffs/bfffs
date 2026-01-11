@@ -142,8 +142,13 @@ impl VdevRaidApi for NullRaid {
         Box::pin(future::ok(()))
     }
 
-    fn repair_zone(&self, zone: ZoneT) -> BoxVdevFut {
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut {
+        debug_assert_eq!(mirror_idx, 0);
         Box::pin(self.mirror.repair_zone(zone))
+    }
+
+    fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {
+        unimplemented!("NullRaid cannot do RAID repair");
     }
 
     fn status(&self) -> Status {

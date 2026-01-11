@@ -22,7 +22,7 @@ use pin_project::pin_project;
 #[cfg(test)] use mockall::automock;
 use speedy::{Readable, Writable};
 use std::{
-    ops::Range,
+    ops::{Range, RangeFrom},
     pin::Pin,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
@@ -160,6 +160,17 @@ pub struct Status {
     /// Is a rebuild happening at any level?
     pub rebuilding: bool,
     pub uuid: Uuid
+}
+
+pub struct RepairMirrorTask {
+    cluster_idx: usize,
+    task: cluster::RepairMirrorTask
+}
+
+impl RepairMirrorTask {
+    fn new(idx: usize, task: cluster::RepairMirrorTask) -> Self {
+        Self{cluster_idx: idx, task}
+    }
 }
 
 /// An BFFFS storage pool
@@ -409,6 +420,18 @@ impl Pool {
             stats2.queue_depth[cidx].fetch_sub(1, Ordering::Relaxed);
             r
         })
+    }
+
+    pub fn repair_mirror(&self, cl_idx: usize, mirror_idx: usize, txgs:
+                         RangeFrom<TxgT>)
+        -> RepairMirrorTask
+    {
+        let inner_task = self.clusters[cl_idx].repair_mirror(mirror_idx, txgs);
+        RepairMirrorTask::new(cl_idx, inner_task)
+    }
+
+    pub async fn repair_mirror_step(&self, task: &mut RepairMirrorTask) -> Result<bool> {
+        self.clusters[task.cluster_idx].repair_mirror_step(&mut task.task).await
     }
 
     /// Return approximately the Pool's usable storage space in LBAs.
@@ -875,7 +898,7 @@ mod pool {
                                 path: PathBuf::default()
                             }],
                             uuid: Uuid::new_v4(),
-                            rebuilding: false,
+                            rebuilding: None,
                         }],
                         uuid: Uuid::new_v4(),
                         rebuilding: false,

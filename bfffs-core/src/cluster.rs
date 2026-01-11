@@ -23,10 +23,10 @@ use metrohash::MetroHash64;
 use speedy::{Readable, Writable};
 use std::{
     cmp,
-    collections::{BTreeMap, BTreeSet, btree_map::Keys},
+    collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Keys},
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
-    ops::Range,
+    ops::{Range, RangeFrom},
     path::Path,
     pin::Pin,
     sync::{
@@ -212,6 +212,24 @@ impl<'a> FreeSpaceMap {
     /// FreeSpaceMap to disk.
     fn clear_dirty_zones(&mut self) {
         self.dirty.clear();
+    }
+
+    /// Return a list of all Zones that may contain data written during the
+    /// given transaction range
+    fn contains(&self, txgs: RangeFrom<TxgT>) ->
+        impl Iterator<Item=ZoneT> + use<'_>
+    {
+        let s = txgs.start;
+        self.zones.iter().enumerate().filter_map(move |(i, zone)| {
+            let zid = i as ZoneT;
+            if !self.empty_zones.contains(&zid) &&
+                zone.txgs.contains(&s) ||
+                (self.open_zones.contains_key(&zid) && zone.txgs.start <= s) {
+                    Some(zid)
+            } else {
+                None
+            }
+        })
     }
 
     fn deserialize(vdev: RaidImpl, buf: DivBuf, zones: ZoneT)
@@ -773,6 +791,32 @@ impl SpacemapOnDisk {
     }
 }
 
+/// Iteratively repairs a degraded Mirror.
+///
+/// Each call of `RepairMirrorTask::step` will repair one `Zone`.  It will
+/// iterate through all zones in order of increasing minimum Txg.  That way, if
+/// the repair is interrupted (perhaps by a power loss, crash, or forced
+/// unmount), it will be resumable from a more recent transaction than the
+/// original one.
+pub struct RepairMirrorTask {
+    /// Index of the mirror child that we're repairing.
+    mirror_idx: usize,
+
+    /// The next transaction that will need to be repaired after `zones` has
+    /// been fully processed.
+    next_txg: TxgT,
+
+    /// Ordered list of zones that we need to repair.  If a Zone isn't on this
+    /// list, then it either:
+    /// * Doesn't need repair because it's Empty or Dead
+    /// * Doesn't need repair because it's Closed and its maximum TxgT is older
+    ///   than this task cares about.
+    /// * Was opened after this RepairMirrorTask was created, and therefore
+    ///   needs repair, but only after everything in this list has been
+    ///   repaired.
+    zones: VecDeque<ZoneT>,
+} 
+
 /// A `Cluster` is BFFFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
 pub struct Cluster {
@@ -975,6 +1019,70 @@ impl Cluster {
         -> impl Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send
     {
         self.vdev.read_long(len, lba)
+    }
+
+    pub fn repair_mirror(&self, mirror_idx: usize, txgs: RangeFrom<TxgT>)
+        -> RepairMirrorTask
+    {
+        //RepairMirrorTask::new(self, mirror_idx, txgs)
+        // next_txg needs to be low enough to encompass any zones that didn't
+        // make it into zones, including those that might not yet be open.
+        let next_txg = txgs.start + 1;
+        let zones = self.repair_mirror_gather_zones(txgs);
+        RepairMirrorTask{ mirror_idx, zones, next_txg}
+
+        // XXX what happens if a closed Zone gets erased at this point, before
+        // we repair it?
+        // XXX What happens if an open zone gets more data written to it at this
+        // point, before we repair it?
+        // XXX What happens if an empty zone gets opened and written to at this
+        // point, before we repair it?
+        // NB: one solution to the above problems would be to store the txg
+        // currently rebuilding in the Cluster, and:
+        //   - avoid erasing any zones while they are rebuilding,
+        //   - Iterate through the FSM progressively, moving one txg at a time,
+        //     each time we finish rebuilding one zone.
+    }
+
+    fn repair_mirror_gather_zones(&self, txgs: RangeFrom<TxgT>) -> VecDeque<ZoneT> {
+        let fsm = self.fsm.read().unwrap();
+        let mut zones: Vec<ZoneT> = fsm.contains(txgs).collect();
+        // The list is likely to be partially sorted already, so sort() will
+        // probably be faster than sort_unstable()
+        zones.sort_by_key(|zid|
+            (
+                fsm.zones[*zid as usize].txgs.start,
+                fsm.zones[*zid as usize].txgs.end,
+                *zid
+            )
+        );
+        zones.into()
+    }
+
+    /// Try to repair one Zone.  Return true if might are more Zones to repair.
+    pub async fn repair_mirror_step(&self, task: &mut RepairMirrorTask) -> Result<bool> {
+        if let Some(zid) = task.zones.pop_front() {
+            {
+                let fsm = self.fsm.read().unwrap();
+                if fsm.is_dead(zid) || fsm.is_empty(zid) {
+                    // This zone was alive when self was created.  It must've
+                    // subsequently died.  Nothing to do here.
+                    return Ok(true) ;
+                }
+            }
+            self.vdev.repair_mirror_zone(task.mirror_idx, zid).await?;
+            Ok(true)
+        } else {
+            // We've finished repairing all zones that we knew needed to be
+            // repaired.
+            // Generate a new list of zones, excluding all Zones that we've
+            // already repaired.
+            // Let the caller know whether there are more zones to repair
+            // XXX What about open zones that got repaired in the last round,
+            // and are also included in this one?
+            task.zones = self.repair_mirror_gather_zones(task.next_txg..);
+            Ok(!task.zones.is_empty())
+        }
     }
 
     /// Return approximately the usable space of the Cluster in LBAs.
