@@ -133,7 +133,7 @@ mod fs {
         let dirent = readdir_all(&h.fs, &rooth, 0).await
             .into_iter()
             .find(|dirent| {
-                dirent.d_name[0] == 'x' as i8
+                dirent.d_name[0] == 'x' as libc::c_char
             }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_REG);
         let dirent_name = unsafe{
@@ -1626,7 +1626,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_DIR);
         let dirent_name = unsafe{
@@ -1719,7 +1719,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_CHR);
         let dirent_name = unsafe{
@@ -1772,7 +1772,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_BLK);
         let dirent_name = unsafe{
@@ -1826,7 +1826,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_FIFO);
         let dirent_name = unsafe{
@@ -1880,7 +1880,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         }).expect("'x' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_SOCK);
         let dirent_name = unsafe{
@@ -3022,7 +3022,7 @@ root:
         }
         assert!(!readdir_all(&h.fs, &rooth, 0).await
             .into_iter()
-            .any(|dirent| dirent.d_name[0] == 'x' as i8));
+            .any(|dirent| dirent.d_name[0] == 'x' as libc::c_char));
 
         // Make sure the parent dir's refcount dropped
         let inode = h.fs.getattr(&rooth).await.unwrap();
@@ -3681,7 +3681,7 @@ root:
         let dirent = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 's' as i8
+            dirent.d_name[0] == 's' as libc::c_char
         }).expect("'s' directory entry not found");
         assert_eq!(dirent.d_type, libc::DT_LNK);
         let dirent_name = unsafe{
@@ -3749,7 +3749,7 @@ root:
         let x_de = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
     }
@@ -3927,7 +3927,7 @@ root:
         let x_de = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
     }
@@ -3989,7 +3989,7 @@ root:
         let x_de = entries
         .into_iter()
         .find(|dirent| {
-            dirent.d_name[0] == 'x' as i8
+            dirent.d_name[0] == 'x' as libc::c_char
         });
         assert!(x_de.is_none(), "Directory entry was not removed");
 
