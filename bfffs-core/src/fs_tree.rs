@@ -443,7 +443,7 @@ impl Dirent {
         // libc::dirent uses "char" when it should be using
         // "unsigned char", so we need an unsafe conversion
         let p = self.name.as_bytes() as *const [u8]
-            as *const [i8];
+            as *const [libc::c_char];
         fs_dirent.d_name[0..namlen].copy_from_slice(unsafe{&*p});
         fs_dirent
     }

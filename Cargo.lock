@@ -488,9 +488,9 @@ checksum = "325918d6fe32f23b19878fe4b34794ae41fc19ddbe53b10571a4874d44ffd39b"
 
 [[package]]
 name = "byteshuffle"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bafd8869af3a22100278e622dacd6369463ae5fe3e90d51583e1bd703606dafd"
+checksum = "345b7915fb1248c7e485cf22d5c0e6bdeb161f412ec30a43f95295978228cb2e"
 dependencies = [
  "cfg-if",
  "ctor",
