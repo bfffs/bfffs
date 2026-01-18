@@ -1817,6 +1817,7 @@ mod cluster {
 }
 
 mod free_space_map {
+    use mockall::predicate::*;
     use pretty_assertions::assert_eq;
     use super::super::*;
 
@@ -1854,42 +1855,69 @@ mod free_space_map {
         assert_eq!(3700, fsm.allocated_total());
     }
 
-    //#[test]
-    //fn deserialize() {
-        //let b: Vec<u8> = vec![
-            //18, 213, 216, 8, 231, 94, 198, 193, // Checksum
-            //4, 0, 0, 0, 0, 0, 0, 0,         // 6 ZODs
-            //255, 255, 255, 255,             // zone0: allocated_blocks
-            //26, 0, 0, 0,                    // zone0: freed blocks
-            //1, 0, 0, 0, 3, 0, 0, 0,         // zone0 txgs: 1..3
-            //0, 0, 0, 0,                     // zone1: allocated_blocks
-            //0, 0, 0, 0,                     // zone1: freed blocks
-            //0, 0, 0, 0, 0, 0, 0, 0,         // zone1 txgs: DON'T CARE..0
-            //0, 0, 0, 0,                     // zone2: allocated blocks
-            //0, 0, 0, 0,                     // zone2: freed blocks
-            //0, 0, 0, 0, 3, 0, 0, 0,         // zone2: txgs: DON'T CARE..3
-            //77, 0, 0, 0,                    // zone3: allocated_blocks
-            //33, 0, 0, 0,                    // zone3: freed blocks
-            //2, 0, 0, 0, 255, 255, 255, 255, // zone3 txgs: 2..DON'T CARE
-            //0, 0, 0, 0,                     // zone4: allocated_blocks
-            //0, 0, 0, 0,                     // zone4: freed blocks
-            //0, 0, 0, 0, 0, 0, 0, 0,         // zone4 txgs: DON'T CARE..0
-            //0, 0, 0, 0,                     // zone5: allocated_blocks
-            //0, 0, 0, 0,                     // zone5: freed blocks
-            //0, 0, 0, 0, 3, 0, 0, 0,         // zone5 txgs: DON'T CARE..3
-        //];
+    #[test]
+    fn deserialize() {
+        let b: Vec<u8> = vec![
+            0x51, 0x7a, 0x90, 0xe6, 0xc9, 0x2e, 0xe1, 0xe0, // Checksum
+            6, 0, 0, 0,                     // 6 ZODs
+            255, 255, 255, 255,             // zone0: allocated_blocks
+            26, 0, 0, 0,                    // zone0: freed blocks
+            1, 0, 0, 0, 3, 0, 0, 0,         // zone0 txgs: 1..3
+            0, 0, 0, 0,                     // zone1: allocated_blocks
+            0, 0, 0, 0,                     // zone1: freed blocks
+            0, 0, 0, 0, 0, 0, 0, 0,         // zone1 txgs: DON'T CARE..0
+            0, 0, 0, 0,                     // zone2: allocated blocks
+            0, 0, 0, 0,                     // zone2: freed blocks
+            0, 0, 0, 0, 3, 0, 0, 0,         // zone2: txgs: DON'T CARE..3
+            77, 0, 0, 0,                    // zone3: allocated_blocks
+            33, 0, 0, 0,                    // zone3: freed blocks
+            2, 0, 0, 0, 255, 255, 255, 255, // zone3 txgs: 2..DON'T CARE
+            0, 0, 0, 0,                     // zone4: allocated_blocks
+            0, 0, 0, 0,                     // zone4: freed blocks
+            0, 0, 0, 0, 0, 0, 0, 0,         // zone4 txgs: DON'T CARE..0
+            0, 0, 0, 0,                     // zone5: allocated_blocks
+            0, 0, 0, 0,                     // zone5: freed blocks
+            0, 0, 0, 0, 3, 0, 0, 0,         // zone5 txgs: DON'T CARE..3
+        ];
 
-        //let dbs = DivBufShared::from(b);
-        //let db = dbs.try_const().unwrap();
-        //let sod = SpacemapOnDisk::deserialize(0, &db).unwrap();
-        //assert!(sm.is_closed(0));
-        //assert_eq!(sm.allocated(0), 42);    //TODO
-        //assert!(sm.is_empty(1));
-        //assert!(sm.is_dead(2));
-        //assert!(sm.is_open(3));
-        //assert!(sm.is_dead(4));
-        //assert!(sm.is_empty(5));
-    //}
+        let dbs = DivBufShared::from(b);
+        let db = dbs.try_const().unwrap();
+
+        /* First check that the SpacemapOnDisk deserializes ok */
+        let sod = SpacemapOnDisk::deserialize(0, &db).unwrap().unwrap();
+        assert_eq!(sod.checksum, 0xe0e12ec9e6907a51);
+        assert_eq!(sod.zones.len(), 6);
+        assert_eq!(sod.zones[0].allocated_blocks, u32::MAX);
+        assert_eq!(sod.zones[0].freed_blocks, 26);
+        assert_eq!(sod.zones[0].txgs, TxgT::from(1)..TxgT::from(3));
+
+        /* Then check the whole SpaceMap */
+        let zones = 6;
+        let lbas_per_zone = 200;
+        let mut vr = MockVdevRaid::default();
+        for i in 0u64..6 {
+            vr.expect_zone_limits()
+                .with(eq(i as ZoneT))
+                .return_const((lbas_per_zone * i, lbas_per_zone * (i + 1)));
+        }
+        vr.expect_reopen_zone()
+            .with(eq(3), eq(77))
+            .once()
+            .return_once(|_, _| Box::pin(future::ok(())));
+        let (sm, _vr) = FreeSpaceMap::deserialize(vr.into(), db, zones)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        assert!(sm.is_closed(0));
+        assert_eq!(sm.allocated(0), lbas_per_zone);
+        assert!(sm.is_empty(1));
+        assert!(sm.is_dead(2));
+        assert!(sm.is_open(3));
+        assert_eq!(sm.allocated(3), 77);
+        assert_eq!(sm.available(3), 123);
+        assert!(sm.is_empty(4));
+        assert!(sm.is_dead(5));
+    }
 
     #[test]
     fn dirty() {
