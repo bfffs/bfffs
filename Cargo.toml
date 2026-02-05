@@ -72,7 +72,7 @@ tabular = "0.2.0"
 tempfile = "3.8"
 test-log = { version = "0.2.13", default-features = false }
 thiserror = "1.0.32"
-time = { version = "0.3.0", default-features = false }
+time = { version = "0.3.47", default-features = false }
 tokio = { version = "1.39.1", default-features = false }
 tokio-file = "0.11.0"
 tokio-seqpacket = "0.8.1"
