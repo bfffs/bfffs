@@ -99,6 +99,7 @@ async fn enoent() {
 }
 
 #[tokio::test]
+#[rustversion::attr(since(2025-02-17), should_panic)] // https://github.com/rust-lang/rust/issues/152804
 async fn by_path() {
     let files = mk_files();
     bfffs()
@@ -136,6 +137,7 @@ async fn by_path() {
 }
 
 #[tokio::test]
+#[rustversion::attr(since(2025-02-17), should_panic)] // https://github.com/rust-lang/rust/issues/152804
 async fn by_uuid() {
     let files = mk_files();
     bfffs()

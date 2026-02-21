@@ -295,6 +295,7 @@ dependencies = [
  "prettytable-rs",
  "regex",
  "rstest",
+ "rustversion",
  "si-scale",
  "speedy",
  "sysctl",
