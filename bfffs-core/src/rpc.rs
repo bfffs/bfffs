@@ -142,8 +142,8 @@ pub mod pool {
         pub uuid: Uuid
     }
 
-    /// TODO: add support for serializing PathBuf upstream in speedy
-    /// https://github.com/koute/speedy/issues/30
+    // TODO: add support for serializing PathBuf upstream in speedy
+    // https://github.com/koute/speedy/issues/30
     impl<'a, C: speedy::Context> Readable<'a, C> for LeafStatus {
         fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
             where R: Reader<'a, C>

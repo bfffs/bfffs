@@ -2308,11 +2308,11 @@ impl Fs {
             PropertyName::Mountpoint =>
                 panic!("Property {:?} may not be set directly on a file system",
                        prop.name()),
-            PropertyName::BaseMountpoint =>
-                if ! prop.as_str().starts_with('/') {
+            PropertyName::BaseMountpoint if ! prop.as_str().starts_with('/') =>
+            {
                     // Mountpoint property must be absolute
                     return Err(Error::EINVAL);
-                }
+            }
             _ => ()
         }
         let objkey = ObjKey::Property(prop.name());
