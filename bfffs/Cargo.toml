@@ -26,7 +26,6 @@ lalrpop-util = { workspace = true, features = ["lexer", "std"] }
 libc = { workspace = true }
 nix = { workspace = true, features = ["user"] }
 prettytable-rs = { workspace = true }
-rustversion = {workspace = true}
 si-scale = { workspace = true }
 speedy = { workspace = true , features = ["uuid"] }
 tabular = { workspace = true }
