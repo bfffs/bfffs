@@ -10,7 +10,6 @@ use std::{
     ffi::{OsStr, OsString},
     num::NonZeroU32,
     os::unix::ffi::OsStrExt,
-    pin::Pin,
     slice,
     sync::{Arc, Mutex},
     time::Duration,
@@ -31,7 +30,6 @@ use fuse3::{
     raw::{
         reply::{
             DirectoryEntry,
-            DirectoryEntryPlus,
             FileAttr,
             ReplyAttr,
             ReplyCreated,
@@ -249,11 +247,6 @@ impl Default for FuseFs {
 
 impl Filesystem for FuseFs {
     // TODO: implement readdirplus
-    type DirEntryPlusStream<'a> = Pin<
-        Box<dyn Stream<Item = fuse3::Result<DirectoryEntryPlus>> + Send + 'a>,
-    >;
-    type DirEntryStream<'a> =
-        Pin<Box<dyn Stream<Item = fuse3::Result<DirectoryEntry>> + Send + 'a>>;
 
     async fn init(&self, _req: Request) -> fuse3::Result<ReplyInit> {
         Ok(ReplyInit {
@@ -778,7 +771,11 @@ impl Filesystem for FuseFs {
         ino: u64,
         _fh: u64,
         soffset: i64,
-    ) -> fuse3::Result<ReplyDirectory<Self::DirEntryStream<'_>>> {
+    ) -> fuse3::Result<
+        ReplyDirectory<
+            impl Stream<Item = fuse3::Result<DirectoryEntry>> + Send + '_,
+        >,
+    > {
         let fd = self
             .files
             .lock()

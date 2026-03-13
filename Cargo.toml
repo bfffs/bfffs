@@ -30,17 +30,17 @@ enum-primitive-derive = "0.3.0"
 fixedbitset = { version = "0.4.0", default-features = false }
 freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
-fuse3 = { version = "0.8.1", default-features = false }
+fuse3 = { version = "0.9.0", default-features = false }
 futures = "0.3.31"
 futures-locks = "0.7.0"
-futures-test = "0.3.31"
+futures-test = "0.3.32"
 glob = "0.3.1"
 hexdump = "0.1.2"
 histogram = "0.6"
 itertools = "0.13.0"
 lalrpop = { version = "0.22.0", default-features = false, features = ["lexer"] }
 lalrpop-util = { version = "0.22.0",default-features = false }
-libc = "0.2.176"
+libc = "0.2.183"
 lz4_flex = { version = "0.12", default-features = false, features = [ "std", "checked-decode"] }
 mdconfig = "0.2.0"
 metrohash = "1.0.2"
@@ -73,10 +73,10 @@ tempfile = "3.8"
 test-log = { version = "0.2.13", default-features = false }
 thiserror = "1.0.32"
 time = { version = "0.3.47", default-features = false }
-tokio = { version = "1.39.1", default-features = false }
+tokio = { version = "1.50.0", default-features = false }
 tokio-file = "0.11.0"
 tokio-seqpacket = "0.8.1"
-tracing = { version = "0.1.41", default-features = false, features = ["attributes"] }
+tracing = { version = "0.1.44", default-features = false, features = ["attributes"] }
 tracing-futures = "0.2.4"
 tracing-subscriber = { version = "0.3.20", default-features = false }
 uuid = { version = "1.6.1", default-features = false }
