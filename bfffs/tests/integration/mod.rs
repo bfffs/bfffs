@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate assert_cmd;
-
 mod bfffs;
 mod bfffsd;
 mod util;
