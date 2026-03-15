@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use assert_cmd::cargo::cargo_bin;
 use thiserror::Error;
 
 pub fn bfffs() -> Command {
