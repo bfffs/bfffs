@@ -16,7 +16,6 @@ use bfffs_core::{
     Error,
     Result,
 };
-use cfg_if::cfg_if;
 use clap::{crate_version, Parser};
 use fuse3::{
     raw::{MountHandle, Session},
@@ -227,12 +226,13 @@ impl Bfffsd {
             .map_ok(|(prop, _source)| PathBuf::from(prop.as_str()))
             .await?;
         tracing::debug!("mounting {:?}", mp);
-        cfg_if! {
-            if #[cfg(test)] {
+        cfg_select! {
+            test => {
                 Session::new(mo2).mount(FuseFs::default(), mp)
                     .map_err(Error::from)
                     .await
-            } else {
+            }
+            _ => {
                 self.controller.new_fs(&name)
                     .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);

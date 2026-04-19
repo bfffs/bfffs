@@ -14,7 +14,6 @@ use crate::{
 };
 #[cfg(test)] use rand::Rng;
 
-use cfg_if::cfg_if;
 use speedy::{Readable, Writable};
 use std::{
     path::Path,
@@ -147,10 +146,11 @@ impl Manager {
     pub async fn import(&mut self, uuid: Uuid, cache: Arc<Mutex<Cache>>)
         -> Result<(DDML, LabelReader)>
     {
-        cfg_if! {
-            if #[cfg(test)] {
+        cfg_select! {
+            test => {
                 unimplemented!()
-            } else {
+            }
+            _ => {
                 let (pool, label_reader) = self.0.import(uuid).await?;
                 let ddml = DDML::open(pool, cache.clone());
                 Ok((ddml, label_reader))

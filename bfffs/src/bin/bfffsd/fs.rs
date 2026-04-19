@@ -25,7 +25,6 @@ use bfffs_core::fs::{
     Timespec,
 };
 use bytes::Bytes;
-use cfg_if::cfg_if;
 use fuse3::{
     raw::{
         reply::{
@@ -51,11 +50,12 @@ use fuse3::{
 };
 use futures::{Stream, TryFutureExt, TryStreamExt};
 
-cfg_if! {
-    if #[cfg(test)] {
+cfg_select! {
+    test => {
         mod mock;
         use self::mock::MockFs as Fs;
-    } else {
+    }
+    _ => {
         use bfffs_core::fs::Fs;
     }
 }

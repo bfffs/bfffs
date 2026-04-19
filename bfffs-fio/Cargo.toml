@@ -6,6 +6,7 @@ edition = "2021"
 # As a fio external ioengine, we must depend pretty intimately on fio's
 # internals.  So this crate must be GPL-2 too.
 license = "GPL-2.0"
+rust-version = "1.95.0"
 
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }

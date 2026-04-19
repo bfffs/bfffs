@@ -7,7 +7,6 @@ use crate::{
     vdev::*
 };
 use atomic_enum::atomic_enum;
-use cfg_if::cfg_if;
 use divbuf::DivBuf;
 use futures::{
     Future,
@@ -55,12 +54,13 @@ impl AtomicEraseMethod {
             // The file supports DIOCGDELETE.
             Ok(AtomicEraseMethod::new(EraseMethod::Diocgdelete))
         } else {
-            cfg_if! {
-                if #[cfg(have_fspacectl)] {
+            cfg_select! {
+                have_fspacectl => {
                     // The file does not support DIOCGDELETE.  Optimistically
                     // guess that it supports fspacectl.
                     Ok(AtomicEraseMethod::new(EraseMethod::MaybeFspacectl))
-                } else {
+                }
+                _ => {
                     Ok(AtomicEraseMethod::new(EraseMethod::None))
                 }
             }
