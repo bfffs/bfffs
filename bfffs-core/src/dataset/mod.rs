@@ -6,7 +6,6 @@
 //! a specialized key-value store.  Datasets may be created, destroyed, cloned,
 //! and snapshotted.  The also support the same CRUD operations as Trees.
 
-use cfg_if::cfg_if;
 use crate::{
     idml::IDML,
     tree::{self, Key, Tree, Value},
@@ -21,12 +20,13 @@ use std::{
     pin::Pin
 };
 
-cfg_if! {
-    if #[cfg(test)]{
+cfg_select! {
+    test => {
         mod dataset_mock;
         pub use self::dataset_mock::MockReadOnlyDataset as ReadOnlyDataset;
         pub use self::dataset_mock::MockReadWriteDataset as ReadWriteDataset;
-    } else {
+    }
+    _ => {
         mod dataset;
         pub use self::dataset::{ReadOnlyDataset, ReadWriteDataset};
     }

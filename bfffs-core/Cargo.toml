@@ -3,7 +3,7 @@ name = "bfffs-core"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 edition = "2021"
-rust-version = "1.91.0"
+rust-version = "1.95.0"
 
 [lib]
 # BFFFS doesn't use doctests, because it's not a real library.
@@ -18,7 +18,6 @@ auto_enums = { workspace = true }
 bitfield = { workspace = true }
 byteorder = { workspace = true }
 byteshuffle = { workspace = true }
-cfg-if.workspace = true
 divbuf.workspace = true
 downcast = { workspace = true }
 enum_dispatch.workspace = true

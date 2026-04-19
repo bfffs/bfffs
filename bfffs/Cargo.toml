@@ -3,6 +3,7 @@ name = "bfffs"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]
 edition = "2021"
+rust-version = "1.95.0"
 
 [features]
 default = ["fuse"]
@@ -18,7 +19,6 @@ doc_overindented_list_items = "allow"
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }
 bytes = { workspace = true }
-cfg-if.workspace = true
 console-subscriber = { workspace = true }
 fuse3 = { workspace = true, features = ["tokio-runtime"], optional = true }
 futures = { workspace = true }

@@ -7,7 +7,6 @@ use crate::{
     vdev::*,
     mirror
 };
-use cfg_if::cfg_if;
 use divbuf::{DivBuf, DivBufInaccessible, DivBufMut, DivBufShared};
 use fixedbitset::FixedBitSet;
 use futures::{
@@ -187,12 +186,13 @@ enum Child {
     Faulted(Mirror)
 }
 
-cfg_if! {
-    if #[cfg(test)] {
+cfg_select! {
+    test => {
         type ChildReadSpacemap = BoxVdevFut;
         type ChildReadAt = BoxVdevFut;
         type ChildReadvAt = BoxVdevFut;
-    } else {
+    }
+    _ => {
         type ChildReadSpacemap = mirror::ReadSpacemap;
         type ChildReadAt = mirror::ReadAt;
         type ChildReadvAt = mirror::ReadvAt;

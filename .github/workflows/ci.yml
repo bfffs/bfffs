@@ -20,7 +20,7 @@ jobs:
             rust_version: "nightly"
             cargo_args: "--all-features"
           - freebsd_version: "14.4"
-            rust_version: "1.91.0"
+            rust_version: "1.95.0"
             cargo_args: ""
     name: FreeBSD ${{ matrix.freebsd_version }} ${{ matrix.rust_version }}
     steps:

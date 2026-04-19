@@ -18,7 +18,6 @@ use std::{
     }
 };
 
-use cfg_if::cfg_if;
 use divbuf::{DivBufInaccessible, DivBufMut, DivBufShared};
 use futures::{
     Future,
@@ -41,12 +40,13 @@ use crate::{
     BYTES_PER_LBA
 };
 
-cfg_if! {
-    if #[cfg(test)] {
+cfg_select! {
+    test => {
         use mockall::mock;
         use BoxVdevFut as VdevBlockFut;
         use vdev_block::MockVdevBlock as VdevBlock;
-    } else {
+    }
+    _ => {
         use vdev_block::VdevBlockFut;
         use vdev_block::VdevBlock;
     }

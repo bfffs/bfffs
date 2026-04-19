@@ -4,7 +4,6 @@
 //!
 //! [^CowBtrees]: Rodeh, Ohad. "B-trees, shadowing, and clones." ACM Transactions on Storage (TOS) 3.4 (2008): 2.
 
-use cfg_if::cfg_if;
 use crate::types::*;
 use serde_derive::{Deserialize, Serialize};
 use serde::{de::DeserializeOwned, ser::{Serialize, Serializer}};
@@ -25,13 +24,14 @@ pub use self::node::{
 
 pub(super) mod tree;
 
-cfg_if! {
-    if #[cfg(test)]{
+cfg_select! {
+    test => {
         mod tree_mock;
         pub use self::tree::MockRangeQuery as RangeQuery;
         pub use self::tree_mock::MockTree as Tree;
         pub use self::tree_mock::OPEN_MTX;
-    } else {
+    }
+    _ => {
         pub use self::tree::RangeQuery;
         pub use self::tree::Tree;
     }

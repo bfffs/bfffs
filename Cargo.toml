@@ -11,7 +11,6 @@ members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
 resolver = "2"
 
 [workspace.dependencies]
-cfg-if = "1.0"
 divbuf = { version = "0.4.0", features = ["experimental"] }
 enum_dispatch = "0.3.12"
 assert_cmd = "2.1.3"
