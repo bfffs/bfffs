@@ -17,36 +17,35 @@ use bfffs_core::{
     TxgT,
     writeback::{Credit, WriteBack}
 };
-use clap::Parser;
 use divbuf::DivBufShared;
 use futures::{Future, FutureExt};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
+    cell::Cell,
     ffi::OsString,
     mem,
     pin::Pin,
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    }
+    sync::Arc
 };
 
 struct Counter;
 
-static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
+thread_local! {
+    pub static ALLOCATED: Cell<isize> = const { Cell::new(0) };
+}
 
 unsafe impl GlobalAlloc for Counter {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         let ret = System.alloc(layout);
         if !ret.is_null() {
-            ALLOCATED.fetch_add(layout.size(), SeqCst);
+            ALLOCATED.set(ALLOCATED.get() + isize::try_from(layout.size()).unwrap());
         }
         ret
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         System.dealloc(ptr, layout);
-        ALLOCATED.fetch_sub(layout.size(), SeqCst);
+        ALLOCATED.set(ALLOCATED.get() - isize::try_from(layout.size()).unwrap());
     }
 }
 
@@ -132,7 +131,45 @@ impl CacheableForgetable for Arc<Node<RID, FSKey, FSValue>> {
     }
 }
 
-fn alloct_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+fn logrange(min: usize, max: usize) -> impl Iterator<Item=usize> {
+    let minf = min as f64;
+    let grange = (max as f64) / minf;
+    let mult = grange.powf(1.0/8f64);
+    (1..=8).map(move |exp| ((minf * mult.powf(exp as f64)).round()) as usize)
+}
+
+fn measure(name: &str, pos: &str, n: usize,
+    f: fn(&WriteBack, usize) -> Box<dyn CacheableForgetable>) -> bool
+{
+    let wb = WriteBack::limitless();
+    let before = ALLOCATED.get();
+    let c = f(&wb, n);
+    let after = ALLOCATED.get();
+    let actual = after - before;
+    let calc = c.cache_space();
+    wb.repay(c.forget());
+    let err = 100.0 * (calc as f64) / (actual as f64) - 100.0;
+    println!("{name:>8}{pos:>22}{n:>8}{actual:>12}{calc:>12}{err:>12.2}%");
+    err.abs() <= 5.0
+}
+
+macro_rules! test_measure {
+    ($tc: ident, $name:expr, $pos: expr, $min:expr, $max:expr, $fn:expr) => {
+        #[test]
+        fn $tc() {
+            println!("\n{:>8}{:>22}{:>8}{:>12}{:>12}{:>12}", "Table", "Position",
+                     "N", "Actual size", "Calculated", "Error");
+
+            let mut pass = true;
+            for n in logrange($min, $max) {
+                pass &= measure($name, $pos, n, $fn)
+            }
+            assert!(pass, "Calculated size out of tolerance in at least one case");
+        }
+    }
+}
+
+test_measure!(alloct_leaf, "AllocT", "Leaf", 134, 535, |_wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = PBA::new(1, i as LbaT);
@@ -144,9 +181,9 @@ fn alloct_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<DRP, PBA, RID>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn alloct_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(alloct_int, "AllocT", "Int", 109, 433, |_wb, n| {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -158,9 +195,9 @@ fn alloct_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<DRP, PBA, RID>::Int(IntData::new(children));
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn ridt_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(ridt_int, "RIDT", "Int", 98, 389, |_wb, n| {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -172,9 +209,9 @@ fn ridt_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let nd = NodeData::<DRP, RID, RidtEntry>::Int(IntData::new(children));
     Box::new(Arc::new(Node::new(nd)))
-}
+});
 
-fn ridt_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(ridt_leaf, "RIDT", "Leaf", 114, 454, |_wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = RID(i as u64);
@@ -188,9 +225,9 @@ fn ridt_leaf(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<DRP, RID, RidtEntry>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_int, "FS", "Int", 91, 364, |_wb, n| {
     let txgs = TxgT::from(0)..TxgT::from(1);
     let mut children = Vec::with_capacity(n);
     for i in 0..n {
@@ -201,10 +238,9 @@ fn fs_int(_wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let nd = NodeData::<RID, FSKey, FSValue>::Int(IntData::new(children));
     Box::new(Arc::new(Node::new(nd)))
-}
+});
 
-fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
-{
+test_measure!(fs_leaf_blob_extent, "FS", "Leaf (Blob Extent)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -221,9 +257,9 @@ fn fs_leaf_blob_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable>
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_direntry, "FS", "Leaf (DirEntry)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -241,9 +277,9 @@ fn fs_leaf_direntry(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_direntries, "FS", "Leaf (DirEntries)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -266,9 +302,9 @@ fn fs_leaf_direntries(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_dyinginode, "FS", "Leaf (Dying Inode)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -281,9 +317,9 @@ fn fs_leaf_dyinginode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> 
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_extattr_blob, "FS", "Leaf (Blob Extattr)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -306,9 +342,9 @@ fn fs_leaf_extattr_blob(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_extattr_inline, "FS", "Leaf (Inline Extattr)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -329,9 +365,9 @@ fn fs_leaf_extattr_inline(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetab
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_extattrs, "FS", "Leaf (Extattrs)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -364,9 +400,9 @@ fn fs_leaf_extattrs(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_inline_extent, "FS", "Leaf (Inline Extent)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -381,9 +417,9 @@ fn fs_leaf_inline_extent(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetabl
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_inode, "FS", "Leaf (Inode)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -410,9 +446,9 @@ fn fs_leaf_inode(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
+});
 
-fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
+test_measure!(fs_leaf_property, "FS", "Leaf (Property)", 576, 2302, |wb, n| {
     let mut ld = LeafData::default();
     for i in 0..n {
         let k = FSKey::new(i as u64, ObjKey::Inode);
@@ -425,132 +461,4 @@ fn fs_leaf_property(wb: &WriteBack, n: usize) -> Box<dyn CacheableForgetable> {
     }
     let node_data = NodeData::<RID, FSKey, FSValue>::Leaf(ld);
     Box::new(Arc::new(Node::new(node_data)))
-}
-
-fn logrange(min: usize, max: usize) -> impl Iterator<Item=usize> {
-    let minf = min as f64;
-    let grange = (max as f64) / minf;
-    let mult = grange.powf(1.0/8f64);
-    (1..=8).map(move |exp| ((minf * mult.powf(exp as f64)).round()) as usize)
-}
-
-fn measure(name: &str, pos: &str, n: usize, verbose: bool,
-    f: fn(&WriteBack, usize) -> Box<dyn CacheableForgetable>) -> bool
-{
-    let wb = WriteBack::limitless();
-    let before = ALLOCATED.load(SeqCst);
-    let c = f(&wb, n);
-    let after = ALLOCATED.load(SeqCst);
-    let actual = after - before;
-    let calc = c.cache_space();
-    wb.repay(c.forget());
-    let err = 100.0 * (calc as f64) / (actual as f64) - 100.0;
-    if verbose {
-        println!("{name:>8}{pos:>22}{n:>8}{actual:>12}{calc:>12}{err:>12.2}%");
-    }
-    err.abs() <= 5.0
-}
-
-#[derive(Parser, Clone, Debug)]
-struct Cli {
-    /// Must be present when specifying a test case name
-    #[clap(long = "exact")]
-    exact: bool,
-    /// Ignored.  For compatibility purposes only
-    #[clap(long = "format")]
-    format: Option<String>,
-    /// Run only ignored tests
-    #[clap(long = "ignored")]
-    ignored: bool,
-    /// List all tests and benchmarks
-    #[clap(long = "list")]
-    list: bool,
-    /// Print detailed test output
-    #[clap(long = "nocapture")]
-    verbose: bool,
-    /// Ignored.  For compatibility purposes only
-    #[clap(long = "test-threads")]
-    test_threads: Option<String>,
-    testcase: Option<String>
-}
-
-fn cacheable_space(verbose: bool) {
-
-    let mut pass = true;
-
-    if verbose {
-        println!("{:>8}{:>22}{:>8}{:>12}{:>12}{:>12}", "Table", "Position", "N",
-                 "Actual size", "Calculated", "Error");
-    }
-    for n in logrange(109, 433) {
-        pass &= measure("AllocT", "Int", n, verbose, alloct_int);
-    }
-    for n in logrange(134, 535) {
-        pass &= measure("AllocT", "Leaf", n, verbose, alloct_leaf);
-    }
-    for n in logrange(98, 389) {
-        pass &= measure("RIDT", "Int", n, verbose, ridt_int);
-    }
-    for n in logrange(114, 454) {
-        pass &= measure("RIDT", "Leaf", n, verbose, ridt_leaf);
-    }
-    for n in logrange(91, 364) {
-        pass &= measure("FS", "Int", n, verbose, fs_int);
-    }
-    for n in logrange(576, 2302) {
-        measure("FS", "Leaf (Blob Extent)", n, verbose, fs_leaf_blob_extent);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (DirEntry)", n, verbose, fs_leaf_direntry);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (DirEntries)", n, verbose,
-            fs_leaf_direntries);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Dying Inode)", n, verbose,
-            fs_leaf_dyinginode);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Blob Extattr)", n, verbose,
-            fs_leaf_extattr_blob);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inline Extattr)", n, verbose,
-            fs_leaf_extattr_inline);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Extattrs)", n, verbose, fs_leaf_extattrs);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inline Extent)", n, verbose,
-            fs_leaf_inline_extent);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Inode)", n, verbose, fs_leaf_inode);
-    }
-    for n in logrange(576, 2302) {
-        pass &= measure("FS", "Leaf (Property)", n, verbose, fs_leaf_property);
-    }
-    if !pass {
-        panic!("Calculated size out of tolerance in at least one case");
-    }
-}
-
-fn main() {
-    const TCNAME: &str = "cacheable_space::cacheable_space";
-
-    let cli = Cli::parse();
-    if cli.list {
-        if !cli.ignored{
-            println!("{TCNAME}: test");
-        }
-        return;
-    }
-    if let Some(tc) = cli.testcase {
-        if cli.exact && tc != TCNAME || !TCNAME.contains(&tc) {
-            return;
-        }
-    }
-    cacheable_space(cli.verbose);
-}
+});

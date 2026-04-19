@@ -81,7 +81,6 @@ nix = { workspace = true, features = ["feature"] }
 
 [[test]]
 name = "cacheable_space"
-harness = false
 path = "tests/cacheable_space.rs"
 
 [[test]]
