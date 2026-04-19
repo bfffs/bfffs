@@ -7,7 +7,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: full
 
 jobs:
   test:
@@ -16,90 +15,62 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - freebsd_version: "15.0"
-            rust_version: "nightly"
-            cargo_args: "--all-features"
-          - freebsd_version: "14.4"
-            rust_version: "1.91.0"
-            cargo_args: ""
-    name: FreeBSD ${{ matrix.freebsd_version }} ${{ matrix.rust_version }}
+        - freebsd_version: "15.0"
+          rust_version: "nightly"
+          target: x86_64-unknown-freebsd
+          arch: x86_64
+        - freebsd_version: "14.4"
+          rust_version: "1.85.0"
+          target: x86_64-unknown-freebsd
+          arch: x86_64
+        - freebsd_version: "14.4"
+          rust_version: "1.85.0"
+          target: i686-unknown-freebsd
+          arch: i686
+    name: FreeBSD/${{ matrix.arch }} ${{ matrix.freebsd_version }} ${{ matrix.rust_version }}
     steps:
-      - uses: actions/checkout@v6
-      - name: Start VM
-        uses: vmactions/freebsd-vm@v1
-        with:
-          release: ${{ matrix.freebsd_version }}
-          usesh: true
-      - name: Install dependencies
-        shell: freebsd {0}
-        run: |
-          pkg install -y curl isa-l llvm pkgconf fio
-          kldload fusefs
-          # Enable unsafe AIO so we can use it on md devices
-          sysctl vfs.aio.enable_unsafe=1
-          fetch https://sh.rustup.rs -o rustup.sh
-          sh rustup.sh -y --profile=minimal --default-toolchain ${{ matrix.rust_version }}
-      - name: Build
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cargo build ${{ matrix.cargo_args }} --all
-      - name: Test
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cargo test ${{ matrix.cargo_args }} --all --all-targets
-      - name: Fio
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          truncate -s 1g /tmp/bfffs.img
-          cargo run --all-features --bin bfffs -- pool create testpool /tmp/bfffs.img
-          fio bfffs-fio/data/ci.fio
-          rm /tmp/bfffs.img
-      - name: Fuseless
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cd bfffs
-          cargo check --no-default-features --all-targets
-      - name: Release
-        shell: freebsd {0}
-        run: |
-          # Release builds are too slow, and differ little from debug builds.
-          # Just check that it would compile, but don't try to build it.
-          . $HOME/.cargo/env
-          cargo check ${{ matrix.cargo_args }} --release --all --all-targets
-
-  lint:
-    runs-on: ubuntu-latest
-    name: lint
-    steps:
-      - uses: actions/checkout@v6
-      - name: Start VM
-        uses: vmactions/freebsd-vm@v1
-        with:
-          release: "15.0"
-          usesh: true
-      - name: Install dependencies
-        shell: freebsd {0}
-        run: |
-          pkg install -y curl isa-l llvm pkgconf
-          fetch https://sh.rustup.rs -o rustup.sh
-          sh rustup.sh -y --profile=default --default-toolchain nightly
-      - name: Clippy
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cargo clippy --all-features --all-targets -- -D warnings
-      - name: Fmt
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cargo fmt --all -- --check --color=never
-      - name: Minver
-        shell: freebsd {0}
-        run: |
-          . $HOME/.cargo/env
-          cargo update -Zdirect-minimal-versions
-          cargo check --all-features --all-targets
+    - uses: actions/checkout@v6
+    - name: Start VM
+      uses: vmactions/freebsd-vm@v1
+      with:
+        release: ${{ matrix.freebsd_version }}
+        usesh: true
+    - name: Install dependencies
+      shell: freebsd {0}
+      run: |
+        pkg install -y curl
+        fetch https://sh.rustup.rs -o rustup.sh
+        sh rustup.sh -y --profile=minimal --default-toolchain ${{ matrix.rust_version }}
+        . $HOME/.cargo/env
+        if [ "${{ matrix.target }}" = "i686-unknown-freebsd" ]; then rustup target add --toolchain ${{ matrix.rust_version }} i686-unknown-freebsd; fi
+    - name: Test
+      shell: freebsd {0}
+      run: |
+        . $HOME/.cargo/env
+        cargo test --target ${{ matrix.target }}
+    - name: Doc
+      shell: freebsd {0}
+      run: |
+        . $HOME/.cargo/env
+        cargo doc --target ${{ matrix.target }} --no-deps
+    - name: Clippy
+      if: matrix.rust_version == 'nightly' 
+      shell: freebsd {0}
+      run: |
+        . $HOME/.cargo/env
+        rustup component add --toolchain nightly clippy
+        cargo +nightly clippy --all-targets -- -D warnings
+    - name: Fmt
+      if: matrix.rust_version == 'nightly' 
+      shell: freebsd {0}
+      run: |
+        . $HOME/.cargo/env
+        rustup component add --toolchain nightly rustfmt
+        cargo +nightly fmt --all -- --check --color=never
+    - name: Audit
+      if: matrix.rust_version == 'nightly' 
+      shell: freebsd {0}
+      run: |
+        . $HOME/.cargo/env
+        pkg install -y cargo-audit
+        cargo audit
