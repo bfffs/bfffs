@@ -1,0 +1,28 @@
+name: Security Audit
+
+on:
+  pull_request:
+    paths:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+  push:
+    branches:
+      - master
+    paths:
+      - '**/Cargo.toml'
+  schedule:
+    - cron: '0 6 * * *' # run at 6 AM UTC
+
+permissions:
+  contents: read
+
+jobs:
+  cargo-deny:
+    permissions:
+      checks: write
+      contents: read
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: EmbarkStudios/cargo-deny-action@v2
