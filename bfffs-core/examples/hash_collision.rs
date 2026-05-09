@@ -56,7 +56,7 @@ struct CDirent {
 
 impl Collidable for CDirent {
     fn dump(&self) -> String {
-        format!("{:?}", &self.name)
+        format!("{:?}", self.name)
     }
 
     fn new(seed: &[u8; 16]) -> Self {
@@ -80,7 +80,7 @@ struct CExtattr {
 
 impl Collidable for CExtattr {
     fn dump(&self) -> String {
-        format!("({:?}, {:?})", self.namespace, &self.name)
+        format!("({:?}, {:?})", self.namespace, self.name)
     }
 
     fn new(seed: &[u8; 16]) -> Self {

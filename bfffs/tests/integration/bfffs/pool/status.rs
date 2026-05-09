@@ -461,7 +461,7 @@ async fn raid51_with_faulted_mirror() {
 
     let libbfffs = Bfffs::new(&daemon.sockpath).await.unwrap();
     let stat = libbfffs.pool_status(POOLNAME.to_string()).await.unwrap();
-    let uuid = format!("{}", &stat.clusters[0].mirrors[1].uuid);
+    let uuid = format!("{}", stat.clusters[0].mirrors[1].uuid);
 
     bfffs()
         .arg("--sock")
