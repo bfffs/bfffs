@@ -455,7 +455,6 @@ pub unsafe extern "C" fn fio_bfffs_queue(
 // FIO requires a mutable static for options.  There's no other way to do it.
 #[allow(static_mut_refs)]
 pub static mut IOENGINE: ioengine_ops = ioengine_ops {
-    cancel:               None,
     cleanup:              Some(fio_bfffs_cleanup),
     close_file:           Some(fio_bfffs_close),
     commit:               None,

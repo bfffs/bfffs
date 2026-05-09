@@ -8,6 +8,9 @@ edition = "2021"
 license = "GPL-2.0"
 rust-version = "1.95.0"
 
+[lib]
+crate-type = ["cdylib"]
+
 [dependencies]
 bfffs-core = { path = "../bfffs-core" }
 console-subscriber = { workspace = true }
@@ -16,5 +19,9 @@ libc = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync", "time", "tracing"] }
 tracing-subscriber = { workspace = true, features = ["ansi", "env-filter", "fmt", "tracing-log"] }
 
-[lib]
-crate-type = ["cdylib"]
+[dev-dependencies]
+assert_cmd = { workspace = true }
+bfffs = { path = "../bfffs" }
+rstest = { workspace = true }
+tempfile = { workspace = true }
+test-cdylib = { workspace = true }
