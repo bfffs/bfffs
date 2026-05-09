@@ -149,7 +149,7 @@ async fn by_uuid() {
 
     let libbfffs = Bfffs::new(&daemon.sockpath).await.unwrap();
     let stat = libbfffs.pool_status(POOLNAME.to_string()).await.unwrap();
-    let uuid = format!("{}", &stat.clusters[0].mirrors[0].leaves[0].uuid);
+    let uuid = format!("{}", stat.clusters[0].mirrors[0].leaves[0].uuid);
 
     bfffs()
         .arg("--sock")

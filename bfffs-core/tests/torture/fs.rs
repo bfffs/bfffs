@@ -245,7 +245,7 @@ async fn torture_test(seed: Option<[u8; 16]>, freqs: Option<Vec<(Op, f64)>>,
         seeder.fill_bytes(&mut seed);
         seed
     });
-    println!("Using seed {:?}", &seed);
+    println!("Using seed {:?}", seed);
     // Use XorShiftRng because it's deterministic and seedable
     let rng = XorShiftRng::from_seed(seed);
 

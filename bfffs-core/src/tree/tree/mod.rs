@@ -2440,8 +2440,8 @@ impl<D, K, V> Tree<ddml::DRP, D, K, V>
                 {
                     assert!(ranges_overlap(&params.txgs, &child.txgs),
                         "Node's PBA {:?} resides in the query range {:?} but its TXG range {:?} does not overlap the query range {:?}",
-                        child.ptr.as_addr().pba(), &params.pbas, &child.txgs,
-                        &params.txgs);
+                        child.ptr.as_addr().pba(), params.pbas, child.txgs,
+                        params.txgs);
                     Some(NodeId{height: height - 1, key: child.key})
                 } else {
                     None

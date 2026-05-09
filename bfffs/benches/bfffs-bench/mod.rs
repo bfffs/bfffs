@@ -269,7 +269,7 @@ async fn main() {
         .collect::<Vec<_>>();
     let use_libgeom = !sdevs.is_empty();
     let geom_regex = if use_libgeom {
-        Some(Regex::new(&format!("^({})$", &sdevs[..].join("|"))).unwrap())
+        Some(Regex::new(&format!("^({})$", sdevs[..].join("|"))).unwrap())
     } else {
         None
     };

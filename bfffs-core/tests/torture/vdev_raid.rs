@@ -90,7 +90,7 @@ async fn do_test(
         seeder.fill_bytes(&mut seed);
         seed
     });
-    println!("Using seed {:?}", &seed);
+    println!("Using seed {:?}", seed);
     // Use XorShiftRng because it's deterministic and seedable
     let mut rng = XorShiftRng::from_seed(seed);
 
