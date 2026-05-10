@@ -2246,8 +2246,8 @@ mod repair_mirror_zone {
             });
         m1.expect_repair_zone()
             .once()
-            .with(eq(2))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         mirrors.push(Child::present(m1));
 
         let mut m2 = mock_mirror();
@@ -2299,8 +2299,8 @@ mod repair_mirror_zone {
             });
         m1.expect_repair_zone()
             .once()
-            .with(eq(2))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         mirrors.push(Child::present(m1));
         mirrors.push(Child::missing(Uuid::new_v4()));
@@ -2344,8 +2344,8 @@ mod repair_mirror_zone {
             });
         m1.expect_repair_zone()
             .once()
-            .with(eq(2))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         mirrors.push(Child::present(m1));
         let mut m2 = mock_mirror();
@@ -2400,8 +2400,8 @@ mod repair_mirror_zone {
             });
         m1.expect_repair_zone()
             .once()
-            .with(eq(2))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
 
         mirrors.push(Child::present(m1));
         let mut m2 = mock_mirror();
@@ -2414,8 +2414,8 @@ mod repair_mirror_zone {
             });
         m2.expect_repair_zone()
             .once()
-            .with(eq(2))
-            .returning(|_| Box::pin(future::ok::<(), Error>(())));
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
         mirrors.push(Child::present(m2));
 
         let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,

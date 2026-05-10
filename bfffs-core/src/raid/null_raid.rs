@@ -144,7 +144,7 @@ impl VdevRaidApi for NullRaid {
 
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut {
         debug_assert_eq!(mirror_idx, 0);
-        Box::pin(self.mirror.repair_zone(zone))
+        Box::pin(self.mirror.repair_zone(zone, None))
     }
 
     fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {

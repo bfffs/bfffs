@@ -326,7 +326,7 @@ impl Child {
     fn repair_zone(&self, zone: ZoneT) -> impl Future<Output=Result<()>> + Send + Sync
     {
         match self {
-            Child::Present(m) => m.repair_zone(zone),
+            Child::Present(m) => m.repair_zone(zone, None),
             _ => panic!("Cannot repair a faulted or missing Mirror")
         }
     }
