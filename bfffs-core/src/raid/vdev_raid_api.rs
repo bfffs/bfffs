@@ -1,4 +1,6 @@
 // vim: tw=80
+use std::num::NonZeroU64;
+
 use futures::Future;
 
 use crate::{
@@ -79,8 +81,8 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// Repair any degraded children by their Zone, using mirroring.
     // NB: we could save a Box here , because VdevRaid::repair_mirror_zone and
     // NullRaid::repair_mirror_zone do the exact same thing.
-    // TODO: add a max LBA argument, so we know how much of the zone to repair.
-    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut;
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut;
 
     /// Repair any degraded children by rewriting the Zone, reconstructing it
     /// using RAID parity.

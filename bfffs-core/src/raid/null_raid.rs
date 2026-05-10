@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    num::NonZeroU64,
     pin::Pin,
 };
 
@@ -142,9 +143,11 @@ impl VdevRaidApi for NullRaid {
         Box::pin(future::ok(()))
     }
 
-    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut {
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut
+    {
         debug_assert_eq!(mirror_idx, 0);
-        Box::pin(self.mirror.repair_zone(zone, None))
+        Box::pin(self.mirror.repair_zone(zone, lbas))
     }
 
     fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {

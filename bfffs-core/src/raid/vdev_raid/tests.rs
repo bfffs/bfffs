@@ -2215,6 +2215,7 @@ mod repair_mirror_zone {
 
     // TODO:
     // [ ] No rebuilding children
+    // [ ] Open Zone
     /// A VdevRaid with one faulted child and one rebuilding child should
     /// still be able to repair the rebuilding child.  Faulted children should
     /// not get repair_mirror_zone operations.
@@ -2264,7 +2265,7 @@ mod repair_mirror_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_mirror_zone(1, 2)
+        vdev_raid.repair_mirror_zone(1, 2, None)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -2309,7 +2310,7 @@ mod repair_mirror_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_mirror_zone(1, 2)
+        vdev_raid.repair_mirror_zone(1, 2, None)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -2362,7 +2363,7 @@ mod repair_mirror_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_mirror_zone(1, 2)
+        vdev_raid.repair_mirror_zone(1, 2, None)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -2422,11 +2423,11 @@ mod repair_mirror_zone {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.repair_mirror_zone(1, 2)
+        vdev_raid.repair_mirror_zone(1, 2, None)
             .now_or_never()
             .unwrap()
             .unwrap();
-        vdev_raid.repair_mirror_zone(2, 2)
+        vdev_raid.repair_mirror_zone(2, 2, None)
             .now_or_never()
             .unwrap()
             .unwrap();

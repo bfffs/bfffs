@@ -1070,7 +1070,7 @@ impl Cluster {
                     return Ok(true) ;
                 }
             }
-            self.vdev.repair_mirror_zone(task.mirror_idx, zid).await?;
+            self.vdev.repair_mirror_zone(task.mirror_idx, zid, None).await?;
             Ok(true)
         } else {
             // We've finished repairing all zones that we knew needed to be

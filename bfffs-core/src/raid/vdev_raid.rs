@@ -323,10 +323,10 @@ impl Child {
         }
     }
 
-    fn repair_zone(&self, zone: ZoneT) -> impl Future<Output=Result<()>> + Send + Sync
+    fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> impl Future<Output=Result<()>> + Send + Sync
     {
         match self {
-            Child::Present(m) => m.repair_zone(zone, None),
+            Child::Present(m) => m.repair_zone(zone, lbas),
             _ => panic!("Cannot repair a faulted or missing Mirror")
         }
     }
@@ -2218,8 +2218,11 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, allocated)
     }
 
-    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut {
-        Box::pin(self.inner.children[mirror_idx].repair_zone(zone))
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut
+    {
+        assert_eq!(lbas, None, "TODO: for Open Zones, need to calculate how many LBAs the child has");
+        Box::pin(self.inner.children[mirror_idx].repair_zone(zone, None))
     }
 
     fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {

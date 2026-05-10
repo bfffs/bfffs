@@ -242,7 +242,8 @@ mock!{
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
-        fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT) -> BoxVdevFut;
+        fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut;
         fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn restore(&mut self, mirror_idx: usize);
         fn status(&self) -> Status;
