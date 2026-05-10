@@ -1085,6 +1085,11 @@ impl Cluster {
         }
     }
 
+    /// Restore a child device to the Online state
+    pub fn restore(&mut self, mirror_idx: usize) {
+        self.vdev.restore(mirror_idx)
+    }
+
     /// Return approximately the usable space of the Cluster in LBAs.
     pub fn size(&self) -> LbaT {
         self.vdev.size()

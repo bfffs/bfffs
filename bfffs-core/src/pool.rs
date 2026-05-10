@@ -434,6 +434,11 @@ impl Pool {
         self.clusters[task.cluster_idx].repair_mirror_step(&mut task.task).await
     }
 
+    /// Restore the given disk or Mirror to the Online state
+    pub fn restore(&mut self, cl_idx: usize, m_idx: usize) {
+        self.clusters[cl_idx].restore(m_idx)
+    }
+
     /// Return approximately the Pool's usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.stats.size()
