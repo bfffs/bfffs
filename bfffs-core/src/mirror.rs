@@ -207,8 +207,8 @@ impl Child {
         self.as_present().map(|bd| bd.open_zone(start))
     }
 
-    /// Restore a faulted child to service
-    fn restore(&mut self) {
+    /// Place a faulted child back into service and begin to rebuild it
+    fn rebuild(&mut self) {
         let old = mem::replace(self, Child::Missing(Uuid::default()));
         *self = match old {
             Child::Present(vb) => Child::Present(vb),
@@ -657,12 +657,12 @@ impl Mirror {
     /// Return a previously faulted device to service
     /// 
     /// # Returns
-    /// * Ok(()) if the device could be restored
+    /// * Ok(()) if the device could be rebuilt
     /// * Err(Error::ENOENT) if there is no such leaf device
-    pub fn restore(&mut self, uuid: Uuid) -> Result<()> {
+    pub fn rebuild(&mut self, uuid: Uuid) -> Result<()> {
         for child in self.children.iter_mut() {
             if child.uuid() == uuid {
-                child.restore();
+                child.rebuild();
                 return Ok(());
             }
         }
@@ -2081,7 +2081,7 @@ mod t {
         }
     }
 
-    mod restore {
+    mod rebuild {
         use super::*;
 
         fn mock() -> VdevBlock {
@@ -2100,7 +2100,7 @@ mod t {
             let bd0 = mock();
             let children = vec![Child::present(bd0)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            assert_eq!(Error::ENOENT, mirror.restore(Uuid::new_v4()).unwrap_err());
+            assert_eq!(Error::ENOENT, mirror.rebuild(Uuid::new_v4()).unwrap_err());
             assert_eq!(Health::Online, mirror.status().health);
         }
 
@@ -2117,7 +2117,7 @@ mod t {
                 Child::faulted(bd1)
             ];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.restore(bd1_uuid).unwrap();
+            mirror.rebuild(bd1_uuid).unwrap();
             let status = mirror.status();
             assert_eq!(status.leaves[1].health,
                        Health::Degraded(nonzero!(1u8)));
@@ -2125,7 +2125,7 @@ mod t {
             assert_eq!(status.rebuilding, Some(txg));
         }
 
-        /// A missing disk cannot be restored
+        /// A missing disk cannot be rebuilt
         #[test]
         fn missing() {
             let bd0 = mock();
@@ -2135,14 +2135,14 @@ mod t {
                 Child::missing(faulty_uuid)
             ];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.restore(faulty_uuid).unwrap();
+            mirror.rebuild(faulty_uuid).unwrap();
             let status = mirror.status();
             assert_eq!(status.leaves[1].health,
                        Health::Faulted(FaultedReason::Removed));
             assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
         }
 
-        /// Restoring a healthy disk is a no-op
+        /// Rebuilding a healthy disk is a no-op
         #[test]
         fn present() {
             let bd0 = mock();
@@ -2150,7 +2150,7 @@ mod t {
             let bd0_uuid = bd0.uuid();
             let children = vec![Child::present(bd0), Child::present(bd1)];
             let mut mirror = Mirror::new(Uuid::new_v4(), children);
-            mirror.restore(bd0_uuid).unwrap();
+            mirror.rebuild(bd0_uuid).unwrap();
             let status = mirror.status();
             assert_eq!(status.leaves[0].health,
                        Health::Online);
