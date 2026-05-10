@@ -2226,6 +2226,10 @@ impl VdevRaidApi for VdevRaid {
         todo!()
     }
 
+    fn restore(&mut self, _mirror_idx: usize) {
+        todo!()
+    }
+
     fn status(&self) -> Status {
         let n = self.inner.children.len();
         let k = self.inner.codec.stripesize();

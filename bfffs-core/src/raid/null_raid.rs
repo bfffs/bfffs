@@ -151,6 +151,10 @@ impl VdevRaidApi for NullRaid {
         unimplemented!("NullRaid cannot do RAID repair");
     }
 
+    fn restore(&mut self, _mirror_idx: usize) {
+        self.mirror.restore()
+    }
+
     fn status(&self) -> Status {
         let codec = String::from("NonRedundant");
         let child = self.mirror.status();

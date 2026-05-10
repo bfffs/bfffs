@@ -88,6 +88,10 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     // returns.
     fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
+    /// Restore a fully rebuilt child to the Online state.  Or, restore a
+    /// degraded Mirror to the Online state after its children are rebuilt.
+    fn restore(&mut self, mirror_idx: usize);
+
     /// Return information about the health and composition of this RAID vdev.
     fn status(&self) -> Status;
 
