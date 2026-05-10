@@ -6,7 +6,7 @@ require 'ostruct'
 require 'prime'
 require 'set'
 
-require 'bitset'
+require 'bitarray'
 require 'narray'
 require 'polynomial'
 
@@ -378,12 +378,14 @@ class PrimeS < Layout
     # disk.  The offsetth one will be the stripe we want.  Then use the disk
     # formula to find b, which will determine the address, whether it's a check
     # unit, and the check index.
-    stripes_in_iter = Bitset.new(n)
+    stripes_in_iter = BitArray.new(n)
     (0 .. k-1).each do |i|
-      stripes_in_iter.set((disk * invmod(y, n) - i) * invmod(@m, n) % n)
+      stripes_in_iter[(disk * invmod(y, n) - i) * invmod(@m, n) % n] = 1
     end
     offset_in_iter = offset - k * z
-    s = stripes_in_iter.to_a[offset_in_iter] + n * z
+    indices = []
+    stripes_in_iter.each_with_index { |bit, idx| indices << idx if bit == 1 }
+    s = indices[offset_in_iter] + n * z
     b = (disk * invmod(y, n) - s * @m) % n
     if b >= @m
       return [s * @m, true, b - @m]
@@ -739,13 +741,13 @@ class ChunkMap
       disk_reads = NArray.int(@layout.clustsize)
 
       # set of stripes, indicating which have any amount of damage
-      damaged_stripes = Bitset.new(@layout.stripes)
+      damaged_stripes = BitArray.new(@layout.stripes)
       failed.each do |col|
-        damaged_stripes.set(*@stripes[col, true])
+        @stripes[col, true].each { |s| damaged_stripes[s] = 1 }
       end
 
-      damaged_stripes.each_with_index do |damaged, stripe|
-        next unless damaged
+      damaged_stripes.each_with_index do |bit, stripe|
+        next if bit == 0
 
         # Need to read the lowest undamaged @m chunks from stripe
         read_count = 0
