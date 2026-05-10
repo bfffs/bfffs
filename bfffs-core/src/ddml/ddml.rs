@@ -99,13 +99,14 @@ impl MirrorRepairTask {
                 }
             }
             if let Some(pool) = wpool.upgrade() {
-                let pool_guard = pool.write().await;
+                let mut pool_guard = pool.write().await;
                 loop {
                     if !pool_guard.repair_mirror_step(&mut task).await.expect("TODO: handle errors") {
                         break;
                     }
                 }
-                todo!("repair open zones, and restore the faulted disk");
+                // TODO: repair open zones
+                pool_guard.restore(cl_idx, m_idx);
             } else {
                 tracing::debug!("Pool got dropped with an active MirrorRebuildTask");
             }
