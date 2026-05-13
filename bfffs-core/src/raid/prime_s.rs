@@ -270,6 +270,10 @@ impl Locator for PrimeS {
         self.depth as u32
     }
 
+    fn disks(&self) -> u32 {
+        self.n.into()
+    }
+
     fn id2loc(&self, chunkid: ChunkId) -> Chunkloc {
         let cli = self.id2loc_int(&chunkid);
         let b = PrimeS::offset_within_stripe(chunkid, cli.a, cli.s, self.m);

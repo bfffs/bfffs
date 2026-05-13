@@ -609,6 +609,9 @@ impl Mirror {
     // independently.
     // TODO: return a different error code for errors during read than for
     // errors during write.  In the former case, RAID error recovery may help.
+    // TODO: When running on SMR HDDs, if lbas is nonzero, do a ReportZone on
+    // the underlying disk, and check that its Write Pointer matches the
+    // supplied lbas value.
     pub fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>)
         -> impl Future<Output=Result<()>> + Send + Sync
     {

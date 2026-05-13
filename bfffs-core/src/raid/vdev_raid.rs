@@ -2221,8 +2221,31 @@ impl VdevRaidApi for VdevRaid {
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
                           lbas: Option<NonZeroU64>) -> BoxVdevFut
     {
-        assert_eq!(lbas, None, "TODO: for Open Zones, need to calculate how many LBAs the child has");
-        Box::pin(self.inner.children[mirror_idx].repair_zone(zone, None))
+        // VdevRaid caches incompletely written stripes in the StripeBuffer.
+        // There is no need to repair those.  So we should round `lbas` down to
+        // a whole number of Stripes, then repair the portion of the mirror
+        // that's actually been written.
+        let mut maxlba = None;
+        if let Some(lbas) = lbas {
+            let f = self.inner.codec.protection() as u64;
+            let m = self.inner.codec.stripesize() as u64 - f;
+            let n = self.inner.locator.disks();
+            let lbas_per_stripe = self.chunksize * m;
+            let flushed_lbas = u64::from(lbas) - u64::from(lbas) % lbas_per_stripe;
+            let flushed_chunks: u64 = flushed_lbas / self.chunksize;
+            let end = ChunkId::Data(flushed_chunks);
+            let start = ChunkId::Data(flushed_chunks.saturating_sub(n.into()));
+            for (_id, loc) in self.inner.locator.iter(start, end) {
+                if loc.disk == mirror_idx as i16 {
+                    maxlba = NonZeroU64::new((loc.offset + 1) * self.chunksize);
+                }
+            }
+            if maxlba.is_none() {
+                // Nothing to repair in this barely-open zone
+                return Box::pin(future::ok(()));
+            }
+        };
+        Box::pin(self.inner.children[mirror_idx].repair_zone(zone, maxlba))
     }
 
     fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {
