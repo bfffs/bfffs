@@ -2786,5 +2786,89 @@ r#"FreeSpaceMap: 1 Zones: 0 Empty, 0 Open, 1 Closed, 0 Dead
         assert_eq!(fsm.in_use_total(), 6);
     }
 }
+
+mod repair_mirror {
+    use mockall::predicate::*;
+    use pretty_assertions::assert_eq;
+    use rstest::rstest;
+    use super::super::*;
+
+    // TODO
+    // [ ] Don't repair Open zones until all Closed zones have been repaired
+    // [ ] Gather new list of zones after repairing last ones.
+    // [ ] Repair Open zones only when the pool is locked
+    #[test]
+    fn creation() {
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(32768u32);
+
+        let mut fsm = FreeSpaceMap::new(vr.zones());
+        // Skip Zone 0.  Let it be empty.
+        // Zone 1 is closed before the TxgT range of concern.
+        fsm.open_zone(1, 1000, 2000, 100, TxgT::from(1)).unwrap();
+        // Zone 3 will be dead.
+        fsm.open_zone(3, 3000, 4000, 100, TxgT::from(3)).unwrap();
+        fsm.finish_zone(3, TxgT::from(4));
+        fsm.free(3, 100);
+        // Zone 4 and 5 will be closed after the TxgT range of concern
+        fsm.open_zone(5, 5000, 6000, 100, TxgT::from(3)).unwrap();
+        fsm.finish_zone(1, TxgT::from(4));
+        fsm.open_zone(4, 4000, 5000, 100, TxgT::from(4)).unwrap();
+        fsm.finish_zone(4, TxgT::from(5));
+
+        let cluster = Cluster::new((fsm, vr.into()));
+
+        let mut task = cluster.repair_mirror(1, TxgT::from(5)..);
+        assert_eq!(task.mirror_idx, 1);
+        assert_eq!(task.next_txg, TxgT::from(6));
+        assert_eq!(Some(5), task.zones.pop_front());
+        assert_eq!(Some(4), task.zones.pop_front());
+        assert_eq!(None, task.zones.pop_front());
+    }
+
+    /// A Zone needed repair at the time the task was created, but got killed
+    /// before we repaired it.  Don't repair it.
+    #[rstest]
+    #[case::empty(true)]
+    #[case::dead(false)]
+    #[tokio::test]
+    async fn dont_repair_dead_or_empty_zones(#[case] empty: bool)
+    {
+        let mut vr = MockVdevRaid::default();
+        vr.expect_lba2zone()
+            .with(eq(1000))
+            .return_const(Some(1));
+        vr.expect_lba2zone()
+            .with(eq(1099))
+            .return_const(Some(1));
+        vr.expect_zones()
+            .return_const(32768u32);
+        vr.expect_erase_zone()
+            .times(0..=1)
+            .with(eq(1))
+            .return_once(|_| Box::pin(future::ok(())));
+        vr.expect_repair_mirror_zone()
+            .never();
+
+        let mut fsm = FreeSpaceMap::new(vr.zones());
+        fsm.open_zone(1, 1000, 2000, 100, TxgT::from(1)).unwrap();
+        fsm.finish_zone(1, TxgT::from(2));
+
+        let cluster = Cluster::new((fsm, vr.into()));
+
+        let mut task = cluster.repair_mirror(1, TxgT::from(5)..);
+
+        // Now free that allocation, killing the zone
+        cluster.free(1000, 100);
+        if empty {
+            // Advance a transaction to make the zone empty
+            cluster.advance_transaction(TxgT::from(6)).await.unwrap();
+        }
+
+        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task).await);
+    }
+
+}
 }
 // LCOV_EXCL_STOP
