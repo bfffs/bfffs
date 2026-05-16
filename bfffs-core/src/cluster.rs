@@ -496,11 +496,15 @@ impl<'a> FreeSpaceMap {
         let mut reaped = Vec::with_capacity(self.empty_zones.len());
         let mut highest_emptied = 0;
         for zid in self.empty_zones.iter().cloned() {
-            reaped.push(zid);
-            highest_emptied = highest_emptied.max(zid);
-            Self::dirty_zone_priv(&mut self.dirty, zid);
-            debug_assert_eq!(self.zones[zid as usize].txgs.start, TxgT::from(0));
-            self.zones[zid as usize].txgs.end = TxgT::from(0);
+            if self.is_dead(zid) {
+                reaped.push(zid);
+                highest_emptied = highest_emptied.max(zid);
+                Self::dirty_zone_priv(&mut self.dirty, zid);
+                debug_assert_eq!(self.zones[zid as usize].txgs.start, TxgT::from(0));
+                self.zones[zid as usize].txgs.end = TxgT::from(0);
+            } else {
+                debug_assert!(self.is_empty(zid));
+            }
         }
         if highest_emptied as usize + 1 == self.zones.len() {
             // Remove all trailing Empty zones from self.zones
@@ -1147,6 +1151,9 @@ mod cluster {
         cluster.free(lba, 1);
         assert_eq!(cluster.allocated(), 1);
 
+        // Erase the dead zone
+        cluster.advance_transaction(TxgT::from(0)).await.unwrap();
+        // Do not erase the now-empty zone
         cluster.advance_transaction(TxgT::from(0)).await.unwrap();
     }
 
@@ -1208,6 +1215,9 @@ mod cluster {
         cluster.free(lba, 1);
         assert_eq!(cluster.allocated(), 2);
 
+        // Erase the dead zone
+        cluster.advance_transaction(TxgT::from(0)).await.unwrap();
+        // Do not erase the now-empty zone
         cluster.advance_transaction(TxgT::from(0)).await.unwrap();
     }
 
@@ -2375,7 +2385,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(1, TxgT::from(0));
-        fsm.reap();     // Should do nothing
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert!(zones_to_erase.is_empty());
         assert_eq!(fsm.zones.len(), 2);
         assert!(fsm.is_closed(1));
     }
@@ -2385,7 +2396,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap();
         fsm.kill_zone(0);
-        fsm.reap();
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert_eq!(&[0], &zones_to_erase[..]);
         assert!(!fsm.is_dead(0));
         assert!(fsm.is_empty(0));
         assert!(!fsm.is_dead(1));
@@ -2399,7 +2411,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         fsm.open_zone(1, 1000, 2000, 1, TxgT::from(0)).unwrap();
         fsm.finish_zone(1, TxgT::from(0));
         fsm.kill_zone(1);
-        fsm.reap();
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert_eq!(&[1], &zones_to_erase[..]);
         assert_eq!(fsm.zones.len(), 1);
         assert!(!fsm.is_dead(0));
         assert!(!fsm.is_empty(0));
@@ -2412,7 +2425,8 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         fsm.open_zone(2, 2000, 3000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(2, TxgT::from(0));
         fsm.kill_zone(2);
-        fsm.reap();
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert_eq!(&[2], &zones_to_erase[..]);
         assert!(!fsm.is_empty(0));
         assert_eq!(fsm.zones.len(), 1);
     }
@@ -2423,22 +2437,34 @@ r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
         fsm.open_zone(2, 2000, 3000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(2, TxgT::from(0));
         fsm.kill_zone(2);
-        fsm.reap();
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert_eq!(&[2], &zones_to_erase[..]);
+        assert_eq!(fsm.zones.len(), 0);
+    }
+
+    #[test]
+    fn reap_empty_fsm() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert!(zones_to_erase.is_empty());
         assert_eq!(fsm.zones.len(), 0);
     }
 
     #[test]
     fn reap_empty_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
-        fsm.reap();     // Should do nothing
-        assert_eq!(fsm.zones.len(), 0);
+        // Open zone 1, so zone 0 will be added to the empty_zones list
+        fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap();
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert!(zones_to_erase.is_empty());
     }
 
     #[test]
     fn reap_open_zone() {
         let mut fsm = FreeSpaceMap::new(32768);
         fsm.open_zone(1, 1000, 2000, 0, TxgT::from(0)).unwrap();
-        fsm.reap();     // Should do nothing
+        let zones_to_erase = fsm.reap().into_iter().collect::<Vec<_>>();
+        assert!(zones_to_erase.is_empty());
         assert_eq!(fsm.zones.len(), 2);
         assert!(fsm.is_open(1));
     }
