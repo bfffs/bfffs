@@ -90,6 +90,9 @@ impl MirrorRepairTask {
             loop {
                 if let Some(pool) = wpool.upgrade() {
                     let more = pool.read().await.repair_mirror_step(&mut task).await.expect("TODO: handle errors");
+                    // TODO: write the label on the repairing device, if this
+                    // step finished a transaction, and if there aren't any Open
+                    // Zones with a start Txg lower than this one.
                     if !more {
                         break;
                     }
