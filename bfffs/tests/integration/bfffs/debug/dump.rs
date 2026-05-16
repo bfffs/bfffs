@@ -70,11 +70,11 @@ async fn fsm(harness: Harness) {
         .assert()
         .success()
         .stdout(
-            r"FreeSpaceMap: 4 Zones: 0 Closed, 3 Empty, 1 Open
- Zone | TXG |                              Space                               |
-------|-----|------------------------------------------------------------------|
-    0 | 0-  |                                                                  |
-    1 |  -  |                                                                  |
+            r"FreeSpaceMap: 4 Zones: 3 Empty, 1 Open, 0 Closed, 0 Dead
+ Zone | S | TXG |                            Space                             |
+------|---|-----|--------------------------------------------------------------|
+    0 | O | 0-  |                                                              |
+    1 | E |  -  |                                                              |
 
 ",
         );
