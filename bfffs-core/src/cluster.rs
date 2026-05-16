@@ -223,8 +223,8 @@ impl<'a> FreeSpaceMap {
         self.zones.iter().enumerate().filter_map(move |(i, zone)| {
             let zid = i as ZoneT;
             if !self.empty_zones.contains(&zid) &&
-                zone.txgs.contains(&s) ||
-                (self.open_zones.contains_key(&zid) && zone.txgs.start <= s) {
+                zone.txgs.contains(&s) || self.open_zones.contains_key(&zid)
+            {
                     Some(zid)
             } else {
                 None
@@ -1991,6 +1991,27 @@ mod free_space_map {
         fsm.open_zone(4, 5000, 7000, 0, TxgT::from(0)).unwrap();
         fsm.finish_zone(4, TxgT::from(0));
         assert_eq!(3700, fsm.allocated_total());
+    }
+
+    #[test]
+    fn contains() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        // Skip Zone 0.  Let it be empty.
+        // Zone 1 is closed before the TxgT range of concern.
+        fsm.open_zone(1, 1000, 2000, 100, TxgT::from(1)).unwrap();
+        // Zone 2 will be open
+        fsm.open_zone(2, 2000, 3000, 100, TxgT::from(2)).unwrap();
+        // Zone 3 will be dead.
+        fsm.open_zone(3, 3000, 4000, 100, TxgT::from(3)).unwrap();
+        fsm.finish_zone(3, TxgT::from(4));
+        fsm.free(3, 100);
+        fsm.finish_zone(1, TxgT::from(4));
+        // Zone 4 will be closed after the TxgT range of concern
+        fsm.open_zone(4, 4000, 5000, 100, TxgT::from(4)).unwrap();
+        fsm.finish_zone(4, TxgT::from(5));
+
+        let contained = fsm.contains(TxgT::from(5)..).collect::<Vec<_>>();
+        assert_eq!(&[2, 4], &contained[..]);
     }
 
     #[test]
