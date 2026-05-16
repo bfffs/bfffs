@@ -77,10 +77,10 @@ mod persistence {
         let (cluster, _tempdir, _path) = objects;
         let dumped = cluster.dump_fsm();
         assert_eq!(dumped,
-"FreeSpaceMap: 2 Zones: 0 Closed, 2 Empty, 0 Open
- Zone | TXG |                              Space                               |
-------|-----|------------------------------------------------------------------|
-    0 |  -  |                                                                  |
+"FreeSpaceMap: 2 Zones: 2 Empty, 0 Open, 0 Closed, 0 Dead
+ Zone | S | TXG |                            Space                             |
+------|---|-----|--------------------------------------------------------------|
+    0 | E |  -  |                                                              |
 ");
     }
 

@@ -615,10 +615,13 @@ impl Display for FreeSpaceMap {
     /// Print a human-readable summary of the FreeSpaceMap
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let t = self.total_zones;
+        let d = self.empty_zones.iter()
+            .filter(|zid| self.is_dead(**zid))
+            .count();
         let le = self.empty_zones.len();
         let o = self.open_zones.len();
         let c = self.zones.len() - o - le;
-        let e = (t as usize) - c - o;
+        let e = (t as usize) - c - o - d;
         let max_txg: u32 = cmp::max(1, (0..self.zones.len())
             .filter(|zid| !self.is_empty(*zid as ZoneT))
             .map(|zid| {
@@ -632,27 +635,28 @@ impl Display for FreeSpaceMap {
             .unwrap_or(0));
 
         // First print the header
-        writeln!(f, "FreeSpaceMap: {t} Zones: {c} Closed, {e} Empty, {o} Open")?;
+        writeln!(f, "FreeSpaceMap: {t} Zones: {e} Empty, {o} Open, {c} Closed, {d} Dead")?;
         let zone_width = cmp::max(5, f64::from(t + 1).log(16.0).ceil() as usize);
         let txg_width = cmp::max(1,
             f64::from(max_txg + 1).log(16.0).ceil() as usize);
-        let space_width = 80 - zone_width - 2 * txg_width - 7;
+        let space_width = 80 - zone_width - 2 * txg_width - 11;
         let sw64 = space_width as f64;
-        writeln!(f, "{0:^1$}|{2:^3$}|{4:^5$}|", "Zone", zone_width + 1,
+        writeln!(f, "{0:^1$}| S |{2:^3$}|{4:^5$}|", "Zone", zone_width + 1,
                "TXG", txg_width * 2 + 3, "Space", space_width)?;
-        writeln!(f, "{0:-^1$}|{2:-^3$}|{4:-^5$}|", "", zone_width + 1,
+        writeln!(f, "{0:-^1$}|---|{2:-^3$}|{4:-^5$}|", "", zone_width + 1,
                "", txg_width * 2 + 3, "", space_width)?;
 
         // Now loop over the zones
         let mut last_row: Option<String> = None;
         for i in 0..self.zones.len() {
             let total = f64::from(self.zones[i].total_blocks);
+            let zid = i as ZoneT;
             // We want to round used + free up so the graph won't overestimate
             // available space, but we want to display used and free separately.
-            let (used_width, freed_width) = if self.is_empty(i as ZoneT) {
+            let (used_width, freed_width) = if self.is_empty(zid) {
                 (0, 0)
             } else {
-                let used = self.in_use(i as ZoneT) as f64;
+                let used = self.in_use(zid) as f64;
                 let freed = f64::from(self.zones[i].freed_blocks);
                 let not_avail_width = ((used + freed) / total * sw64).round()
                     as usize;
@@ -661,13 +665,23 @@ impl Display for FreeSpaceMap {
                 (used_width, freed_width)
             };
             let avail_width = space_width - freed_width - used_width;
-            let start = if self.is_empty(i as ZoneT) {
+            let state = if self.is_empty(zid) {
+                "E"
+            } else if self.is_dead(zid) {
+                "D"
+            } else if self.is_closed(zid) {
+                "C"
+            } else {
+                debug_assert!(self.is_open(zid));
+                "O"
+            };
+            let start = if self.is_empty(zid) || self.is_dead(zid) {
                 format!("{0:1$}", "", txg_width)
             } else {
                 let x: u32 = self.zones[i].txgs.start.into();
                 format!("{x:>txg_width$x}")
             };
-            let end = if self.is_closed(i as ZoneT) {
+            let end = if self.is_closed(zid) {
                 let x: u32 = self.zones[i].txgs.end.into();
                 format!("{x:>txg_width$x}")
             } else {
@@ -675,7 +689,8 @@ impl Display for FreeSpaceMap {
             };
             // Repeated row compression: if two or more rows are identical but
             // for the zone number, only print the first
-            let this_row = format!("{0}-{1} |{2:3$}{4:=>5$}{6:7$}", start, end,
+            let this_row = format!("{0} | {1}-{2} |{3:4$}{5:=>6$}{7:8$}", 
+                                   state, start, end,
                                    "", freed_width, "", used_width,
                                    "", avail_width);
             if let Some(ref row) = last_row {
@@ -689,7 +704,7 @@ impl Display for FreeSpaceMap {
 
         // Print a single row for trailing empty zones, if any
         if t > self.zones.len() as u32 {
-            writeln!(f, "{0:>1$x} | {2:^3$} |{4:5$}|",
+            writeln!(f, "{0:>1$x} | E | {2:^3$} |{4:5$}|",
                    self.zones.len(), zone_width, "-", 2 * txg_width + 1,
                    "", space_width)?;
         }
@@ -1981,24 +1996,30 @@ mod free_space_map {
     // FreeSpaceMap::display with the following conditions:
     // A full zone with some freed blocks
     // Two empty zones before the maximum open or full zone
+    // A dead zone
     // An open zone with some freed blocks
     // One million trailing empty zones
     #[test]
     fn display() {
-        let mut fsm = FreeSpaceMap::new(1_000_004);
+        let mut fsm = FreeSpaceMap::new(1_000_005);
         fsm.open_zone(0, 4, 96, 88, TxgT::from(1)).unwrap();
         fsm.finish_zone(0, TxgT::from(2));
         fsm.free(0, 22);
-        fsm.open_zone(3, 204, 296, 77, TxgT::from(10)).unwrap();
-        fsm.free(3, 33);
+        fsm.open_zone(3, 304, 396, 50, TxgT::from(3)).unwrap();
+        fsm.finish_zone(3, TxgT::from(5));
+        fsm.free(3, 50);
+        fsm.kill_zone(3);
+        fsm.open_zone(4, 404, 496, 77, TxgT::from(10)).unwrap();
+        fsm.free(4, 33);
         let expected =
-r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
- Zone | TXG |                              Space                               |
-------|-----|------------------------------------------------------------------|
-    0 | 1-3 |                   ===============================================|
-    1 |  -  |                                                                  |
-    3 | a-  |                       ================================           |
-    4 |  -  |                                                                  |
+r#"FreeSpaceMap: 1000005 Zones: 1000002 Empty, 1 Open, 1 Closed, 1 Dead
+ Zone | S | TXG |                            Space                             |
+------|---|-----|--------------------------------------------------------------|
+    0 | C | 1-3 |                  ============================================|
+    1 | E |  -  |                                                              |
+    3 | D |  -  |                                                              |
+    4 | O | a-  |                      ==============================          |
+    5 | E |  -  |                                                              |
 "#;
         assert_eq!(expected, format!("{fsm}"));
     }
@@ -2010,11 +2031,11 @@ r#"FreeSpaceMap: 1000004 Zones: 1 Closed, 1000002 Empty, 1 Open
         fsm.open_zone(0, 4, 96, 88, TxgT::from(0)).unwrap();
         fsm.free(0, 22);
         let expected =
-r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
- Zone | TXG |                              Space                               |
-------|-----|------------------------------------------------------------------|
-    0 | 0-  |                ===============================================   |
-    1 |  -  |                                                                  |
+r#"FreeSpaceMap: 2 Zones: 1 Empty, 1 Open, 0 Closed, 0 Dead
+ Zone | S | TXG |                            Space                             |
+------|---|-----|--------------------------------------------------------------|
+    0 | O | 0-  |               ============================================   |
+    1 | E |  -  |                                                              |
 "#;
         assert_eq!(expected, format!("{fsm}"));
     }
@@ -2027,10 +2048,10 @@ r#"FreeSpaceMap: 2 Zones: 0 Closed, 1 Empty, 1 Open
         fsm.open_zone(0, 0, 2048, 1648, TxgT::from(0)).unwrap();
         fsm.finish_zone(0, TxgT::from(15));
         let expected =
-r#"FreeSpaceMap: 1 Zones: 1 Closed, 0 Empty, 0 Open
- Zone |  TXG  |                             Space                              |
-------|-------|----------------------------------------------------------------|
-    0 |  0-10 |            ====================================================|
+r#"FreeSpaceMap: 1 Zones: 0 Empty, 0 Open, 1 Closed, 0 Dead
+ Zone | S |  TXG  |                           Space                            |
+------|---|-------|------------------------------------------------------------|
+    0 | C |  0-10 |            ================================================|
 "#;
         assert_eq!(expected, format!("{fsm}"));
     }
