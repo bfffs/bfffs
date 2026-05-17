@@ -798,6 +798,7 @@ impl SpacemapOnDisk {
 /// the repair is interrupted (perhaps by a power loss, crash, or forced
 /// unmount), it will be resumable from a more recent transaction than the
 /// original one.
+#[derive(Debug)]
 pub struct RepairMirrorTask {
     /// Index of the mirror child that we're repairing.
     mirror_idx: usize,
@@ -1027,8 +1028,12 @@ impl Cluster {
         //RepairMirrorTask::new(self, mirror_idx, txgs)
         // next_txg needs to be low enough to encompass any zones that didn't
         // make it into zones, including those that might not yet be open.
-        let next_txg = txgs.start + 1;
-        let zones = self.repair_mirror_gather_zones(txgs);
+        let (zones, maxtxg) = self.repair_mirror_gather_zones(txgs);
+        let next_txg = if let Some(maxtxg) = maxtxg {
+            maxtxg + 1
+        } else {
+            TxgT::from(0)
+        };
         RepairMirrorTask{ mirror_idx, zones, next_txg}
 
         // XXX what happens if a closed Zone gets erased at this point, before
@@ -1044,9 +1049,19 @@ impl Cluster {
         //     each time we finish rebuilding one zone.
     }
 
-    fn repair_mirror_gather_zones(&self, txgs: RangeFrom<TxgT>) -> VecDeque<ZoneT> {
+    /// Make an ordered list of every zone that might contain data in the
+    /// specified transaction range.  Return that list, and also the highest
+    /// transaction seen among these zones.
+    // TODO: handle open zones specially
+    // We shouldn't return them at all until the pool is locked.
+    // And we must keep in mind that their max txg is undefined.
+    fn repair_mirror_gather_zones(&self, txgs: RangeFrom<TxgT>) ->
+        (VecDeque<ZoneT>, Option<TxgT>)
+    {
         let fsm = self.fsm.read().unwrap();
-        let mut zones: Vec<ZoneT> = fsm.contains(txgs).collect();
+        let mut zones: Vec<ZoneT> = fsm.contains(txgs)
+            .filter(|zid| !fsm.is_open(*zid))
+            .collect();
         // The list is likely to be partially sorted already, so sort() will
         // probably be faster than sort_unstable()
         zones.sort_by_key(|zid|
@@ -1056,10 +1071,14 @@ impl Cluster {
                 *zid
             )
         );
-        zones.into()
+        let maxtxg = zones.iter()
+            .map(|zid| fsm.zones[*zid as usize].txgs.end)
+            .max();
+        (zones.into(), maxtxg)
     }
 
-    /// Try to repair one Zone.  Return true if might are more Zones to repair.
+    /// Try to repair one Zone.  Return true if there might be more Zones to
+    /// repair.
     pub async fn repair_mirror_step(&self, task: &mut RepairMirrorTask) -> Result<bool> {
         if let Some(zid) = task.zones.pop_front() {
             {
@@ -1080,7 +1099,11 @@ impl Cluster {
             // Let the caller know whether there are more zones to repair
             // XXX What about open zones that got repaired in the last round,
             // and are also included in this one?
-            task.zones = self.repair_mirror_gather_zones(task.next_txg..);
+            let (new_zones, maxtxg) = self.repair_mirror_gather_zones(task.next_txg..);
+            task.zones = new_zones;
+            if let Some(maxtxg) = maxtxg {
+                task.next_txg = maxtxg + 1;
+            }
             Ok(!task.zones.is_empty())
         }
     }
@@ -2798,7 +2821,6 @@ mod repair_mirror {
 
     // TODO
     // [ ] Don't repair Open zones until all Closed zones have been repaired
-    // [ ] Gather new list of zones after repairing last ones.
     // [ ] Repair Open zones only when the pool is locked
     #[test]
     fn creation() {
@@ -2814,18 +2836,18 @@ mod repair_mirror {
         fsm.open_zone(3, 3000, 4000, 100, TxgT::from(3)).unwrap();
         fsm.finish_zone(3, TxgT::from(4));
         fsm.free(3, 100);
-        // Zone 4 and 5 will be closed after the TxgT range of concern
+        // Zone 4 will be closed after the TxgT range of concern
         fsm.open_zone(5, 5000, 6000, 100, TxgT::from(3)).unwrap();
         fsm.finish_zone(1, TxgT::from(4));
         fsm.open_zone(4, 4000, 5000, 100, TxgT::from(4)).unwrap();
         fsm.finish_zone(4, TxgT::from(5));
+        // Zone 5 will be left open
 
         let cluster = Cluster::new((fsm, vr.into()));
 
         let mut task = cluster.repair_mirror(1, TxgT::from(5)..);
         assert_eq!(task.mirror_idx, 1);
-        assert_eq!(task.next_txg, TxgT::from(6));
-        assert_eq!(Some(5), task.zones.pop_front());
+        assert_eq!(task.next_txg, TxgT::from(7));
         assert_eq!(Some(4), task.zones.pop_front());
         assert_eq!(None, task.zones.pop_front());
     }
@@ -2872,6 +2894,76 @@ mod repair_mirror {
         assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task).await);
     }
 
+    /// After the task finishes repairing its initial batch of Zones, it will
+    /// attempt to gather more.
+    #[tokio::test]
+    async fn gather_again() {
+        let mut vr = MockVdevRaid::default();
+        vr.expect_lba2zone()
+            .with(eq(1000))
+            .return_const(Some(1));
+        vr.expect_lba2zone()
+            .with(eq(1099))
+            .return_const(Some(1));
+        vr.expect_zones()
+            .return_const(3u32);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 10));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((10, 20));
+        vr.expect_zone_limits()
+            .with(eq(2))
+            .return_const((20, 30));
+        vr.expect_repair_mirror_zone()
+            .with(eq(1), eq(0), eq(None))
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        vr.expect_open_zone()
+            .returning(|_| Box::pin(future::ok(())));
+        vr.expect_write_at()
+            .returning(|_, _, _| Box::pin(future::ok(())));
+        // Note that nothing requires the Cluster to open zone 1, but that's
+        // what the current code will choose.
+        vr.expect_repair_mirror_zone()
+            .with(eq(1), eq(1), eq(None))
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        vr.expect_finish_zone()
+            .with(eq(1))
+            .return_once(|_| Box::pin(future::ok(())));
+
+        let mut fsm = FreeSpaceMap::new(vr.zones());
+        fsm.open_zone(0, 1, 10, 1, TxgT::from(1)).unwrap();
+        fsm.finish_zone(0, TxgT::from(2));
+
+        let cluster = Cluster::new((fsm, vr.into()));
+
+        let mut task = cluster.repair_mirror(1, TxgT::from(1)..);
+
+        // Repair zone 1
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+
+        // Write to the cluster, opening an additional zone
+        let dbs = DivBufShared::from(vec![0u8; 10 * 4096]);
+        let db = dbs.try_const().unwrap();
+        let (_lba, fut1) = cluster.write(db, TxgT::from(6))
+            .expect("write failed early");
+        fut1.await.unwrap();
+        // Now write again, forcing the previous zone to be closed
+        let db = dbs.try_const().unwrap().slice_to(4096);
+        let (_lba, fut2) = cluster.write(db, TxgT::from(6))
+            .expect("write failed early");
+        fut2.await.unwrap();
+
+        // The next step will gather more Zones, but not repair any
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+
+        // This step will repair zone 2
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+
+        // Now we should be done.
+        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task).await);
+    }
 }
 }
 // LCOV_EXCL_STOP
