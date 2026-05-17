@@ -223,9 +223,9 @@ impl<'a> FreeSpaceMap {
         self.zones.iter().enumerate().filter_map(move |(i, zone)| {
             let zid = i as ZoneT;
             if !self.empty_zones.contains(&zid) &&
-                zone.txgs.contains(&s) || self.open_zones.contains_key(&zid)
+                (zone.txgs.end > s || self.open_zones.contains_key(&zid))
             {
-                    Some(zid)
+                Some(zid)
             } else {
                 None
             }
@@ -2009,9 +2009,12 @@ mod free_space_map {
         // Zone 4 will be closed after the TxgT range of concern
         fsm.open_zone(4, 4000, 5000, 100, TxgT::from(4)).unwrap();
         fsm.finish_zone(4, TxgT::from(5));
+        // Zone 5 will be opened and closed after the TxgT range of concern
+        fsm.open_zone(5, 5000, 6000, 100, TxgT::from(6)).unwrap();
+        fsm.finish_zone(5, TxgT::from(7));
 
         let contained = fsm.contains(TxgT::from(5)..).collect::<Vec<_>>();
-        assert_eq!(&[2, 4], &contained[..]);
+        assert_eq!(&[2, 4, 5], &contained[..]);
     }
 
     #[test]
