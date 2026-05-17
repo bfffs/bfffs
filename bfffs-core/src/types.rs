@@ -314,6 +314,7 @@ pub type Result<T> = ::std::result::Result<T, Error>;
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
          Readable, Serialize, Writable)]
+#[cfg_attr(test, derive(Default))]
 pub struct TxgT(pub u32);
 
 impl Add<u32> for TxgT {

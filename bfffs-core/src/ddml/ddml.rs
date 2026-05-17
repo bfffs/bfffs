@@ -21,7 +21,7 @@ use std::{
     hash::Hasher,
     mem,
     pin::Pin,
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex, Weak}
 };
 use super::{DRP, Status};
 use tracing::instrument;
@@ -62,9 +62,71 @@ impl Iterator for ListClosedZones {
 }
 
 struct MirrorRepairTask {
+    cl_idx: usize,
+    m_idx: usize,
+    wpool: Weak<RwLock<Pool>>,
+    pool_task: pool::RepairMirrorTask
 }
 
 impl MirrorRepairTask {
+    async fn initialize(
+        wpool: Weak<RwLock<Pool>>,
+        txg: TxgT,
+        cl_idx: usize,
+        m_idx: usize) -> Option<Self>
+    {
+        if let Some(pool) = wpool.upgrade() {
+            let pool_guard = pool.read().await;
+            let pool_task = pool_guard.repair_mirror(cl_idx, m_idx, txg..);
+            Some(Self { wpool, cl_idx, m_idx, pool_task })
+        } else {
+            // pool got dropped.  Probably bfffs is shutting down
+            None
+        }
+    }
+
+    /// Iteratively repair all closed zones in the transaction range
+    async fn repair_closed_zones(&mut self) {
+        loop {
+            if let Some(pool) = self.wpool.upgrade() {
+                let more = pool.read().await
+                    .repair_mirror_step(&mut self.pool_task).await
+                    .expect("TODO: handle errors");
+                // TODO: write the label on the repairing device, if this
+                // step finished a transaction, and if there aren't any Open
+                // Zones with a start Txg lower than this one.
+                if !more {
+                    break;
+                }
+            } else {
+                tracing::debug!(
+                    "Pool got dropped with an active MirrorRebuildTask");
+                break;
+            }
+        }
+    }
+
+    /// Finish rebuilding the Pool, keeping it locked so as to prevent other
+    /// tasks from accessing it.  Restore the degraded component to a fully
+    /// functional state.
+    async fn finalize(&mut self) {
+        if let Some(pool) = self.wpool.upgrade() {
+            let mut pool_guard = pool.write().await;
+            loop {
+                if !pool_guard.repair_mirror_step(&mut self.pool_task).await
+                    .expect("TODO: handle errors")
+                {
+                    break;
+                }
+            }
+            // TODO: repair open zones
+            pool_guard.restore(self.cl_idx, self.m_idx);
+        } else {
+            tracing::debug!(
+                "Pool got dropped with an active MirrorRebuildTask");
+        }
+    }
+
     pub fn spawn(pool: &Arc<RwLock<Pool>>, txg: TxgT, cl_idx: usize, m_idx: usize)
     {
         // Outline:
@@ -80,38 +142,10 @@ impl MirrorRepairTask {
         //   - Restore the rebuilding vdev to the Online state.
         let wpool = Arc::downgrade(pool);
         tokio::spawn( async move {
-            let mut task = if let Some(pool) = wpool.upgrade() {
-                let pool_guard = pool.read().await;
-                pool_guard.repair_mirror(cl_idx, m_idx, txg..)
-            } else {
-                // pool got dropped.  Probably bfffs is shutting down
-                return;
-            };
-            loop {
-                if let Some(pool) = wpool.upgrade() {
-                    let more = pool.read().await.repair_mirror_step(&mut task).await.expect("TODO: handle errors");
-                    // TODO: write the label on the repairing device, if this
-                    // step finished a transaction, and if there aren't any Open
-                    // Zones with a start Txg lower than this one.
-                    if !more {
-                        break;
-                    }
-                } else {
-                    tracing::debug!("Pool got dropped with an active MirrorRebuildTask");
-                    break;
-                }
-            }
-            if let Some(pool) = wpool.upgrade() {
-                let mut pool_guard = pool.write().await;
-                loop {
-                    if !pool_guard.repair_mirror_step(&mut task).await.expect("TODO: handle errors") {
-                        break;
-                    }
-                }
-                // TODO: repair open zones
-                pool_guard.restore(cl_idx, m_idx);
-            } else {
-                tracing::debug!("Pool got dropped with an active MirrorRebuildTask");
+            let task = Self::initialize(wpool, txg, cl_idx, m_idx).await;
+            if let Some(mut task) = task {
+                task.repair_closed_zones().await;
+                task.finalize().await;
             }
         });
     }
@@ -1141,6 +1175,141 @@ mod ddml {
         assert!(ddml.sync_all(TxgT::from(0))
                 .now_or_never().unwrap()
                 .is_ok());
+    }
+
+    mod mirror_repair_task {
+        use super::*;
+
+        // TODO:
+        // [ ] Something writes labels
+        // [ ] Something handles open zones
+        /// MirrorRepairTask::repair_closed_zones will iterate until
+        /// completion.
+        #[tokio::test]
+        async fn repair_closed_zones() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(2)
+                .returning(|_| Ok(true));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_| Ok(false));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await;
+        }
+
+        /// MirrorRepairTask::finalize will iterate until
+        /// completion, then restore the rebuilt device
+        #[tokio::test]
+        async fn finalize() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_| Ok(false));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(2)
+                .returning(|_| Ok(true));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_| Ok(false));
+            pool.expect_restore()
+                .once()
+                .in_sequence(&mut seq)
+                .return_const(());
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await;
+            task.finalize().await;
+        }
+
+        /// If the Pool gets dropped before initialize, nothing bad should
+        /// happen.
+        #[tokio::test]
+        async fn drop_before_initialize() {
+            let pool = mock_pool();
+
+            let pool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&pool);
+            drop(pool);
+            assert!(MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.is_none());
+        }
+
+        /// If the Pool gets dropped while closed zones are being repaired,
+        /// nothing bad should happen.
+        #[tokio::test]
+        async fn drop_during_repair_closed_zones() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            let apool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&apool);
+            apool.write().await.expect_repair_mirror_step()
+                .times(1)
+                .return_once(move |_| {
+                    // Move pool into here.  The first time this function is
+                    // called, Pool will be dropped, so the Arc::downgrade
+                    // in repair_closed_zones will fail the second time through
+                    // the loop.
+                    drop(apool);
+                    Ok(true)
+                });
+
+            let mut task = MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await;
+        }
+
+        /// If the Pool gets dropped just before the repair task finalizes the
+        /// repair, nothing bad should happen
+        #[tokio::test]
+        async fn drop_before_finalize() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            let apool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&apool);
+            apool.write().await.expect_repair_mirror_step()
+                .times(1)
+                .return_once(move |_| {
+                    // Move pool into here.  The first time this function is
+                    // called, Pool will be dropped, so the Arc::downgrade
+                    // in finalize will fail
+                    drop(apool);
+                    Ok(false)
+                });
+
+            let mut task = MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await;
+            task.finalize().await;
+        }
     }
 }
 }

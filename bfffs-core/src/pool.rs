@@ -162,6 +162,8 @@ pub struct Status {
     pub uuid: Uuid
 }
 
+#[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub struct RepairMirrorTask {
     cluster_idx: usize,
     task: cluster::RepairMirrorTask

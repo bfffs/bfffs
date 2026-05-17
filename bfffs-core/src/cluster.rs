@@ -799,6 +799,7 @@ impl SpacemapOnDisk {
 /// unmount), it will be resumable from a more recent transaction than the
 /// original one.
 #[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
 pub struct RepairMirrorTask {
     /// Index of the mirror child that we're repairing.
     mirror_idx: usize,
