@@ -90,7 +90,7 @@ impl MirrorRepairTask {
         loop {
             if let Some(pool) = self.wpool.upgrade() {
                 let more = pool.read().await
-                    .repair_mirror_step(&mut self.pool_task).await
+                    .repair_mirror_step(&mut self.pool_task, false).await
                     .expect("TODO: handle errors");
                 // TODO: write the label on the repairing device, if this
                 // step finished a transaction, and if there aren't any Open
@@ -113,13 +113,13 @@ impl MirrorRepairTask {
         if let Some(pool) = self.wpool.upgrade() {
             let mut pool_guard = pool.write().await;
             loop {
-                if !pool_guard.repair_mirror_step(&mut self.pool_task).await
+                if !pool_guard.repair_mirror_step(&mut self.pool_task, true)
+                    .await
                     .expect("TODO: handle errors")
                 {
                     break;
                 }
             }
-            // TODO: repair open zones
             pool_guard.restore(self.cl_idx, self.m_idx);
         } else {
             tracing::debug!(
@@ -1182,7 +1182,6 @@ mod ddml {
 
         // TODO:
         // [ ] Something writes labels
-        // [ ] Something handles open zones
         /// MirrorRepairTask::repair_closed_zones will iterate until
         /// completion.
         #[tokio::test]
@@ -1197,11 +1196,11 @@ mod ddml {
             pool.expect_repair_mirror_step()
                 .in_sequence(&mut seq)
                 .times(2)
-                .returning(|_| Ok(true));
+                .returning(|_, _| Ok(true));
             pool.expect_repair_mirror_step()
                 .in_sequence(&mut seq)
                 .times(1)
-                .returning(|_| Ok(false));
+                .returning(|_, _| Ok(false));
 
             let pool = Arc::new(RwLock::new(pool));
 
@@ -1222,17 +1221,20 @@ mod ddml {
                 .once()
                 .returning(|_, _, _| pool::RepairMirrorTask::default());
             pool.expect_repair_mirror_step()
+                .with(always(), eq(false))
                 .in_sequence(&mut seq)
                 .times(1)
-                .returning(|_| Ok(false));
+                .returning(|_, _| Ok(false));
             pool.expect_repair_mirror_step()
+                .with(always(), eq(true))
                 .in_sequence(&mut seq)
                 .times(2)
-                .returning(|_| Ok(true));
+                .returning(|_, _| Ok(true));
             pool.expect_repair_mirror_step()
+                .with(always(), eq(true))
                 .in_sequence(&mut seq)
                 .times(1)
-                .returning(|_| Ok(false));
+                .returning(|_, _| Ok(false));
             pool.expect_restore()
                 .once()
                 .in_sequence(&mut seq)
@@ -1271,7 +1273,7 @@ mod ddml {
             let wpool = Arc::downgrade(&apool);
             apool.write().await.expect_repair_mirror_step()
                 .times(1)
-                .return_once(move |_| {
+                .return_once(move |_, _| {
                     // Move pool into here.  The first time this function is
                     // called, Pool will be dropped, so the Arc::downgrade
                     // in repair_closed_zones will fail the second time through
@@ -1297,7 +1299,7 @@ mod ddml {
             let wpool = Arc::downgrade(&apool);
             apool.write().await.expect_repair_mirror_step()
                 .times(1)
-                .return_once(move |_| {
+                .return_once(move |_, _| {
                     // Move pool into here.  The first time this function is
                     // called, Pool will be dropped, so the Arc::downgrade
                     // in finalize will fail

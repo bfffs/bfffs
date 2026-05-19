@@ -432,8 +432,12 @@ impl Pool {
         RepairMirrorTask::new(cl_idx, inner_task)
     }
 
-    pub async fn repair_mirror_step(&self, task: &mut RepairMirrorTask) -> Result<bool> {
-        self.clusters[task.cluster_idx].repair_mirror_step(&mut task.task).await
+    pub async fn repair_mirror_step(
+        &self,
+        task: &mut RepairMirrorTask,
+        repair_open_zones: bool) -> Result<bool> {
+        let cl = &self.clusters[task.cluster_idx];
+        cl.repair_mirror_step(&mut task.task, repair_open_zones).await
     }
 
     /// Restore the given disk or Mirror to the Online state

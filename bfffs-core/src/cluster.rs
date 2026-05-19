@@ -26,6 +26,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Keys},
     fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
+    num::NonZeroU64,
     ops::{Range, RangeFrom},
     path::Path,
     pin::Pin,
@@ -223,6 +224,7 @@ impl<'a> FreeSpaceMap {
         self.zones.iter().enumerate().filter_map(move |(i, zone)| {
             let zid = i as ZoneT;
             if !self.empty_zones.contains(&zid) &&
+                txgs.start < TXG_MAX &&
                 (zone.txgs.end > s || self.open_zones.contains_key(&zid))
             {
                 Some(zid)
@@ -456,7 +458,9 @@ impl<'a> FreeSpaceMap {
     /// space.  If `lbas` was zero, return `None`.  If `lbas` was nonzero and
     /// the requested zone has insufficient space, return ENOSPC.
     fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT, lbas: LbaT,
-                 txg: TxgT) -> Result<Option<(ZoneT, LbaT)>> {
+                 txg: TxgT) -> Result<Option<(ZoneT, LbaT)>>
+    {
+        assert!(txg <= TXG_MAX);
         self.dirty_zone(id);
         let idx = id as usize;
         let space = end - start;
@@ -473,7 +477,7 @@ impl<'a> FreeSpaceMap {
         }
         self.zones[idx].total_blocks = space as u32;
         self.zones[idx].freed_blocks = 0;
-        self.zones[idx].txgs = txg..TxgT(u32::MAX);
+        self.zones[idx].txgs = txg..TXG_MAX;
         let oz = OpenZone{start, allocated_blocks: lbas as u32};
         self.empty_zones.remove(&id);
         assert!(self.open_zones.insert(id, oz).is_none(),
@@ -627,6 +631,12 @@ impl<'a> FreeSpaceMap {
             zid, space, oz.allocated_blocks,
             self.zones[zid as usize].total_blocks);
     }
+
+    /// If this zone is Open, return its write pointer, relative to the zone
+    /// start, measured in blocks
+    pub fn write_pointer(&self, zid: ZoneT) -> Option<LbaT> {
+        self.open_zones.get(&zid).map(|oz| LbaT::from(oz.allocated_blocks))
+    }
 }
 
 impl Display for FreeSpaceMap {
@@ -774,6 +784,9 @@ impl SpacemapOnDisk {
             if expected == sod.checksum {
                 Ok(sod)
             } else {
+                tracing::warn!(
+                    "Checksum mismatch in FreeSpaceMap: {:#x} != {:#x}",
+                    expected, sod.checksum);
                 Err(Error::EINTEGRITY)
             }
         })
@@ -1029,7 +1042,7 @@ impl Cluster {
         //RepairMirrorTask::new(self, mirror_idx, txgs)
         // next_txg needs to be low enough to encompass any zones that didn't
         // make it into zones, including those that might not yet be open.
-        let (zones, maxtxg) = self.repair_mirror_gather_zones(txgs);
+        let (zones, maxtxg) = self.repair_mirror_gather_zones(txgs, false);
         let next_txg = if let Some(maxtxg) = maxtxg {
             maxtxg + 1
         } else {
@@ -1053,15 +1066,14 @@ impl Cluster {
     /// Make an ordered list of every zone that might contain data in the
     /// specified transaction range.  Return that list, and also the highest
     /// transaction seen among these zones.
-    // TODO: handle open zones specially
-    // We shouldn't return them at all until the pool is locked.
-    // And we must keep in mind that their max txg is undefined.
-    fn repair_mirror_gather_zones(&self, txgs: RangeFrom<TxgT>) ->
-        (VecDeque<ZoneT>, Option<TxgT>)
+    fn repair_mirror_gather_zones(
+        &self,
+        txgs: RangeFrom<TxgT>,
+        repair_open_zones: bool) -> (VecDeque<ZoneT>, Option<TxgT>)
     {
         let fsm = self.fsm.read().unwrap();
         let mut zones: Vec<ZoneT> = fsm.contains(txgs)
-            .filter(|zid| !fsm.is_open(*zid))
+            .filter(|zid| repair_open_zones || !fsm.is_open(*zid))
             .collect();
         // The list is likely to be partially sorted already, so sort() will
         // probably be faster than sort_unstable()
@@ -1079,18 +1091,29 @@ impl Cluster {
     }
 
     /// Try to repair one Zone.  Return true if there might be more Zones to
-    /// repair.
-    pub async fn repair_mirror_step(&self, task: &mut RepairMirrorTask) -> Result<bool> {
+    /// repair.  Don't repair any OpenZones unless `repair_open_zones` is true.
+    pub async fn repair_mirror_step(
+        &self,
+        task: &mut RepairMirrorTask,
+        repair_open_zones: bool) -> Result<bool>
+    {
         if let Some(zid) = task.zones.pop_front() {
-            {
+            let wp = {
                 let fsm = self.fsm.read().unwrap();
                 if fsm.is_dead(zid) || fsm.is_empty(zid) {
                     // This zone was alive when self was created.  It must've
                     // subsequently died.  Nothing to do here.
                     return Ok(true) ;
                 }
+                fsm.write_pointer(zid)
+            };
+            if wp == Some(0) {
+                // It's unusual but not illegal for an open zone to have zero
+                // allocations.  But if it does, then there's nothing to repair.
+            } else {
+                let lbas = wp.and_then(NonZeroU64::new);
+                self.vdev.repair_mirror_zone(task.mirror_idx, zid, lbas).await?;
             }
-            self.vdev.repair_mirror_zone(task.mirror_idx, zid, None).await?;
             Ok(true)
         } else {
             // We've finished repairing all zones that we knew needed to be
@@ -1098,12 +1121,13 @@ impl Cluster {
             // Generate a new list of zones, excluding all Zones that we've
             // already repaired.
             // Let the caller know whether there are more zones to repair
-            // XXX What about open zones that got repaired in the last round,
-            // and are also included in this one?
-            let (new_zones, maxtxg) = self.repair_mirror_gather_zones(task.next_txg..);
+            let (new_zones, maxtxg) =
+                self.repair_mirror_gather_zones(task.next_txg..,
+                                                repair_open_zones);
             task.zones = new_zones;
             if let Some(maxtxg) = maxtxg {
-                task.next_txg = maxtxg + 1;
+                task.next_txg = maxtxg.checked_add(TxgT::from(1))
+                    .expect("An open zone had an illegal end TXG");
             }
             Ok(!task.zones.is_empty())
         }
@@ -1485,11 +1509,11 @@ mod cluster {
     // 4. An open zone with some freed blocks
     // 6. A trailing empty zone
     // TODO: add dead zones
-    #[test]
+    #[test_log::test]
     fn freespacemap_open() {
         // Serialized spacemap
         const SPACEMAP: [u8; 108] = [
-            0x0b, 0xed, 0xf7, 0xb2, 0xb7, 0x81, 0x79, 0x37, // Checksum
+            0x2d, 0xdd, 0xa6, 0x9e, 0x1b, 0x41, 0x2b, 0xe5, // Checksum
             6, 0, 0, 0,                     // 5 entries
             255, 255, 255, 255,             // zone0: allocated_blocks
             0, 0, 0, 0,                     // zone0: freed blocks
@@ -1505,7 +1529,7 @@ mod cluster {
             0, 0, 0, 0, 1, 0, 0, 0,         // zone3: txgs: 0..1
             77, 0, 0, 0,                    // zone4: allocated_blocks
             33, 0, 0, 0,                    // zone4: freed blocks
-            2, 0, 0, 0, 255, 255, 255, 255, // zone4 txgs: 2..u32::MAX
+            2, 0, 0, 0, 254, 255, 255, 255, // zone4 txgs: 2..TXG_MAX
             0, 0, 0, 0,                     // zone5: allocated_blocks
             0, 0, 0, 0,                     // zone5: freed blocks
             0, 0, 0, 0, 0, 0, 0, 0,         // zone5 txgs: 0..0
@@ -2039,6 +2063,10 @@ mod free_space_map {
 
         let contained = fsm.contains(TxgT::from(5)..).collect::<Vec<_>>();
         assert_eq!(&[2, 4, 5], &contained[..]);
+
+        // TXG_MAX + 1 is illegal; no zone may contain it, even open ones
+        let contained = fsm.contains((TXG_MAX + 1)..).collect::<Vec<_>>();
+        assert!(contained.is_empty());
     }
 
     #[test]
@@ -2661,7 +2689,7 @@ r#"FreeSpaceMap: 1 Zones: 0 Empty, 0 Open, 1 Closed, 0 Dead
     #[test]
     fn serialize() {
         const EXPECTED: [u8; 108] = [
-            61, 213, 211, 6, 223, 126, 49, 158, // Checksum
+            104, 159, 90, 3, 121, 238, 185, 110, // Checksum
             6, 0, 0, 0,                     // 6 ZODs
             255, 255, 255, 255,             // zone0: allocated_blocks
             26, 0, 0, 0,                    // zone0: freed blocks
@@ -2674,7 +2702,7 @@ r#"FreeSpaceMap: 1 Zones: 0 Empty, 0 Open, 1 Closed, 0 Dead
             0, 0, 0, 0, 1, 0, 0, 0,         // zone2: txgs: DON'T CARE..1
             77, 0, 0, 0,                    // zone3: allocated_blocks
             33, 0, 0, 0,                    // zone3: freed blocks
-            2, 0, 0, 0, 255, 255, 255, 255, // zone3 txgs: 2..DON'T CARE
+            2, 0, 0, 0, 254, 255, 255, 255, // zone3 txgs: 2..DON'T CARE
             0, 0, 0, 0,                     // zone4: allocated_blocks
             0, 0, 0, 0,                     // zone4: freed blocks
             0, 0, 0, 0, 1, 0, 0, 0,         // zone4 txgs: DON'T CARE..1
@@ -2812,10 +2840,31 @@ r#"FreeSpaceMap: 1 Zones: 0 Empty, 0 Open, 1 Closed, 0 Dead
         fsm.free(0, 5);
         assert_eq!(fsm.in_use_total(), 6);
     }
+
+    #[test]
+    fn write_pointer() {
+        let mut fsm = FreeSpaceMap::new(32768);
+        // Skip Zone 0.  Let it be empty.
+        // Zone 1 is closed
+        fsm.open_zone(1, 1000, 2000, 100, TxgT::from(1)).unwrap();
+        // Zone 2 will be open
+        fsm.open_zone(2, 2000, 3000, 100, TxgT::from(2)).unwrap();
+        // Zone 3 will be dead.
+        fsm.open_zone(3, 3000, 4000, 100, TxgT::from(3)).unwrap();
+        fsm.finish_zone(3, TxgT::from(4));
+        fsm.free(3, 100);
+        fsm.finish_zone(1, TxgT::from(4));
+
+        assert!(fsm.write_pointer(0).is_none());
+        assert!(fsm.write_pointer(1).is_none());
+        assert_eq!(fsm.write_pointer(2), Some(100));
+        assert!(fsm.write_pointer(3).is_none());
+    }
 }
 
 mod repair_mirror {
     use mockall::predicate::*;
+    use nonzero_ext::nonzero;
     use pretty_assertions::assert_eq;
     use rstest::rstest;
     use super::super::*;
@@ -2892,7 +2941,7 @@ mod repair_mirror {
             cluster.advance_transaction(TxgT::from(6)).await.unwrap();
         }
 
-        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task).await);
+        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task, false).await);
     }
 
     /// After the task finishes repairing its initial batch of Zones, it will
@@ -2942,7 +2991,7 @@ mod repair_mirror {
         let mut task = cluster.repair_mirror(1, TxgT::from(1)..);
 
         // Repair zone 1
-        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task, false).await);
 
         // Write to the cluster, opening an additional zone
         let dbs = DivBufShared::from(vec![0u8; 10 * 4096]);
@@ -2957,13 +3006,72 @@ mod repair_mirror {
         fut2.await.unwrap();
 
         // The next step will gather more Zones, but not repair any
-        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task, false).await);
 
         // This step will repair zone 2
-        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task).await);
+        assert_eq!(Ok(true), cluster.repair_mirror_step(&mut task, false).await);
 
         // Now we should be done.
-        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task).await);
+        assert_eq!(Ok(false), cluster.repair_mirror_step(&mut task, false).await);
+    }
+
+    /// Don't repair any open zones, regardless of txg range, unless the caller
+    /// tells us to.
+    #[tokio::test]
+    async fn open_zones() {
+        let mut vr = MockVdevRaid::default();
+        vr.expect_zones()
+            .return_const(3u32);
+        vr.expect_zone_limits()
+            .with(eq(0))
+            .return_const((1, 1000));
+        vr.expect_zone_limits()
+            .with(eq(1))
+            .return_const((1000, 2000));
+        vr.expect_zone_limits()
+            .with(eq(2))
+            .return_const((2000, 3000));
+        vr.expect_repair_mirror_zone()
+            .once()
+            .with(eq(1), eq(1), eq(None))
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+
+        let mut fsm = FreeSpaceMap::new(vr.zones());
+        // Open Zone 0 first, before the Txg of concern, but don't finish it.
+        fsm.open_zone(0, 1, 1000, 100, TxgT::from(1)).unwrap();
+        // Zone 1 will be closed
+        fsm.open_zone(1, 1000, 2000, 100, TxgT::from(2)).unwrap();
+        fsm.finish_zone(1, TxgT::from(3));
+        // Zone 2 will be opened after the TxgT of concern
+        fsm.open_zone(2, 2000, 3000, 150, TxgT::from(4)).unwrap();
+
+        let mut cl = Cluster::new((fsm, vr.into()));
+        let mut task = cl.repair_mirror(1, TxgT::from(2)..);
+
+        // Repair zone 1
+        assert_eq!(Ok(true), cl.repair_mirror_step(&mut task, false).await);
+        // All non-open zones have been repaired now
+        assert_eq!(Ok(false), cl.repair_mirror_step(&mut task, false).await);
+
+        // But there are still open zones to repair
+        if let RaidImpl::Mock(vr) = &mut cl.vdev {
+            vr.checkpoint();
+            vr.expect_repair_mirror_zone()
+                .once()
+                .with(eq(1), eq(0), eq(Some(nonzero!(100u64))))
+                .return_once(|_, _, _| Box::pin(future::ok(())));
+            vr.expect_repair_mirror_zone()
+                .once()
+                .with(eq(1), eq(2), eq(Some(nonzero!(150u64))))
+                .return_once(|_, _, _| Box::pin(future::ok(())));
+        } else {
+            unreachable!()
+        };
+
+        assert_eq!(Ok(true), cl.repair_mirror_step(&mut task, true).await);
+        assert_eq!(Ok(true), cl.repair_mirror_step(&mut task, true).await);
+        assert_eq!(Ok(true), cl.repair_mirror_step(&mut task, true).await);
+        assert_eq!(Ok(false), cl.repair_mirror_step(&mut task, true).await);
     }
 }
 }
