@@ -7,7 +7,7 @@ use std::{
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
-    vdev::{FaultedReason, Health},
+    vdev::{FaultedReason, Health, Vdev},
     Error,
     LbaT,
     TxgT,
@@ -32,7 +32,7 @@ fn harness() -> Harness {
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    let mirror = Mirror::create(&paths, None).unwrap();
+    let mirror = Mirror::create(&paths, Some(nonzero!(32u64))).unwrap();
     (mirror, tempdir, paths)
 }
 
@@ -227,5 +227,46 @@ mod read_long {
         assert_eq!(&vec![111; BYTES_PER_LBA][..], &reconstructions[1][..]);
         assert_eq!(&vec![112; BYTES_PER_LBA][..], &reconstructions[2][..]);
         assert!(reconstructor.next().is_none());
+    }
+}
+
+mod repair_zone {
+    use super::*;
+    use divbuf::DivBufShared;
+
+    #[rstest]
+    #[tokio::test]
+    async fn basic(harness: Harness) {
+        let (mut mirror, _tempdir, _paths) = harness;
+        let stat = mirror.status();
+        let uuid0 = stat.leaves[0].uuid;
+        let uuid1 = stat.leaves[1].uuid;
+        let uuid2 = stat.leaves[2].uuid;
+        let zone = 1;
+        let (start, _end) = mirror.zone_limits(zone);
+
+        // Fault one disk
+        mirror.fault(uuid0).unwrap();
+
+        // Write some data to the mirror.
+        let dbs = DivBufShared::from(vec![42u8; BYTES_PER_LBA]);
+        mirror.write_at(dbs.try_const().unwrap(), start).await.unwrap();
+
+        // Mark the faulted disk as rebuilding
+        mirror.rebuild(uuid0).unwrap();
+
+        // Repair the zone
+        mirror.repair_zone(zone, None).await.unwrap();
+
+        // Restore the mirror
+        mirror.restore();
+
+        // Verify by faulting the other disks and reading from the repaired one.
+        mirror.fault(uuid1).unwrap();
+        mirror.fault(uuid2).unwrap();
+        let mut dbm = dbs.try_mut().unwrap();
+        dbm.fill(0);
+        mirror.read_at(dbm, start).await.unwrap();
+        assert_eq!(&dbs.try_const().unwrap()[..], &vec![42u8; BYTES_PER_LBA][..]);
     }
 }
