@@ -83,8 +83,13 @@ impl LabelReader {
             &buffer[length_start .. contents_start]);
         let mut hasher = MetroHash64::new();
         {
-            let contents = &buffer[contents_start ..
-                               contents_start + contents_len as usize];
+            let csl = contents_start ..  contents_start + contents_len as usize;
+            let contents = if let Some(sl) = buffer.get(csl) {
+                sl
+            } else {
+                tracing::warn!("Label too large");
+                return Err(Error::EINVAL);
+            };
             contents_len.to_be().hash(&mut hasher);
             hasher.write(contents);
         }

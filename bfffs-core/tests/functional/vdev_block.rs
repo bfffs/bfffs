@@ -192,6 +192,32 @@ mod persistence {
         let _ = harness.1;
     }
 
+    /// Open a device that with a corrupt label that somehow has a valid
+    /// checksum but a bogus contents_len
+    #[rstest]
+    #[test_log::test(tokio::test)]
+    async fn open_bad_contents_len(harness: Harness) {
+        {
+            let f = std::fs::OpenOptions::new()
+                .write(true)
+                .open(harness.0.clone()).unwrap();
+            let offset0 = 0;
+            f.write_all_at(&GOLDEN, offset0).unwrap();
+            let offset1 = 4 * BYTES_PER_LBA as u64;
+            f.write_all_at(&GOLDEN, offset1).unwrap();
+            // bad_len is just long enough that the entire label will exceed
+            // 4 LBAs
+            let bad_len = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0x3f, 0xe1];
+            f.write_all_at(&bad_len, offset0 + 24).unwrap();
+            f.write_all_at(&bad_len, offset1 + 24).unwrap();
+        }
+        let mut manager = Manager::default();
+        let e = manager.taste(&harness.0).await
+            .err()
+            .expect("Opening the file should've failed");
+        assert_eq!(e, Error::EINVAL);
+    }
+
     // Open a device with only corrupted labels
     #[rstest]
     #[tokio::test]
