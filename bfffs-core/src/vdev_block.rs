@@ -411,6 +411,9 @@ struct Inner {
     /// reference to `self`, but also require `'static` lifetime.
     weakself: Weak<RwLock<Inner>>,
 
+    /// The most recently synced transaction group on this VdevBlock
+    txg:            AtomicU32,
+
     /// Underlying device.
     #[cfg(not(test))]
     leaf: VdevLeaf<'static>,
@@ -665,6 +668,7 @@ pub struct VdevBlockFut {
     inner: Arc<RwLock<Inner>>,
     #[pin]
     receiver: oneshot::Receiver<Result<()>>,
+    txg: Option<TxgT>
 }
 
 impl Future for VdevBlockFut {
@@ -675,11 +679,22 @@ impl Future for VdevBlockFut {
             let block_op = self.block_op.take().unwrap();
             self.inner.write().unwrap().sched_and_issue(block_op, cx);
         }
-        match self.project().receiver.poll(cx) {
-            Poll::Ready(Ok(Ok(()))) => Poll::Ready(Ok(())),
+        let projection = self.project();
+        match projection.receiver.poll(cx) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(_)) => Poll::Ready(Err(Error::EPIPE)),
-            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(e))
+            Poll::Ready(Ok(Err(e))) => Poll::Ready(Err(e)),
+            Poll::Ready(Ok(Ok(()))) => {
+                if let Some(txg) = projection.txg.take() {
+                    // TODO: change Ordering appropriately.  See
+                    // Mirror::status().
+                    projection.inner.read()
+                        .unwrap()
+                        .txg
+                        .store(txg.into(), atomic::Ordering::Relaxed);
+                }
+                Poll::Ready(Ok(()))
+            },
         }
     }
 }
@@ -728,9 +743,6 @@ pub struct VdevBlock {
 
     /// Last known path for this Vdev
     path: PathBuf,
-
-    /// The most recently synced transaction group on this VdevBlock
-    txg:            AtomicU32,
 
     uuid:           Uuid,
 }
@@ -794,6 +806,7 @@ impl VdevBlock {
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new(),
+            txg,
             leaf,
             _device: device
         }));
@@ -805,7 +818,6 @@ impl VdevBlock {
             lbas_per_zone,
             uuid,
             path: path.as_ref().to_owned(),
-            txg
         })
     }
 
@@ -829,6 +841,7 @@ impl VdevBlock {
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new(),
+            txg,
             leaf,
             _device: device
         }));
@@ -840,7 +853,6 @@ impl VdevBlock {
             lbas_per_zone,
             uuid,
             path: PathBuf::new(),
-            txg
         }
     }
 
@@ -867,7 +879,7 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// Asynchronously finish a zone on a block device
@@ -892,15 +904,18 @@ impl VdevBlock {
             debug_assert_eq!(end, limits.1 - 1);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     fn new_fut(&self, block_op: BlockOp,
-               receiver: oneshot::Receiver<Result<()>>) -> VdevBlockFut {
+               receiver: oneshot::Receiver<Result<()>>,
+               txg: Option<TxgT>) -> VdevBlockFut
+    {
         VdevBlockFut {
             block_op: Some(block_op),
             inner: self.inner.clone(),
-            receiver
+            receiver,
+            txg
         }
     }
 
@@ -923,7 +938,7 @@ impl VdevBlock {
             debug_assert_eq!(start, limits.0);
         }
 
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// Instantiate a new VdevBlock from an already formatted VdevLeaf.
@@ -961,6 +976,7 @@ impl VdevBlock {
             ahead: BinaryHeap::new(),
             behind: BinaryHeap::new(),
             weakself: Weak::new(),
+            txg: AtomicU32::new(txg.into()),
             leaf,
             _device: device
         }));
@@ -972,7 +988,6 @@ impl VdevBlock {
             lbas_per_zone,
             uuid,
             path,
-            txg: AtomicU32::new(txg.into())
         }
     }
 
@@ -990,7 +1005,7 @@ impl VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::read_at(buf, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// Read the entire serialized spacemap.  `idx` selects which spacemap to
@@ -1002,7 +1017,7 @@ impl VdevBlock {
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let lba = LbaT::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let block_op = BlockOp::read_spacemap(buf, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// The asynchronous scatter/gather read function.
@@ -1019,7 +1034,7 @@ impl VdevBlock {
         self.check_sglist_bounds(lba, &bufs);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::readv_at(bufs, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// Remove this device from the pool.
@@ -1052,12 +1067,15 @@ impl VdevBlock {
     pub fn sync_all(&self) -> VdevBlockFut {
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::sync_all(sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// Get the most recently synced transaction group on this disk
     pub fn txg(&self) -> TxgT {
-        self.txg.load(atomic::Ordering::Relaxed).into()
+        self.inner.read()
+            .unwrap()
+            .txg
+            .load(atomic::Ordering::Relaxed).into()
     }
 
     pub fn uuid(&self) -> Uuid {
@@ -1072,7 +1090,7 @@ impl VdevBlock {
         self.check_iovec_bounds(lba, &buf);
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_at(buf, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
@@ -1088,11 +1106,7 @@ impl VdevBlock {
         labeller.serialize(&label).unwrap();
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let block_op = BlockOp::write_label(labeller, sender);
-        // Use Relaxed ordering for now, because I'm not sure if this will
-        // _ever_ be read.
-        // TODO: change Ordering appropriately.  See Mirror::status().
-        self.txg.store(txg.into(), atomic::Ordering::Relaxed);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, Some(txg))
     }
 
     pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -1103,7 +1117,7 @@ impl VdevBlock {
         let sglist = copy_and_pad_sglist(sglist);
         let lba = block + u64::from(idx) * self.spacemap_space + 2 * LABEL_LBAS;
         let block_op = BlockOp::write_spacemap(sglist, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 
     /// The asynchronous scatter/gather write function.
@@ -1120,7 +1134,7 @@ impl VdevBlock {
         let (sender, receiver) = oneshot::channel::<Result<()>>();
         let sglist = copy_and_pad_sglist(bufs);
         let block_op = BlockOp::writev_at(sglist, lba, sender);
-        self.new_fut(block_op, receiver)
+        self.new_fut(block_op, receiver, None)
     }
 }
 
@@ -2660,6 +2674,24 @@ mod t {
             let vdev = VdevBlock::from_leaf(leaf);
 
             assert_eq!(Err(Error::ENXIO), vdev.write_at(wbuf, 1).await);
+        }
+
+        /// write_label will update the vdev's Txg only after it completes
+        #[rstest]
+        #[tokio::test]
+        async fn write_label(mut leaf: MockVdevFile) {
+            leaf.expect_write_label()
+                .once()
+                .returning(|_| Box::pin(future::ok::<(), Error>(())));
+
+            let vdev = VdevBlock::from_leaf(leaf);
+            let lw = LabelWriter::new(0);
+            let txg = TxgT::from(42);
+
+            let fut = vdev.write_label(lw, txg);
+            assert!(txg != vdev.txg());
+            fut.await.unwrap();
+            assert_eq!(txg, vdev.txg());
         }
 
         // vectored writing works
