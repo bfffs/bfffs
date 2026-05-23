@@ -16,7 +16,7 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
- * VdevBlock:   variable    speedy-encoded vdev_block::Block
+ * VdevBlock:   variable    speedy-encoded vdev_block::Label
  * Mirror:      variable    speedy-encoded mirror::Label
  * VdevRaid:    variable    speedy-encoded vdev_raid::Label
  * Pool:        variable    speedy-encoded pool::Label
