@@ -20,7 +20,7 @@ use nix::{
 };
 use regex::Regex;
 use tempfile::{Builder, TempDir};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 pub mod util {
     include!("../../tests/integration/util.rs");
 }
@@ -256,9 +256,13 @@ async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
 async fn main() {
     require_fusefs!();
 
+    let filter = EnvFilter::builder()
+        .with_env_var("BFFFS_LOG")
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
     tracing_subscriber::fmt()
         .pretty()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .init();
     let cli: Cli = Cli::parse();
 

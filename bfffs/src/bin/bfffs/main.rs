@@ -19,7 +19,7 @@ use bfffs_core::{
 use clap::{crate_version, ArgAction, Parser};
 use futures::{future, TryFutureExt, TryStreamExt};
 use thiserror::Error;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{filter::LevelFilter, EnvFilter};
 
 mod pool_create_ast;
 
@@ -987,9 +987,13 @@ struct Cli {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    let filter = EnvFilter::builder()
+        .with_env_var("BFFFS_LOG")
+        .with_default_directive(LevelFilter::WARN.into())
+        .from_env_lossy();
     tracing_subscriber::fmt()
         .pretty()
-        .with_env_filter(EnvFilter::from_default_env())
+        .with_env_filter(filter)
         .init();
     let cli: Cli = Cli::parse();
     let r = match cli.cmd {
