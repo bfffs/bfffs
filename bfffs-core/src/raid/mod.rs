@@ -156,6 +156,9 @@ pub struct Status {
     pub health: Health,
     pub codec: String,
     pub mirrors: Vec<mirror::Status>,
+    /// Is a RAID rebuild in progress (not a mirror rebuild)?
+    /// TODO: add a TXG number.
+    pub rebuilding: bool,
     pub uuid: Uuid
 }
 
@@ -239,11 +242,15 @@ mock!{
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
+        fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut;
+        fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
+        fn restore(&mut self, mirror_idx: usize) -> Result<()>;
         fn status(&self) -> Status;
         fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
-        fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut;
         fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             -> BoxVdevFut;
     }

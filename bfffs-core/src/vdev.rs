@@ -34,9 +34,6 @@ pub enum Health {
     Online,
     /// Operating with reduced redundancy
     Degraded(NonZeroU8),
-    /// Rebuild in progress.  Not all data is present.  Reads may not be
-    /// possible.
-    Rebuilding,
     /// Faulted.  No I/O is possible
     Faulted(FaultedReason),
 }
@@ -61,7 +58,6 @@ impl fmt::Display for Health {
         match *self {
             Self::Online => "Online".fmt(f),
             Self::Degraded(n) => write!(f, "Degraded({n})"),
-            Self::Rebuilding => "Rebuilding".fmt(f),
             Self::Faulted(FaultedReason::Removed) => "Faulted(removed)".fmt(f),
             Self::Faulted(FaultedReason::User) => "Faulted(administratively)".fmt(f),
             // InsufficientRedundancy can't occur for leaves, and it's obvious
@@ -134,7 +130,6 @@ mod t {
         assert!(Health::Degraded(nonzero!(1u8)) <
                 Health::Degraded(nonzero!(2u8)));
         assert!(Health::Degraded(nonzero!(2u8)) <
-                Health::Rebuilding);
-        assert!(Health::Rebuilding < Health::Faulted(FaultedReason::Removed));
+                Health::Faulted(FaultedReason::Removed));
     }
 }

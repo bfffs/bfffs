@@ -106,7 +106,7 @@ mod persistence {
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         (idml, ph.tempdir, ph.paths)
     }
@@ -156,7 +156,7 @@ mod persistence {
         let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, mirror, raid, cluster, and pool labels
-        f.seek(SeekFrom::Start(192)).unwrap();
+        f.seek(SeekFrom::Start(196)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {
@@ -194,7 +194,7 @@ mod t {
             .name(POOLNAME)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         (idml, ph.tempdir)
     }

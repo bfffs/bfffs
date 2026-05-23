@@ -310,11 +310,21 @@ impl From<Error> for i32 {
 
 pub type Result<T> = ::std::result::Result<T, Error>;
 
+/// The maximum legal transaction group
+pub const TXG_MAX: TxgT = TxgT(u32::MAX - 1);
+
 /// Transaction numbers.
 // 32-bits is enough for 1 per second for 100 years
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd,
          Readable, Serialize, Writable)]
+#[cfg_attr(test, derive(Default))]
 pub struct TxgT(pub u32);
+
+impl TxgT {
+    pub fn checked_add(self, rhs: Self) -> Option<Self> {
+        self.0.checked_add(rhs.0).map(Self)
+    }
+}
 
 impl Add<u32> for TxgT {
     type Output = Self;

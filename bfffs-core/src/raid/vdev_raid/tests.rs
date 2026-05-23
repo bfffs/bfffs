@@ -1028,7 +1028,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Degraded(nonzero!(1u8)),
                 leaves: Vec::new(),
-                uuid: m0_uuid
+                uuid: m0_uuid,
+                rebuilding: None,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = m1.uuid();
@@ -1039,7 +1040,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m1_uuid
+                uuid: m1_uuid,
+                rebuilding: None,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = m2.uuid();
@@ -1050,7 +1052,8 @@ mod fault {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m2_uuid
+                uuid: m2_uuid,
+                rebuilding: None,
             });
         mirrors.push(Child::present(m0));
         mirrors.push(Child::present(m1));
@@ -1621,7 +1624,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m0_uuid
+                uuid: m0_uuid,
+                rebuilding: None,
             });
         let mut m1 = mock_mirror();
         let m1_uuid = Uuid::new_v4();
@@ -1631,7 +1635,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Online,
                 leaves: Vec::new(),
-                uuid: m1_uuid
+                uuid: m1_uuid,
+                rebuilding: None,
             });
         let mut m2 = mock_mirror();
         let m2_uuid = Uuid::new_v4();
@@ -1641,7 +1646,8 @@ mod open {
             .return_const(mirror::Status {
                 health: Health::Faulted(FaultedReason::User),
                 leaves: Vec::new(),
-                uuid: m2_uuid
+                uuid: m2_uuid,
+                rebuilding: None,
             });
         let label = vdev_raid::Label {
             uuid: Uuid::new_v4(),
@@ -1676,7 +1682,8 @@ mod open {
                 .return_const(mirror::Status {
                     health: Health::Online,
                     leaves: Vec::new(),
-                    uuid: *child_uuid
+                    uuid: *child_uuid,
+                    rebuilding: None,
                 });
             m
         }
@@ -2203,6 +2210,275 @@ mod read_at {
 
 }
 
+mod repair_mirror_zone {
+    use super::*;
+
+    fn mock_mirror2(health: Health, rebuilding: Option<u32>) -> Mirror {
+        let rebuilding = rebuilding.map(TxgT::from);
+        let mut m = mock_mirror();
+        m.expect_status()
+            .returning(move || mirror::Status {
+                health,
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding,
+            });
+        m
+    }
+
+    /// A VdevRaid with one faulted child and one rebuilding child should
+    /// still be able to repair the rebuilding child.  Faulted children should
+    /// not get repair_mirror_zone operations.
+    #[test]
+    fn one_faulted_child() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+
+        let m0 = mock_mirror2(Health::Online, None);
+        mirrors.push(Child::present(m0));
+
+        let mut m1 = mock_mirror2(Health::Degraded(nonzero!(1u8)), Some(0));
+        m1.expect_repair_zone()
+            .once()
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+        mirrors.push(Child::present(m1));
+
+        let m2 = mock_mirror2(Health::Faulted(FaultedReason::Removed), None);
+        mirrors.push(Child::present(m2));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.repair_mirror_zone(1, 2, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+    }
+
+    /// When rebuilding an open zone, VdevRaid must carefully calculate which
+    /// LBAs to rebuild on the degraded child.
+    /// The PRIME-S-5,3,1 layout looks like this:
+    /// D0.0  D0.1  C0.0  D1.1  C1.0 
+    /// D2.1  C2.0  D1.0  C3.0  D2.0 
+    /// C4.0  D3.0  D3.1  D4.0  D4.1 
+    /// D5.0  D6.1  D5.1  C6.0  C5.0 
+    /// D7.1  C8.0  C7.0  D7.0  D6.0 
+    /// C9.0  D9.0  D8.0  D9.1  D8.1 
+    /// D10.0 C10.0 C11.0 D10.1 D11.1
+    /// D12.1 D11.0 D12.0 C12.0 C13.0
+    /// C14.0 D13.1 D14.1 D13.0 D14.0
+    /// D15.0 C16.0 D16.1 C15.0 D15.1
+    /// D17.1 D17.0 C18.0 D16.0 C17.0
+    /// C19.0 D19.1 D19.0 D18.1 D18.0
+    #[rstest]
+    #[case::less_than_one_stripe( nonzero!(3u64),  None)]
+    #[case::one_stripe(           nonzero!(4u64),  Some(nonzero!(2u64)))]
+    #[case::one_stripe_and_change(nonzero!(5u64),  Some(nonzero!(2u64)))]
+    #[case::two_stripes(          nonzero!(8u64),  Some(nonzero!(4u64)))]
+    #[case::three_stripes(        nonzero!(12u64), Some(nonzero!(4u64)))]
+    #[case::four_stripes(         nonzero!(16u64), Some(nonzero!(6u64)))]
+    #[case::five_stripes(         nonzero!(20u64), Some(nonzero!(6u64)))]
+    fn open_zone(
+        #[case] raid_lbas: NonZeroU64,
+        #[case]mirror_lbas: Option<NonZeroU64>)
+    {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+
+        let mut mirrors = Vec::<Child>::new();
+        mirrors.push(Child::present(mock_mirror2(Health::Online, None)));
+        mirrors.push(Child::present(mock_mirror2(Health::Online, None)));
+        let mut m2 = mock_mirror2(Health::Degraded(nonzero!(1u8)), Some(0));
+        if mirror_lbas.is_some() {
+            m2.expect_repair_zone()
+                .once()
+                .with(eq(2), eq(mirror_lbas))
+                .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+        }
+        mirrors.push(Child::present(m2));
+        mirrors.push(Child::present(mock_mirror2(Health::Online, None)));
+        mirrors.push(Child::present(mock_mirror2(Health::Online, None)));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.repair_mirror_zone(2, 2, Some(raid_lbas))
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+    }
+
+    /// A VdevRaid with one missing child and one rebuilding child should
+    /// still be able to repair the rebuilding child.
+    #[test]
+    fn one_missing_child() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+        let mut m0 = mock_mirror();
+        m0.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: None,
+            });
+
+        mirrors.push(Child::present(m0));
+        let mut m1 = mock_mirror();
+        m1.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Degraded(nonzero!(1u8)),
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: Some(TxgT::from(0)),
+            });
+        m1.expect_repair_zone()
+            .once()
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+        mirrors.push(Child::present(m1));
+        mirrors.push(Child::missing(Uuid::new_v4()));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.repair_mirror_zone(1, 2, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+    }
+
+    /// A VdevRaid with one rebuilding child should forward repair_mirror_zone
+    /// to that child alone, at the correct zones.
+    #[test]
+    fn one_rebuilding_child() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+        let mut m0 = mock_mirror();
+        m0.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: None
+            });
+
+        mirrors.push(Child::present(m0));
+        let mut m1 = mock_mirror();
+        m1.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Degraded(nonzero!(1u8)),
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: Some(TxgT::from(0))
+            });
+        m1.expect_repair_zone()
+            .once()
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+        mirrors.push(Child::present(m1));
+        let mut m2 = mock_mirror();
+        m2.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: None
+            });
+        mirrors.push(Child::present(m2));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.repair_mirror_zone(1, 2, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+    }
+
+    /// A VdevRaid with two rebuilding children should forward
+    /// repair_mirror_zone to those children, at the correct zones.
+    // TODO: this test is kind of dumb, since "First attempt at Cluster::repair"
+    // moved the which-child-to-rebuild logic up from VdevRaid to Cluster.
+    // Remove the test?
+    #[test]
+    fn two_rebuilding_children() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE : LbaT = 2;
+
+        let mut mirrors = Vec::<Child>::new();
+        let mut m0 = mock_mirror();
+        m0.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Online,
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: None,
+            });
+
+        mirrors.push(Child::present(m0));
+        let mut m1 = mock_mirror();
+        m1.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Degraded(nonzero!(1u8)),
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: Some(TxgT::from(0)),
+            });
+        m1.expect_repair_zone()
+            .once()
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+
+        mirrors.push(Child::present(m1));
+        let mut m2 = mock_mirror();
+        m2.expect_status()
+            .returning(|| mirror::Status {
+                health: Health::Degraded(nonzero!(1u8)),
+                leaves: Vec::new(),
+                uuid: Uuid::new_v4(),
+                rebuilding: Some(TxgT::from(0)),
+            });
+        m2.expect_repair_zone()
+            .once()
+            .with(eq(2), eq(None))
+            .returning(|_, _| Box::pin(future::ok::<(), Error>(())));
+        mirrors.push(Child::present(m2));
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        vdev_raid.repair_mirror_zone(1, 2, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+        vdev_raid.repair_mirror_zone(2, 2, None)
+            .now_or_never()
+            .unwrap()
+            .unwrap();
+    }
+}
+
 mod status {
     use super::*;
 
@@ -2216,8 +2492,6 @@ mod status {
     #[case(Online, vec![Online, Online, Online])]
     #[case(Degraded(nonzero!(3u8)),
         vec![Online, Online, Faulted(FaultedReason::Removed)])]
-    #[case(Degraded(nonzero!(3u8)),
-        vec![Online, Rebuilding, Online])]
     #[case(Degraded(nonzero!(1u8)),
         vec![Degraded(nonzero!(1u8)), Online, Online])]
     #[case(Degraded(nonzero!(2u8)),
@@ -2252,7 +2526,8 @@ mod status {
                 .return_const(crate::mirror::Status {
                     health: mirror_health,
                     leaves,
-                    uuid: muuid
+                    uuid: muuid,
+                    rebuilding: None,
                 });
             match mirror_health {
                 Health::Faulted(_) => Child::faulted(m),

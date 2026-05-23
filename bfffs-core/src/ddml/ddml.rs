@@ -3,7 +3,7 @@ use crate::{
     cache::{self, Cache, Key},
     dml::*,
     label::*,
-    pool::ClosedZone,
+    pool::{self, ClosedZone},
     types::*,
     util::*,
     writeback::Credit
@@ -21,7 +21,7 @@ use std::{
     hash::Hasher,
     mem,
     pin::Pin,
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex, Weak}
 };
 use super::{DRP, Status};
 use tracing::instrument;
@@ -61,6 +61,101 @@ impl Iterator for ListClosedZones {
     }
 }
 
+struct MirrorRepairTask {
+    cl_idx: usize,
+    m_idx: usize,
+    wpool: Weak<RwLock<Pool>>,
+    pool_task: pool::RepairMirrorTask
+}
+
+impl MirrorRepairTask {
+    async fn initialize(
+        wpool: Weak<RwLock<Pool>>,
+        txg: TxgT,
+        cl_idx: usize,
+        m_idx: usize) -> Option<Self>
+    {
+        if let Some(pool) = wpool.upgrade() {
+            let pool_guard = pool.read().await;
+            let pool_task = pool_guard.repair_mirror(cl_idx, m_idx, txg..);
+            Some(Self { wpool, cl_idx, m_idx, pool_task })
+        } else {
+            // pool got dropped.  Probably bfffs is shutting down
+            None
+        }
+    }
+
+    /// Iteratively repair all closed zones in the transaction range
+    async fn repair_closed_zones(&mut self) -> Result<()> {
+        loop {
+            if let Some(pool) = self.wpool.upgrade() {
+                let more = pool.read().await
+                    .repair_mirror_step(&mut self.pool_task, false).await?;
+                // TODO: write the label on the repairing device, if this
+                // step finished a transaction, and if there aren't any Open
+                // Zones with a start Txg lower than this one.
+                if !more {
+                    break;
+                }
+            } else {
+                tracing::debug!(
+                    "Pool got dropped with an active MirrorRebuildTask");
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    /// Finish rebuilding the Pool, keeping it locked so as to prevent other
+    /// tasks from accessing it.  Restore the degraded component to a fully
+    /// functional state.
+    async fn finalize(&mut self) -> Result<()> {
+        if let Some(pool) = self.wpool.upgrade() {
+            let mut pool_guard = pool.write().await;
+            loop {
+                if !pool_guard.repair_mirror_step(&mut self.pool_task, true)
+                    .await?
+                {
+                    break;
+                }
+            }
+            pool_guard.restore(self.cl_idx, self.m_idx)?;
+        } else {
+            tracing::debug!(
+                "Pool got dropped with an active MirrorRebuildTask");
+        }
+        Ok(())
+    }
+
+    pub fn spawn(pool: &Arc<RwLock<Pool>>, txg: TxgT, cl_idx: usize, m_idx: usize)
+    {
+        // Outline:
+        // * Start a mirror rebuild on the Pool.
+        // * Continue to rebuild, passing the supplied bookmark, until
+        //   Pool::rebuild returns None.  Make sure to drop the lock in between
+        //   each iteration so we don't block other DDML operations that need
+        //   writable access to the pool, like DDML::fault, for too long.
+        // * Once Pool::repair_mirror returns None, lock the pool exclusively:
+        //   - Rebuild any Zones that have been modified since the last
+        //     Pool::repair_mirror operation completed.  Maybe we'll have to
+        //     rebuild any open Zones?
+        //   - Restore the rebuilding vdev to the Online state.
+        let wpool = Arc::downgrade(pool);
+        tokio::spawn( async move {
+            let task = Self::initialize(wpool, txg, cl_idx, m_idx).await;
+            if let Some(mut task) = task {
+                if let Err(e) = task.repair_closed_zones().await {
+                    tracing::warn!("MirrorRebuildTask failed: {}", e);
+                    return;
+                }
+                if let Err(e) = task.finalize().await {
+                    tracing::warn!("MirrorRebuildTask failed: {}", e);
+                }
+            }
+        });
+    }
+}
+
 /// Direct Data Management Layer for a single `Pool`
 pub struct DDML {
     // Sadly, the Cache needs to be Mutex-protected because updating the LRU
@@ -68,7 +163,9 @@ pub struct DDML {
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
     cache: Arc<Mutex<Cache>>,
-    pool: RwLock<Pool>,
+    // We'll never use Arc::clone, and very rarely use Arc::downgrade, so the
+    // performance impact of the Arc should be minimal.
+    pool: Arc<RwLock<Pool>>,
     pool_name: String
 }
 
@@ -91,6 +188,11 @@ impl DDML {
     {
         self.pool.read()
             .map(move |pool| pool.assert_clean_zone(cluster, zone, txg))
+    }
+
+    /// Create a new DDML from a freshly-formatted Pool
+    pub fn create(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+        DDML::new(pool, cache)
     }
 
     /// Free a record's storage, ignoring the Cache
@@ -119,9 +221,9 @@ impl DDML {
             .then(move |pool| pool.flush(idx))
     }
 
-    pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
+    fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
         let pool_name = pool.name().to_owned();
-        DDML{pool: RwLock::new(pool), cache, pool_name}
+        DDML{pool: Arc::new(RwLock::new(pool)), cache, pool_name}
     }
 
     /// Get directly from disk, bypassing cache
@@ -223,7 +325,10 @@ impl DDML {
     /// * `cache`:      An already constructed `Cache`
     /// * `pool`:       An already constructed `Pool`
     pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
-        DDML::new(pool, cache)
+        let pool_status = pool.status();
+        let ddml = DDML::new(pool, cache);
+        ddml.repair_all(pool_status);
+        ddml
     }
 
     /// Read a record and return ownership of it, bypassing Cache
@@ -294,6 +399,17 @@ impl DDML {
         self.put_common(cacheref, compression, txg)
     }
 
+    /// Begin a repair task for any vdev that needs it
+    fn repair_all(&self, pool_status: pool::Status) {
+        for (cl_idx, cl) in pool_status.clusters.iter().enumerate() {
+            for (m_idx, m) in cl.mirrors.iter().enumerate() {
+                if let Some(rtxg) = m.rebuilding {
+                    MirrorRepairTask::spawn(&self.pool, rtxg, cl_idx, m_idx)
+                }
+            }
+        }
+    }
+
     /// Return approximately the usable storage space in LBAs.
     // NB: consider combining into one method with DDML::used, because they're
     // frequently used together, to reduce lock activity.
@@ -310,11 +426,11 @@ impl DDML {
         self.pool.read().map(|p| p.used())
     }
 
-    pub fn write_label(&self, labeller: LabelWriter)
+    pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send
     {
         self.pool.read()
-            .then(move |pool| pool.write_label(labeller))
+            .then(move |pool| pool.write_label(labeller, txg))
     }
 }
 
@@ -367,7 +483,7 @@ impl DML for DDML {
         })
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, cacheable))]
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr>> + Send>>
@@ -410,7 +526,7 @@ mock! {
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;
-        pub fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
+        fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self;
         pub fn get_direct<T: Cacheable>(&self, drp: &DRP)
             -> Pin<Box<dyn Future<Output=Result<Box<T>>> + Send>>;
         pub fn list_closed_zones(&self)
@@ -426,7 +542,7 @@ mock! {
         pub fn size(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
         pub fn status(&self) -> Pin<Box<dyn Future<Output=Status> + Send>>;
         pub fn used(&self) -> Pin<Box<dyn Future<Output=LbaT> + Send>>;
-        pub fn write_label(&self, labeller: LabelWriter)
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;
     }
     impl DML for DDML {
@@ -1064,6 +1180,190 @@ mod ddml {
         assert!(ddml.sync_all(TxgT::from(0))
                 .now_or_never().unwrap()
                 .is_ok());
+    }
+
+    mod mirror_repair_task {
+        use super::*;
+        use pretty_assertions::assert_eq;
+
+        // TODO:
+        // [ ] Something writes labels
+        /// MirrorRepairTask::repair_closed_zones will iterate until
+        /// completion.
+        #[tokio::test]
+        async fn repair_closed_zones() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(2)
+                .returning(|_, _| Ok(true));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_, _| Ok(false));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+        }
+
+        /// If the repair fails with an error while the pool is locked shared,
+        /// nothing bad should happen
+        #[tokio::test]
+        async fn error_before_finalize() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .once()
+                .returning(|_, _| Err(Error::EDOOFUS));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            assert_eq!(Err(Error::EDOOFUS), task.repair_closed_zones().await);
+        }
+
+        /// If the repair fails with an error while the pool is locked shared,
+        /// nothing bad should happen
+        #[tokio::test]
+        async fn error_during_finalize() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_, _| Ok(false));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _| Err(Error::EDOOFUS));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+            assert_eq!(Err(Error::EDOOFUS), task.finalize().await);
+        }
+
+        /// MirrorRepairTask::finalize will iterate until
+        /// completion, then restore the rebuilt device
+        #[tokio::test]
+        async fn finalize() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .with(always(), eq(false))
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_, _| Ok(false));
+            pool.expect_repair_mirror_step()
+                .with(always(), eq(true))
+                .in_sequence(&mut seq)
+                .times(2)
+                .returning(|_, _| Ok(true));
+            pool.expect_repair_mirror_step()
+                .with(always(), eq(true))
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_, _| Ok(false));
+            pool.expect_restore()
+                .once()
+                .in_sequence(&mut seq)
+                .return_const(Ok(()));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+            task.finalize().await.unwrap();
+        }
+
+        /// If the Pool gets dropped before initialize, nothing bad should
+        /// happen.
+        #[tokio::test]
+        async fn drop_before_initialize() {
+            let pool = mock_pool();
+
+            let pool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&pool);
+            drop(pool);
+            assert!(MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.is_none());
+        }
+
+        /// If the Pool gets dropped while closed zones are being repaired,
+        /// nothing bad should happen.
+        #[tokio::test]
+        async fn drop_during_repair_closed_zones() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            let apool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&apool);
+            apool.write().await.expect_repair_mirror_step()
+                .times(1)
+                .return_once(move |_, _| {
+                    // Move pool into here.  The first time this function is
+                    // called, Pool will be dropped, so the Arc::downgrade
+                    // in repair_closed_zones will fail the second time through
+                    // the loop.
+                    drop(apool);
+                    Ok(true)
+                });
+
+            let mut task = MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+        }
+
+        /// If the Pool gets dropped just before the repair task finalizes the
+        /// repair, nothing bad should happen
+        #[tokio::test]
+        async fn drop_before_finalize() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            let apool = Arc::new(RwLock::new(pool));
+            let wpool = Arc::downgrade(&apool);
+            apool.write().await.expect_repair_mirror_step()
+                .times(1)
+                .return_once(move |_, _| {
+                    // Move pool into here.  The first time this function is
+                    // called, Pool will be dropped, so the Arc::downgrade
+                    // in finalize will fail
+                    drop(apool);
+                    Ok(false)
+                });
+
+            let mut task = MirrorRepairTask::initialize(wpool,
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+            task.finalize().await.unwrap();
+        }
     }
 }
 }

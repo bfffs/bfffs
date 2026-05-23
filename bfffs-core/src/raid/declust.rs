@@ -91,6 +91,9 @@ pub trait Locator : Clone + Send + Sync {
     /// Number of rows in a single repetition of the layout
     fn depth(&self) -> u32;
 
+    /// The total number of disks in the declustered raid layout
+    fn disks(&self) -> u32;
+
     /// Get an iterator that will iterate through many `ChunkId`s.
     ///
     /// This is faster than calling `id2loc` repeatedly.

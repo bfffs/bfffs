@@ -16,11 +16,12 @@ use std::{hash::{Hash, Hasher}, io::{self, Seek, SeekFrom}};
  * Magic:       16 bytes
  * Checksum:    8 bytes     MetroHash64.  Covers all of Length and Contents.
  * Length:      8 bytes     Length of Contents in bytes
- * VdevFile:    variable    speedy-encoded VdevFile::Label
- * VdevRaid:    variable    speedy-encoded VdevRaid::Label
- * Pool:        variable    speedy-encoded Pool::Label
- * IDML:        variable    speedy-encoded IDML::Label
- * Database:    variable    speedy-encoded Database::Label
+ * VdevBlock:   variable    speedy-encoded vdev_block::Label
+ * Mirror:      variable    speedy-encoded mirror::Label
+ * VdevRaid:    variable    speedy-encoded vdev_raid::Label
+ * Pool:        variable    speedy-encoded pool::Label
+ * IDML:        variable    speedy-encoded idml::Label
+ * Database:    variable    speedy-encoded database::Label
  * Pad:         variable    0-padding fills the remainder, up to 4 LBAs
  *
  * On-disk Reserved Region Format:
@@ -37,8 +38,8 @@ const MAGIC_LEN: usize = 16;
 const CHECKSUM_LEN: usize = 8;
 const LENGTH_LEN: usize = 8;
 pub const LABEL_COUNT: LbaT = 2;
-// Actual label size is about 17 bytes for each RAID member plus 17 bytes for
-// each Cluster, plus a couple hundred bytes more.
+// Actual label size is about 17 bytes for each mirror, 17 bytes for each disk,
+// 17 bytes for each Cluster, plus a couple hundred bytes more.
 pub const LABEL_LBAS: LbaT = 4;
 pub const LABEL_SIZE: usize = LABEL_LBAS as usize * BYTES_PER_LBA;
 /// Space allocated for storing the spacemap.  This the number of zones whose
@@ -74,7 +75,7 @@ impl LabelReader {
             return Err(Error::EINVAL);
         }
 
-        let checksum = BigEndian::read_u64(
+        let stored_checksum = BigEndian::read_u64(
             &buffer[MAGIC_LEN..MAGIC_LEN + CHECKSUM_LEN]);
         let length_start = MAGIC_LEN + CHECKSUM_LEN;
         let contents_start = length_start + LENGTH_LEN;
@@ -82,12 +83,20 @@ impl LabelReader {
             &buffer[length_start .. contents_start]);
         let mut hasher = MetroHash64::new();
         {
-            let contents = &buffer[contents_start ..
-                               contents_start + contents_len as usize];
+            let csl = contents_start ..  contents_start + contents_len as usize;
+            let contents = if let Some(sl) = buffer.get(csl) {
+                sl
+            } else {
+                tracing::warn!("Label too large");
+                return Err(Error::EINVAL);
+            };
             contents_len.to_be().hash(&mut hasher);
             hasher.write(contents);
         }
-        if checksum != hasher.finish() {
+        let calc_checksum = hasher.finish();
+        if stored_checksum != calc_checksum {
+            tracing::warn!("Checksum mismatch in label: {:#x} != {:#x}",
+                           stored_checksum, calc_checksum);
             return Err(Error::EINTEGRITY);
         }
 

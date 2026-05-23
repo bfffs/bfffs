@@ -769,7 +769,7 @@ mod pool {
             let clusters = self.clusters.drain(..).collect();
             let pool = Pool::create(name, clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(pool, cache.clone()));
+            let ddml = Arc::new(DDML::create(pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml);
             let controller = Controller::new(db);

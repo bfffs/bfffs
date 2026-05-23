@@ -306,8 +306,10 @@ pub struct Stat {
 }
 
 pub struct Database {
+    /// Background task that cleans zones without blocking user I/O
     cleaner: Cleaner,
     inner: Arc<Inner>,
+    /// Background task that syncs transactions at a regular interval
     syncer: Syncer
 }
 

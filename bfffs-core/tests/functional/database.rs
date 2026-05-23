@@ -57,7 +57,7 @@ mod persistence {
             .build();
 
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
         // Due to bincode's variable-length encoding and the
@@ -86,7 +86,7 @@ mod persistence {
         let mut f = fs::File::open(&paths[0]).unwrap();
         let mut v = vec![0; 8192];
         // Skip leaf, raid, cluster, pool, and idml labels
-        f.seek(SeekFrom::Start(322)).unwrap();
+        f.seek(SeekFrom::Start(326)).unwrap();
         f.read_exact(&mut v).unwrap();
         // Uncomment this block to save the binary label for inspection
         /* {
@@ -118,7 +118,7 @@ mod database {
             .chunksize(1)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
         (db, ph.tempdir, ph.paths)
@@ -462,7 +462,7 @@ root:
                 Cache::with_capacity(4_194_304)
             )
         );
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = IDML::create(ddml, cache);
         let db = Database::create(Arc::new(idml));
         db.shutdown().await;
@@ -496,7 +496,7 @@ root:
                 .nclusters(config.nclusters)
                 .build();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+            let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml);
 
@@ -551,7 +551,7 @@ root:
                 .build();
             let uuid = ph.pool.uuid();
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+            let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
             let idml = Arc::new(IDML::create(ddml, cache));
             let db = Database::create(idml);
             let tree_id = db.create_fs(None, "").await.unwrap();
@@ -674,7 +674,7 @@ mod manager {
             .gnop(gnop)
             .build();
         let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-        let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+        let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
         let idml = Arc::new(IDML::create(ddml, cache));
         let db = Database::create(idml);
         db.sync_transaction().await.unwrap();

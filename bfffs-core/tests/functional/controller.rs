@@ -33,7 +33,7 @@ fn harness() -> Harness {
         file.set_len(len).unwrap();
     }
     let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
-    let ddml = Arc::new(DDML::new(ph.pool, cache.clone()));
+    let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
     let db = Database::create(Arc::new(idml));
     (Controller::new(db),)

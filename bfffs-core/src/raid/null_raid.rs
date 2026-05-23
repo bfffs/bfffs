@@ -2,6 +2,7 @@
 
 use std::{
     collections::BTreeMap,
+    num::NonZeroU64,
     pin::Pin,
 };
 
@@ -142,6 +143,22 @@ impl VdevRaidApi for NullRaid {
         Box::pin(future::ok(()))
     }
 
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut
+    {
+        debug_assert_eq!(mirror_idx, 0);
+        Box::pin(self.mirror.repair_zone(zone, lbas))
+    }
+
+    fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {
+        unimplemented!("NullRaid cannot do RAID repair");
+    }
+
+    fn restore(&mut self, _mirror_idx: usize) -> Result<()> {
+        self.mirror.restore();
+        Ok(())
+    }
+
     fn status(&self) -> Status {
         let codec = String::from("NonRedundant");
         let child = self.mirror.status();
@@ -149,6 +166,7 @@ impl VdevRaidApi for NullRaid {
             health: child.health,
             codec,
             mirrors: vec![child],
+            rebuilding: false,     // reserved for future use
             uuid: self.uuid
         }
     }
@@ -177,7 +195,7 @@ impl VdevRaidApi for NullRaid {
         }
     }
 
-    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
         let nullraid_label = Label {
             uuid: self.uuid,
@@ -185,7 +203,7 @@ impl VdevRaidApi for NullRaid {
         };
         let label = super::Label::NullRaid(nullraid_label);
         labeller.serialize(&label).unwrap();
-        Box::pin(self.mirror.write_label(labeller))
+        Box::pin(self.mirror.write_label(labeller, txg))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

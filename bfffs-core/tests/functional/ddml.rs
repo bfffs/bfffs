@@ -3,6 +3,7 @@ use bfffs_core::{
     cache::*,
     dml::*,
     ddml::*,
+    label::LabelWriter,
     TxgT,
     BYTES_PER_LBA,
     LbaT
@@ -25,7 +26,92 @@ fn ddml() -> DDML {
         .chunksize(1)
         .build();
     let cache = Cache::with_capacity(1_000_000_000);
-    DDML::new(ph.pool, Arc::new(Mutex::new(cache)))
+    DDML::create(ph.pool, Arc::new(Mutex::new(cache)))
+}
+
+/// The DDML can reconstruct a faulted mirrored disk.
+#[rstest]
+#[test_log::test(tokio::test)]
+async fn mirror_reconstruction(
+        #[values(
+            // non-raid
+            (1, 1, 0),
+            // Simplest sensible RAID configuration
+            (3, 3, 1),
+        )]
+        raid_config: (usize, i16, i16),
+    )
+{
+    let zone_size = 32;
+    let (n, k, f) = raid_config;
+    let ph = crate::PoolBuilder::new()
+        .mirror_size(2)
+        .disks(2 * n)
+        .redundancy_level(f)
+        .stripe_size(k)
+        .fsize(1 << 20)     // 1 MB
+        .zone_size(zone_size)
+        .build();
+    let paths = ph.paths.clone();
+    let pool_uuid = ph.pool.uuid();
+    let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
+    let ddml = DDML::create(ph.pool, cache.clone());
+
+    // Write initial label to all disks
+    let txg = TxgT::from(1);
+    ddml.write_label(LabelWriter::new(0), txg).await.unwrap();
+
+    // Fault one disk
+    let stat = ddml.status().await;
+    let leaf_uuid = stat.clusters[0].mirrors[0].leaves[0].uuid;
+    ddml.fault(leaf_uuid).await.unwrap();
+
+    // Write multiple zones' worth of data.  Leave one zone only partially
+    // written.
+    let txg2 = txg + 1;
+    let mut drps = Vec::new();
+    for i in 0..(zone_size * 3 + zone_size / 4) {
+        let dbs = DivBufShared::from(vec![i as u8; BYTES_PER_LBA]);
+        let drp = ddml.put(dbs, Compression::None, txg2).await.unwrap();
+        drps.push(drp);
+    }
+
+    // Drop the pool and reimport it
+    let txg3 = txg2 + 1;
+    ddml.flush(0).await.unwrap();
+    ddml.write_label(LabelWriter::new(0), txg3).await.unwrap();
+    drop(ddml);
+
+    let mut manager = bfffs_core::pool::Manager::default();
+    for path in paths.iter() {
+        manager.taste(path).await.unwrap();
+    }
+    let (pool, _) = manager.import(pool_uuid).await.unwrap();
+
+    // Create new DDML
+    let ddml = DDML::open(pool, cache);
+
+    // Wait for the mirror repair task to finish
+    while ddml.status().await.clusters[0].mirrors[0].rebuilding.is_some() {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Verify by reading all data back
+    for (i, drp) in drps.iter().enumerate() {
+        let db: Box<DivBuf> = ddml.get::<DivBufShared, DivBuf>(drp).await.unwrap();
+        assert_eq!(&db[..], &vec![i as u8; BYTES_PER_LBA][..]);
+    }
+
+    // Now fault the OTHER disk and reverify
+    let stat = ddml.status().await;
+    let other_leaf_uuid = stat.clusters[0].mirrors[0].leaves[1].uuid;
+    ddml.fault(other_leaf_uuid).await.unwrap();
+
+    for (i, drp) in drps.iter().enumerate() {
+        ddml.evict(drp);
+        let db: Box<DivBuf> = ddml.get::<DivBufShared, DivBuf>(drp).await.unwrap();
+        assert_eq!(&db[..], &vec![i as u8; BYTES_PER_LBA][..]);
+    }
 }
 
 #[rstest]
@@ -134,7 +220,7 @@ mod integrity {
 
     async fn do_test(ph: PoolHarness, ulbas: usize, alignment_lbas: LbaT) {
         let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
-        let ddml = DDML::new(ph.pool, cache);
+        let ddml = DDML::create(ph.pool, cache);
         let txg = TxgT::from(0);
         let compression = Compression::None;
 

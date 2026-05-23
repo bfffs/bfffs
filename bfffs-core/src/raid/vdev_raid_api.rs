@@ -1,4 +1,6 @@
 // vim: tw=80
+use std::num::NonZeroU64;
+
 use futures::Future;
 
 use crate::{
@@ -76,6 +78,22 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///                        in this zone.
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
 
+    /// Repair any degraded children by their Zone, using mirroring.
+    // NB: we could save a Box here , because VdevRaid::repair_mirror_zone and
+    // NullRaid::repair_mirror_zone do the exact same thing.
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut;
+
+    /// Repair any degraded children by rewriting the Zone, reconstructing it
+    /// using RAID parity.
+    // NB: we could save a Box here, because NullRaid::repair_raid_zone never
+    // returns.
+    fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
+
+    /// Restore a fully rebuilt child to the Online state.  Or, restore a
+    /// degraded Mirror to the Online state after its children are rebuilt.
+    fn restore(&mut self, mirror_idx: usize) -> Result<()>;
+
     /// Return information about the health and composition of this RAID vdev.
     fn status(&self) -> Status;
 
@@ -96,7 +114,7 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///
     /// `label_writer` should already contain the serialized labels of every
     /// vdev stacked on top of this one.
-    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut;
 
     /// Asynchronously write to the Vdev's spacemap area.
     ///

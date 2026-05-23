@@ -22,13 +22,16 @@ use divbuf::{DivBufInaccessible, DivBufMut, DivBufShared};
 use futures::{
     Future,
     FutureExt,
+    SinkExt,
     StreamExt,
     TryFutureExt,
     TryStreamExt,
     future,
+    channel::mpsc,
     stream::FuturesUnordered,
     task::{Context, Poll}
 };
+use nonzero_ext::nonzero;
 use pin_project::pin_project;
 use speedy::{Readable, Writable};
 
@@ -119,6 +122,8 @@ impl Manager {
 pub struct Status {
     pub health: Health,
     pub leaves: Vec<vdev_block::Status>,
+    /// The oldest transaction number that is synced to rebuilding children.
+    pub rebuilding: Option<TxgT>,
     pub uuid: Uuid
 }
 
@@ -132,8 +137,9 @@ impl Status {
 enum Child {
     Present(Arc<VdevBlock>),
     Missing(Uuid),
+    Rebuilding(Arc<VdevBlock>),
     /// Administratively faulted
-    Faulted(Arc<VdevBlock>)
+    Faulted(Arc<VdevBlock>),
 }
 
 impl Child {
@@ -146,12 +152,24 @@ impl Child {
         Child::Present(Arc::new(vdev))
     }
 
+    fn rebuilding(vdev: VdevBlock) -> Self {
+        Child::Rebuilding(Arc::new(vdev))
+    }
+
     fn missing(uuid: Uuid) -> Self {
         Child::Missing(uuid)
     }
 
     fn as_present(&self) -> Option<&Arc<VdevBlock>> {
         if let Child::Present(vb) = self {
+            Some(vb)
+        } else {
+            None
+        }
+    }
+
+    fn as_rebuilding(&self) -> Option<&Arc<VdevBlock>> {
+        if let Child::Rebuilding(vb) = self {
             Some(vb)
         } else {
             None
@@ -167,6 +185,7 @@ impl Child {
         *self = match old {
             Child::Present(vb) => Child::Faulted(vb),
             Child::Faulted(vb) => Child::Faulted(vb),
+            Child::Rebuilding(vb) => Child::Faulted(vb),
             Child::Missing(uuid) => Child::Missing(uuid),
         };
     }
@@ -179,8 +198,37 @@ impl Child {
         matches!(self, Child::Present(_))
     }
 
+    fn is_rebuilding(&self) -> bool {
+        matches!(self, Child::Rebuilding(_))
+    }
+
     fn open_zone(&self, start: LbaT) -> Option<VdevBlockFut> {
         self.as_present().map(|bd| bd.open_zone(start))
+    }
+
+    /// Place a faulted child back into service and begin to rebuild it
+    fn rebuild(&mut self) {
+        let old = mem::replace(self, Child::Missing(Uuid::default()));
+        *self = match old {
+            Child::Present(vb) => Child::Present(vb),
+            Child::Faulted(vb) => Child::Rebuilding(vb),
+            Child::Rebuilding(vb) => Child::Rebuilding(vb),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
+    }
+
+    /// Mark a fully rebuilt child as healthy again.
+    ///
+    /// It is the caller's responsibility to ensure that every zone in the
+    /// Mirror has been rebuilt onto this device.
+    fn restore(&mut self) {
+        let old = mem::replace(self, Child::Missing(Uuid::default()));
+        *self = match old {
+            Child::Present(vb) => Child::Present(vb),
+            Child::Faulted(_) => panic!("Must rebuild before restore"),
+            Child::Rebuilding(vb) => Child::Present(vb),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
     }
 
     fn status(&self) -> Option<vdev_block::Status> {
@@ -191,6 +239,11 @@ impl Child {
                 status.health = Health::Faulted(FaultedReason::User);
                 Some(status)
             },
+            Child::Rebuilding(vb) => {
+                let mut status = vb.status();
+                status.health = Health::Degraded(nonzero!(1u8));
+                Some(status)
+            },
             Child::Missing(_) => None
         }
     }
@@ -199,8 +252,12 @@ impl Child {
         self.as_present().map(|bd| bd.write_at(buf, lba))
     }
 
-    fn write_label(&self, labeller: LabelWriter) -> Option<VdevBlockFut> {
-        self.as_present().map(|vb| vb.write_label(labeller))
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+        -> Option<VdevBlockFut>
+    {
+        // Notably: don't write the label for Rebuilding disks, because they
+        // don't have every part of this txg.
+        self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -232,8 +289,9 @@ impl Child {
     fn uuid(&self) -> Uuid {
         match self {
             Child::Present(vb) => vb.uuid(),
-            Child::Missing(uuid) => *uuid,
+            Child::Rebuilding(vb) => vb.uuid(),
             Child::Faulted(vb) => vb.uuid(),
+            Child::Missing(uuid) => *uuid,
         }
     }
 
@@ -386,6 +444,10 @@ impl Mirror {
         -> (Self, LabelReader)
     {
         let mut label_pair = None;
+        let highest_txg = combined.iter()
+            .map(|(vb, _)| vb.txg())
+            .max()
+            .expect("Must have at least one child");
         let mut leaves = combined.into_iter()
             .map(|(vdev_block, mut label_reader)| {
                 let label: Label = label_reader.deserialize().unwrap();
@@ -403,7 +465,11 @@ impl Mirror {
         let mut children = Vec::with_capacity(label.children.len());
         for lchild in label.children.iter() {
             if let Some(vb) = leaves.remove(lchild) {
-                children.push(Child::present(vb));
+                if vb.txg() == highest_txg {
+                    children.push(Child::present(vb));
+                } else {
+                    children.push(Child::rebuilding(vb));
+                }
             } else {
                 children.push(Child::missing(*lchild));
             }
@@ -531,6 +597,116 @@ impl Mirror {
         }
     }
 
+    /// Repair any degraded children by rewriting the given Zone, if
+    /// necessary.  Implicitly handles any required zone operations, like
+    /// erase/open.
+    ///
+    /// If `lbas` is specified, then it is the number of LBAs to rebuild,
+    /// starting from the Zone's start, rather than the full Zone.
+    // If multiple mirror children are repairing, then this function will repair
+    // all of them, in lockstep.  This strategy avoids reading the same data
+    // multiple times, which would be necessary if we were to repair each child
+    // independently.
+    // TODO: return a different error code for errors during read than for
+    // errors during write.  In the former case, RAID error recovery may help.
+    // TODO: When running on SMR HDDs, if lbas is nonzero, do a ReportZone on
+    // the underlying disk, and check that its Write Pointer matches the
+    // supplied lbas value.
+    pub fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>)
+        -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        /* Outline:
+         * create 2 loops:
+         *   - First loop reads blocks from good disks
+         *   - First loop writes into a size-bounded queue
+         *   - Second loop reads from queue and writes to bad disks
+         */
+        /* These constants are unoptimized guesses */
+        const BLOCKSIZE_BYTES: usize = 1 << 18;
+        const BLOCKSIZE_LBAS: LbaT = (BLOCKSIZE_BYTES / BYTES_PER_LBA) as LbaT;
+        const QDEPTH: usize = 1;
+
+        let (mut start, end) = if let Some(lbas) = lbas {
+            let (start, end) = self.zone_limits(zone);
+            debug_assert!(LbaT::from(lbas) <= end - start);
+            (start, start + LbaT::from(lbas))
+        } else {
+            self.zone_limits(zone)
+        };
+        let read_children = self.children.iter()
+            .filter_map(Child::as_present)
+            .cloned()
+            .collect::<Vec<_>>();
+        let write_children = self.children.iter()
+            .filter_map(|c| match c {
+                Child::Rebuilding(vb) => Some(vb.clone()),
+                _ => None
+            }).collect::<Vec<_>>();
+        let have_writers: bool = !write_children.is_empty();
+
+        let (mut tx, rx) = mpsc::channel(QDEPTH);
+        let mut idx = self.read_idx();
+        let mut wlba = start;
+        let reader = async move {
+            while start < end && have_writers {
+                let bufsize = BLOCKSIZE_LBAS.min(end - start) as usize *
+                    BYTES_PER_LBA;
+                let dbs = DivBufShared::uninitialized(bufsize);
+                let dbm = dbs.try_mut().unwrap();
+                let child = idx % read_children.len();
+                // TODO: recover from a read EIO, if there are other children.
+                // Can't use Mirror::read_at, because we lack `self`.
+                read_children[child].read_at(dbm, start).await?;
+                idx += 1;
+                start += BLOCKSIZE_LBAS;
+                tx.feed(dbs).await.map_err(|_| Error::EPIPE)?;
+            }
+            Ok(())
+        };
+        let writer = rx.map(Ok)
+            .try_for_each_concurrent(Some(QDEPTH), move |dbs| {
+                let db = dbs.try_const().unwrap();
+                let fut = write_children.iter().map(|vb| {
+                    vb.write_at(db.clone(), wlba)
+                }).collect::<FuturesUnordered<_>>()
+                .try_collect::<Vec<_>>()
+                .map_ok(drop);
+                wlba += BLOCKSIZE_LBAS;
+                fut
+            });
+        future::try_join(reader, writer)
+            .map_ok(drop)
+    }
+
+    /// Return a previously faulted device to service
+    /// 
+    /// # Returns
+    /// * Ok(()) if the device could be rebuilt
+    /// * Err(Error::ENOENT) if there is no such leaf device
+    pub fn rebuild(&mut self, uuid: Uuid) -> Result<()> {
+        for child in self.children.iter_mut() {
+            if child.uuid() == uuid {
+                child.rebuild();
+                return Ok(());
+            }
+        }
+        Err(Error::ENOENT)
+    }
+
+    /// Return any fully rebuilt disks to service
+    ///
+    /// It is the caller's responsibility to ensure that all data has been fully
+    /// rebuilt on the Mirror.  It is also the caller's responsibility to ensure
+    /// that no Mirror child transitions from Faulted to Rebuilding unless it
+    /// already has all of the Zones that any other Rebuilding children have.
+    pub fn restore(&mut self) {
+        for child in self.children.iter_mut() {
+            if child.is_rebuilding() {
+                child.restore();
+            }
+        }
+    }
+
     // XXX TODO: in the case of a missing child, get path from the label
     pub fn status(&self) -> Status {
         let nchildren = self.children.len();
@@ -553,9 +729,14 @@ impl Mirror {
                 .map(Health::Degraded)
                 .unwrap_or(Health::Online)
         };
+        let rebuilding = self.children.iter()
+            .filter_map(Child::as_rebuilding)
+            .map(|vb| vb.txg())
+            .min();
         Status {
             health,
             leaves,
+            rebuilding,
             uuid: self.uuid()
         }
     }
@@ -585,7 +766,8 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    pub fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+        -> BoxVdevFut
     {
         let children_uuids = self.children.iter().map(Child::uuid)
             .collect::<Vec<_>>();
@@ -595,7 +777,7 @@ impl Mirror {
         };
         labeller.serialize(&label).unwrap();
         let fut = self.children.iter().filter_map(|bd| {
-           bd.write_label(labeller.clone())
+           bd.write_label(labeller.clone(), txg)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -647,6 +829,7 @@ impl Vdev for Mirror {
 }
 
 /// Future type of [`Mirror::read_at`]
+// It's a custom future in order to implement error recovery
 #[pin_project]
 pub struct ReadAt {
     children: Vec<Arc<VdevBlock>>,
@@ -783,11 +966,14 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> BoxVdevFut;
+        pub fn restore(&mut self);
         pub fn status(&self) -> Status;
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        pub fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut;
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+            -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
         pub fn writev_at(&self, bufs: SGList, lba: LbaT) -> BoxVdevFut;
@@ -811,7 +997,6 @@ mod t {
     use futures::future;
     use itertools::Itertools;
     use mockall::predicate::*;
-    use nonzero_ext::nonzero;
     use rstest::rstest;
     use super::*;
 
@@ -874,8 +1059,6 @@ mod t {
 
     mod fault {
         use super::*;
-
-        use nonzero_ext::nonzero;
 
         fn mock() -> VdevBlock {
             let mut bd = mock_vdev_block();
@@ -1045,6 +1228,8 @@ mod t {
                     .return_const(10u32);
                 bd.expect_size()
                     .return_const(262_144u64);
+                bd.expect_txg()
+                    .return_const(TxgT::from(42u32));
                 bd
             }
             let label = Label {
@@ -1069,12 +1254,59 @@ mod t {
                     combined.push((bd, lr));
                 }
                 let (mirror, _) = Mirror::open(Some(label.uuid), combined);
+                assert!(mirror.children[0].is_present());
                 assert_eq!(mirror.children[0].uuid(), child_uuid0);
+                assert!(mirror.children[1].is_present());
                 assert_eq!(mirror.children[1].uuid(), child_uuid1);
+                assert!(mirror.children[2].is_present());
                 assert_eq!(mirror.children[2].uuid(), child_uuid2);
             }
         }
 
+        /// If one VdevBlock is out-of-date, it will be opened into the
+        /// Rebuilding state.
+        #[test]
+        fn out_of_date() {
+            let child_uuid0 = Uuid::new_v4();
+            let child_uuid1 = Uuid::new_v4();
+            fn mock(child_uuid: &Uuid) -> VdevBlock {
+                let mut bd = VdevBlock::default();
+                bd.expect_uuid()
+                    .return_const(*child_uuid);
+                bd.expect_optimum_queue_depth()
+                    .return_const(10u32);
+                bd.expect_size()
+                    .return_const(262_144u64);
+                bd
+            }
+            let label = Label {
+                uuid: Uuid::new_v4(),
+                children: vec![child_uuid0, child_uuid1]
+            };
+            let mut serialized = Vec::new();
+            let mut lw = LabelWriter::new(0);
+            lw.serialize(&label).unwrap();
+            for buf in lw.into_sglist().into_iter() {
+                serialized.extend(&buf[..]);
+            }
+            let mut bd0 = mock(&child_uuid0);
+            bd0.expect_txg()
+                .return_const(TxgT::from(42u32));
+            let mut bd1 = mock(&child_uuid1);
+            bd1.expect_txg()
+                .return_const(TxgT::from(41u32));
+
+            let mut combined = Vec::new();
+            for bd in [bd0, bd1] {
+                let lr = LabelReader::new(serialized.clone()).unwrap();
+                combined.push((bd, lr));
+            }
+            let (mirror, _) = Mirror::open(Some(label.uuid), combined);
+            assert!(mirror.children[0].is_present());
+            assert_eq!(mirror.children[0].uuid(), child_uuid0);
+            assert!(mirror.children[1].is_rebuilding());
+            assert_eq!(mirror.children[1].uuid(), child_uuid1);
+        }
     }
 
     mod open_zone {
@@ -1634,6 +1866,446 @@ mod t {
         }
     }
 
+    mod repair_zone {
+        use mockall::Sequence;
+        use super::*;
+
+        /// Errors during read should be handled gracefully.
+        /// If no other healthy mirror child is available, then repair should
+        /// fail.
+        #[tokio::test]
+        async fn eio_during_read_nonredundant() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .never();
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::err(Error::EIO))
+                });
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            let e = mirror.repair_zone(0, None).await.unwrap_err();
+            assert_eq!(e, Error::EIO);
+        }
+
+        /// Errors during read should be handled gracefully.
+        /// If another healthy mirror child is available, then repair should
+        /// attempt to recover from the read error.
+        #[tokio::test]
+        #[ignore = "feature not yet implemented"]
+        async fn eio_during_read_redundant() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            let mut bd2 = mock_vdev_block();
+            let mut seq = Sequence::new();
+            bd0.expect_read_at()
+                .never();
+            bd1.expect_read_at()
+                .times(1)
+                .in_sequence(&mut seq)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::err(Error::EIO))
+                });
+            bd2.expect_read_at()
+                .times(1)
+                .in_sequence(&mut seq)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::ok(()))
+                });
+            bd0.expect_write_at()
+                .once()
+                .in_sequence(&mut seq)
+                .withf(|buf, lba|
+                    buf.len() == 1 << 18
+                    && *lba == 32
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1),
+                Child::present(bd2)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(0, None).await.unwrap();
+        }
+
+        /// Errors during write should be handled gracefully
+        #[tokio::test]
+        async fn eio_during_write() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 29 << 12
+                    && *lba == 3
+                ).return_once(|_, _| Box::pin(future::err::<(), Error>(Error::EIO)));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::ok(()))
+                });
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            let e = mirror.repair_zone(0, None).await.unwrap_err();
+            assert_eq!(e, Error::EIO);
+        }
+
+
+        /// When rebuilding a large range, it will be split into multiple
+        /// blocks.  The final one may be shortened.
+        #[tokio::test]
+        async fn multiple_blocks() {
+            const ZL1: (LbaT, LbaT) = (32, 192);
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            bd0.expect_zone_limits()
+                .with(eq(1))
+                .return_const(ZL1);
+            bd1.expect_zone_limits()
+                .with(eq(1))
+                .return_const(ZL1);
+            bd0.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 1 << 18
+                    && *lba == 32
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 1 << 18
+                    && *lba == 96
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 1 << 17
+                    && *lba == 160
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 1 << 18
+                       && *lba == 32
+                ).returning(move |_, _| Box::pin(future::ok(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 1 << 18
+                       && *lba == 96
+                ).returning(move |_, _| Box::pin(future::ok(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 1 << 17
+                       && *lba == 160
+                ).returning(move |_, _| Box::pin(future::ok(())));
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(1, None).await.unwrap();
+        }
+
+        /// If no children need to be repaired, then no reads are necessary.
+        #[tokio::test]
+        async fn no_rebuilding_children() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            let faulty_uuid = Uuid::new_v4();
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(faulty_uuid)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(0, None).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn one_rebuilding_child() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 29 << 12
+                    && *lba == 3
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::ok(()))
+                });
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(0, None).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn open_zone() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 21 << 12
+                    && *lba == 3
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 21 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::ok(()))
+                });
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(0, Some(nonzero!(21u64))).await.unwrap();
+        }
+
+        #[tokio::test]
+        async fn two_rebuilding_children() {
+            let mut bd0 = mock_vdev_block();
+            let mut bd1 = mock_vdev_block();
+            let mut bd2 = mock_vdev_block();
+            bd0.expect_read_at()
+                .never();
+            bd2.expect_read_at()
+                .never();
+            bd0.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 29 << 12
+                    && *lba == 3
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd2.expect_write_at()
+                .once()
+                .withf(|buf, lba|
+                    buf.len() == 29 << 12
+                    && *lba == 3
+                ).return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            bd1.expect_read_at()
+                .times(1)
+                .withf(|buf, lba|
+                       buf.len() == 29 << 12
+                       && *lba == 3
+                ).returning(move |_, _| {
+                    Box::pin(future::ok(()))
+                });
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1),
+                Child::rebuilding(bd2),
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.repair_zone(0, None).await.unwrap();
+        }
+    }
+
+    mod rebuild {
+        use super::*;
+
+        fn mock() -> VdevBlock {
+            let mut bd = mock_vdev_block();
+            bd.expect_status()
+                .return_const(crate::vdev_block::Status {
+                    health: Health::Online,
+                    path: PathBuf::from("/dev/whatever"),
+                    uuid: Uuid::new_v4()
+                });
+            bd
+        }
+
+        #[test]
+        fn enoent() {
+            let bd0 = mock();
+            let children = vec![Child::present(bd0)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            assert_eq!(Error::ENOENT, mirror.rebuild(Uuid::new_v4()).unwrap_err());
+            assert_eq!(Health::Online, mirror.status().health);
+        }
+
+        #[test]
+        fn faulted() {
+            let txg = TxgT::from(42);
+            let bd0 = mock();
+            let mut bd1 = mock();
+            bd1.expect_txg()
+                .return_const(txg);
+            let bd1_uuid = bd1.uuid();
+            let children = vec![
+                Child::present(bd0),
+                Child::faulted(bd1)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.rebuild(bd1_uuid).unwrap();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Degraded(nonzero!(1u8)));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+            assert_eq!(status.rebuilding, Some(txg));
+        }
+
+        /// A missing disk cannot be rebuilt
+        #[test]
+        fn missing() {
+            let bd0 = mock();
+            let faulty_uuid = Uuid::new_v4();
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(faulty_uuid)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.rebuild(faulty_uuid).unwrap();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Faulted(FaultedReason::Removed));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+        }
+
+        /// Rebuilding a healthy disk is a no-op
+        #[test]
+        fn present() {
+            let bd0 = mock();
+            let bd1 = mock();
+            let bd0_uuid = bd0.uuid();
+            let children = vec![Child::present(bd0), Child::present(bd1)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.rebuild(bd0_uuid).unwrap();
+            let status = mirror.status();
+            assert_eq!(status.leaves[0].health,
+                       Health::Online);
+            assert_eq!(Health::Online, status.health);
+        }
+
+    }
+
+    mod restore {
+        use super::*;
+
+        fn mock() -> VdevBlock {
+            let mut bd = mock_vdev_block();
+            bd.expect_status()
+                .return_const(crate::vdev_block::Status {
+                    health: Health::Online,
+                    path: PathBuf::from("/dev/whatever"),
+                    uuid: Uuid::new_v4()
+                });
+            bd
+        }
+
+        #[test]
+        fn faulted() {
+            let txg = TxgT::from(42);
+            let bd0 = mock();
+            let mut bd1 = mock();
+            bd1.expect_txg()
+                .return_const(txg);
+            let children = vec![
+                Child::present(bd0),
+                Child::faulted(bd1)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.restore();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Faulted(FaultedReason::User));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+        }
+
+        /// A missing disk cannot be restored
+        #[test]
+        fn missing() {
+            let bd0 = mock();
+            let faulty_uuid = Uuid::new_v4();
+            let children = vec![
+                Child::present(bd0),
+                Child::missing(faulty_uuid)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.restore();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health,
+                       Health::Faulted(FaultedReason::Removed));
+            assert_eq!(Health::Degraded(nonzero!(1u8)), status.health);
+        }
+
+        /// Restoring a healthy disk is a no-op
+        #[test]
+        fn present() {
+            let bd0 = mock();
+            let bd1 = mock();
+            let children = vec![Child::present(bd0), Child::present(bd1)];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.restore();
+            let status = mirror.status();
+            assert_eq!(status.leaves[0].health,
+                       Health::Online);
+            assert_eq!(Health::Online, status.health);
+        }
+
+        #[test]
+        fn repairing() {
+            let txg = TxgT::from(42);
+            let bd0 = mock();
+            let mut bd1 = mock();
+            bd1.expect_txg()
+                .return_const(txg);
+            let children = vec![
+                Child::present(bd0),
+                Child::rebuilding(bd1)
+            ];
+            let mut mirror = Mirror::new(Uuid::new_v4(), children);
+            mirror.restore();
+            let status = mirror.status();
+            assert_eq!(status.leaves[1].health, Health::Online);
+            assert_eq!(Health::Online, status.health);
+            assert_eq!(status.rebuilding, None);
+        }
+    }
+
     mod size {
         use super::*;
 
@@ -1854,14 +2526,17 @@ mod t {
                 let mut bd = mock_vdev_block();
                 bd.expect_write_label()
                 .once()
-                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
                 Child::present(bd)
             };
             let bd0 = mock();
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1]);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller).now_or_never().unwrap().unwrap();
+            mirror.write_label(labeller, TxgT::from(1))
+                .now_or_never()
+                .unwrap()
+                .unwrap();
         }
 
         #[test]
@@ -1869,14 +2544,17 @@ mod t {
             let mut bd1 = mock_vdev_block();
             bd1.expect_write_label()
                 .once()
-                .return_once(|_| Box::pin(future::ok::<(), Error>(())));
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
             let children = vec![
                 Child::missing(Uuid::new_v4()),
                 Child::present(bd1),
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller).now_or_never().unwrap().unwrap();
+            mirror.write_label(labeller, TxgT::from(1))
+                .now_or_never()
+                .unwrap()
+                .unwrap();
         }
     }
 

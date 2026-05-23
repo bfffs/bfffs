@@ -22,7 +22,7 @@ use pin_project::pin_project;
 #[cfg(test)] use mockall::automock;
 use speedy::{Readable, Writable};
 use std::{
-    ops::Range,
+    ops::{Range, RangeFrom},
     pin::Pin,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
@@ -157,7 +157,22 @@ pub struct Status {
     pub health: Health,
     pub name: String,
     pub clusters: Vec<cluster::Status>,
+    /// Is a rebuild happening at any level?
+    pub rebuilding: bool,
     pub uuid: Uuid
+}
+
+#[derive(Debug)]
+#[cfg_attr(test, derive(Default))]
+pub struct RepairMirrorTask {
+    cluster_idx: usize,
+    task: cluster::RepairMirrorTask
+}
+
+impl RepairMirrorTask {
+    fn new(idx: usize, task: cluster::RepairMirrorTask) -> Self {
+        Self{cluster_idx: idx, task}
+    }
 }
 
 /// An BFFFS storage pool
@@ -409,6 +424,27 @@ impl Pool {
         })
     }
 
+    pub fn repair_mirror(&self, cl_idx: usize, mirror_idx: usize, txgs:
+                         RangeFrom<TxgT>)
+        -> RepairMirrorTask
+    {
+        let inner_task = self.clusters[cl_idx].repair_mirror(mirror_idx, txgs);
+        RepairMirrorTask::new(cl_idx, inner_task)
+    }
+
+    pub async fn repair_mirror_step(
+        &self,
+        task: &mut RepairMirrorTask,
+        repair_open_zones: bool) -> Result<bool> {
+        let cl = &self.clusters[task.cluster_idx];
+        cl.repair_mirror_step(&mut task.task, repair_open_zones).await
+    }
+
+    /// Restore the given disk or Mirror to the Online state
+    pub fn restore(&mut self, cl_idx: usize, m_idx: usize) -> Result<()> {
+        self.clusters[cl_idx].restore(m_idx)
+    }
+
     /// Return approximately the Pool's usable storage space in LBAs.
     pub fn size(&self) -> LbaT {
         self.stats.size()
@@ -426,6 +462,7 @@ impl Pool {
             health,
             name: self.name().to_string(),
             clusters,
+            rebuilding: false,      // reserved for future use
             uuid: self.uuid
         }
     }
@@ -475,7 +512,7 @@ impl Pool {
     }
 
     /// Asynchronously write this `Pool`'s label to all component devices
-    pub fn write_label(&self, mut labeller: LabelWriter)
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
         -> impl Future<Output=Result<()>> + Send + Sync
     {
         let cluster_uuids = self.clusters.iter().map(Cluster::uuid)
@@ -487,7 +524,7 @@ impl Pool {
         };
         labeller.serialize(&label).unwrap();
         self.clusters.iter()
-        .map(|cluster| cluster.write_label(labeller.clone()))
+        .map(|cluster| cluster.write_label(labeller.clone(), txg))
         .collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop)
@@ -848,11 +885,11 @@ mod pool {
         /// clusters.
         #[rstest]
         #[case(Online, vec![Online, Online])]
-        #[case(Rebuilding, vec![Online, Rebuilding])]
+        #[case(Degraded(nonzero!(1u8)), vec![Online, Degraded(nonzero!(1u8))])]
         #[case(Faulted(FaultedReason::InsufficientRedundancy),
-            vec![Rebuilding, Faulted(FaultedReason::InsufficientRedundancy)])]
-        #[case(Degraded(nonzero!(1u8)),
-            vec![Online, Degraded(nonzero!(1u8))])]
+            vec![Degraded(nonzero!(1u8)),
+                 Faulted(FaultedReason::InsufficientRedundancy)]
+        )]
         #[case(Degraded(nonzero!(3u8)),
             vec![Degraded(nonzero!(3u8)),
                  Degraded(nonzero!(1u8))])]
@@ -871,9 +908,11 @@ mod pool {
                                 uuid: Default::default(),
                                 path: PathBuf::default()
                             }],
-                            uuid: Uuid::new_v4()
+                            uuid: Uuid::new_v4(),
+                            rebuilding: None,
                         }],
-                        uuid: Uuid::new_v4()
+                        uuid: Uuid::new_v4(),
+                        rebuilding: false,
                     });
                 c
             };

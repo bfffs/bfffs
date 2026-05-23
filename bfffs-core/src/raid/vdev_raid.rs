@@ -15,7 +15,7 @@ use futures::{
     StreamExt,
     TryFutureExt,
     TryStreamExt,
-    future,
+    future::{self, Either},
     stream::{FuturesOrdered, FuturesUnordered},
     task::{Context, Poll}
 };
@@ -323,6 +323,30 @@ impl Child {
         }
     }
 
+    fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        match self {
+            Child::Present(m) => Either::Left(m.repair_zone(zone, lbas)),
+            _ => Either::Right(future::err(Error::ENXIO))
+        }
+    }
+
+    /// Return any fully rebuilt disks on this mirror to service
+    ///
+    /// It is the caller's responsibility to ensure that all data has been fully
+    /// rebuilt.
+    fn restore(&mut self) {
+        let mut old = mem::replace(self, Child::Missing(Uuid::default()));
+        if let Child::Present(ref mut m) = &mut old {
+            m.restore();
+        }
+        *self = match old {
+            Child::Present(m) => Child::Present(m),
+            Child::Faulted(m) => Child::Present(m),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
+    }
+
     fn status(&self) -> Option<mirror::Status> {
         match self {
             Child::Present(m) => Some(m.status()),
@@ -344,8 +368,8 @@ impl Child {
         }
     }
 
-    fn write_label(&self, labeller: LabelWriter) -> BoxVdevFut {
-        self.as_present().unwrap().write_label(labeller)
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut {
+        self.as_present().unwrap().write_label(labeller, txg)
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
@@ -2210,6 +2234,49 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, allocated)
     }
 
+    fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
+                          lbas: Option<NonZeroU64>) -> BoxVdevFut
+    {
+        // VdevRaid caches incompletely written stripes in the StripeBuffer.
+        // There is no need to repair those.  So we should round `lbas` down to
+        // a whole number of Stripes, then repair the portion of the mirror
+        // that's actually been written.
+        let mut maxlba = None;
+        if let Some(lbas) = lbas {
+            let f = self.inner.codec.protection() as u64;
+            let m = self.inner.codec.stripesize() as u64 - f;
+            let n = self.inner.locator.disks();
+            let lbas_per_stripe = self.chunksize * m;
+            let flushed_lbas = u64::from(lbas) - u64::from(lbas) % lbas_per_stripe;
+            let flushed_chunks: u64 = flushed_lbas / self.chunksize;
+            let end = ChunkId::Data(flushed_chunks);
+            let start = ChunkId::Data(flushed_chunks.saturating_sub(n.into()));
+            for (_id, loc) in self.inner.locator.iter(start, end) {
+                if loc.disk == mirror_idx as i16 {
+                    maxlba = NonZeroU64::new((loc.offset + 1) * self.chunksize);
+                }
+            }
+            if maxlba.is_none() {
+                // Nothing to repair in this barely-open zone
+                return Box::pin(future::ok(()));
+            }
+        };
+        Box::pin(self.inner.children[mirror_idx].repair_zone(zone, maxlba))
+    }
+
+    fn repair_raid_zone(&self, _zone: ZoneT) -> BoxVdevFut {
+        todo!()
+    }
+
+    fn restore(&mut self, mirror_idx: usize) -> Result<()> {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.children[mirror_idx].restore();
+            Ok(())
+        } else {
+            Err(Error::EAGAIN)
+        }
+    }
+
     fn status(&self) -> Status {
         let n = self.inner.children.len();
         let k = self.inner.codec.stripesize();
@@ -2220,6 +2287,7 @@ impl VdevRaidApi for VdevRaid {
             let cs = child.status().unwrap_or(mirror::Status {
                 health: Health::Faulted(FaultedReason::Removed),
                 uuid: child.uuid(),
+                rebuilding: None,
                 leaves: Vec::new()
             });
             mirrors.push(cs);
@@ -2252,6 +2320,7 @@ impl VdevRaidApi for VdevRaid {
             health,
             codec,
             mirrors,
+            rebuilding: false,     // reserved for future use
             uuid: self.uuid
         }
     }
@@ -2338,7 +2407,7 @@ impl VdevRaidApi for VdevRaid {
         Box::pin(futs.try_collect::<Vec<_>>().map_ok(drop))
     }
 
-    fn write_label(&self, mut labeller: LabelWriter) -> BoxVdevFut
+    fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
         let children_uuids = self.inner.children.iter().map(|bd| bd.uuid())
             .collect::<Vec<_>>();
@@ -2353,7 +2422,7 @@ impl VdevRaidApi for VdevRaid {
         let label = super::Label::Raid(raid_label);
         labeller.serialize(&label).unwrap();
         let fut = self.inner.children.iter().map(|bd| {
-           bd.write_label(labeller.clone())
+           bd.write_label(labeller.clone(), txg)
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);

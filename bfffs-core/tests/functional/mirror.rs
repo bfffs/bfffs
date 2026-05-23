@@ -7,9 +7,10 @@ use std::{
 use bfffs_core::{
     label::*,
     mirror::{Manager, Mirror},
-    vdev::{FaultedReason, Health},
+    vdev::{FaultedReason, Health, Vdev},
     Error,
     LbaT,
+    TxgT,
     Uuid,
     BYTES_PER_LBA,
 };
@@ -31,7 +32,7 @@ fn harness() -> Harness {
         t!(file.set_len(len));
         fname
     }).collect::<Vec<_>>();
-    let mirror = Mirror::create(&paths, None).unwrap();
+    let mirror = Mirror::create(&paths, Some(nonzero!(32u64))).unwrap();
     (mirror, tempdir, paths)
 }
 
@@ -102,7 +103,8 @@ mod open {
         let (old_vdev, _tempdir, paths) = harness;
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_vdev.write_label(label_writer).await.unwrap();
+        let txg = TxgT::from(1);
+        old_vdev.write_label(label_writer, txg).await.unwrap();
         let old_status = old_vdev.status();
         drop(old_vdev);
 
@@ -152,7 +154,7 @@ mod persistence {
         let (old_vdev, _tempdir, paths) = harness;
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_vdev.write_label(label_writer).await.unwrap();
+        old_vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
         drop(old_vdev);
 
         let mut manager = Manager::default();
@@ -167,12 +169,12 @@ mod persistence {
     #[tokio::test]
     async fn write_label(harness: Harness) {
         let label_writer = LabelWriter::new(0);
-        harness.0.write_label(label_writer).await.unwrap();
+        harness.0.write_label(label_writer, TxgT::from(1)).await.unwrap();
 
         for path in harness.2 {
             let mut f = fs::File::open(path).unwrap();
             let mut v = vec![0; 8192];
-            f.seek(SeekFrom::Start(72)).unwrap();   // Skip the VdevLeaf label
+            f.seek(SeekFrom::Start(76)).unwrap();   // Skip the VdevBlock label
             f.read_exact(&mut v).unwrap();
             // Uncomment this block to save the binary label for inspection
             /* {
@@ -225,5 +227,46 @@ mod read_long {
         assert_eq!(&vec![111; BYTES_PER_LBA][..], &reconstructions[1][..]);
         assert_eq!(&vec![112; BYTES_PER_LBA][..], &reconstructions[2][..]);
         assert!(reconstructor.next().is_none());
+    }
+}
+
+mod repair_zone {
+    use super::*;
+    use divbuf::DivBufShared;
+
+    #[rstest]
+    #[tokio::test]
+    async fn basic(harness: Harness) {
+        let (mut mirror, _tempdir, _paths) = harness;
+        let stat = mirror.status();
+        let uuid0 = stat.leaves[0].uuid;
+        let uuid1 = stat.leaves[1].uuid;
+        let uuid2 = stat.leaves[2].uuid;
+        let zone = 1;
+        let (start, _end) = mirror.zone_limits(zone);
+
+        // Fault one disk
+        mirror.fault(uuid0).unwrap();
+
+        // Write some data to the mirror.
+        let dbs = DivBufShared::from(vec![42u8; BYTES_PER_LBA]);
+        mirror.write_at(dbs.try_const().unwrap(), start).await.unwrap();
+
+        // Mark the faulted disk as rebuilding
+        mirror.rebuild(uuid0).unwrap();
+
+        // Repair the zone
+        mirror.repair_zone(zone, None).await.unwrap();
+
+        // Restore the mirror
+        mirror.restore();
+
+        // Verify by faulting the other disks and reading from the repaired one.
+        mirror.fault(uuid1).unwrap();
+        mirror.fault(uuid2).unwrap();
+        let mut dbm = dbs.try_mut().unwrap();
+        dbm.fill(0);
+        mirror.read_at(dbm, start).await.unwrap();
+        assert_eq!(&dbs.try_const().unwrap()[..], &vec![42u8; BYTES_PER_LBA][..]);
     }
 }
