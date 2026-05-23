@@ -120,7 +120,8 @@ impl MirrorRepairTask {
                     break;
                 }
             }
-            pool_guard.restore(self.cl_idx, self.m_idx);
+            pool_guard.restore(self.cl_idx, self.m_idx)
+                .expect("TODO: handle errors");
         } else {
             tracing::debug!(
                 "Pool got dropped with an active MirrorRebuildTask");
@@ -478,7 +479,7 @@ impl DML for DDML {
         })
     }
 
-    #[instrument(skip(self))]
+    #[instrument(skip(self, cacheable))]
     fn put<T: Cacheable>(&self, cacheable: T, compression: Compression,
                              txg: TxgT)
         -> Pin<Box<dyn Future<Output=Result<<Self as DML>::Addr>> + Send>>
@@ -1238,7 +1239,7 @@ mod ddml {
             pool.expect_restore()
                 .once()
                 .in_sequence(&mut seq)
-                .return_const(());
+                .return_const(Ok(()));
 
             let pool = Arc::new(RwLock::new(pool));
 

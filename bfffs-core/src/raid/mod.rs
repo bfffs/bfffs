@@ -245,7 +245,7 @@ mock!{
         fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
                           lbas: Option<NonZeroU64>) -> BoxVdevFut;
         fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
-        fn restore(&mut self, mirror_idx: usize);
+        fn restore(&mut self, mirror_idx: usize) -> Result<()>;
         fn status(&self) -> Status;
         fn sync_all(&self) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;

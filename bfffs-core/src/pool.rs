@@ -441,7 +441,7 @@ impl Pool {
     }
 
     /// Restore the given disk or Mirror to the Online state
-    pub fn restore(&mut self, cl_idx: usize, m_idx: usize) {
+    pub fn restore(&mut self, cl_idx: usize, m_idx: usize) -> Result<()> {
         self.clusters[cl_idx].restore(m_idx)
     }
 

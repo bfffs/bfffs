@@ -30,12 +30,25 @@ fn ddml() -> DDML {
 }
 
 /// The DDML can reconstruct a faulted mirrored disk.
-#[tokio::test]
-async fn mirror_reconstruction() {
-    let zone_size = 16;
+#[rstest]
+#[test_log::test(tokio::test)]
+async fn mirror_reconstruction(
+        #[values(
+            // non-raid
+            (1, 1, 0),
+            // Simplest sensible RAID configuration
+            (3, 3, 1),
+        )]
+        raid_config: (usize, i16, i16),
+    )
+{
+    let zone_size = 32;
+    let (n, k, f) = raid_config;
     let ph = crate::PoolBuilder::new()
         .mirror_size(2)
-        .disks(2)
+        .disks(2 * n)
+        .redundancy_level(f)
+        .stripe_size(k)
         .fsize(1 << 20)     // 1 MB
         .zone_size(zone_size)
         .build();

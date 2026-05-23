@@ -21,6 +21,7 @@ use futures::{
 use metrohash::MetroHash64;
 #[cfg(test)] use mockall::automock;
 use speedy::{Readable, Writable};
+use tracing::instrument;
 use std::{
     cmp,
     collections::{BTreeMap, BTreeSet, VecDeque, btree_map::Keys},
@@ -457,6 +458,7 @@ impl<'a> FreeSpaceMap {
     /// If `lbas` was nonzero, return the zone id and LBA of the newly allocated
     /// space.  If `lbas` was zero, return `None`.  If `lbas` was nonzero and
     /// the requested zone has insufficient space, return ENOSPC.
+    #[instrument(skip(self))]
     fn open_zone(&mut self, id: ZoneT, start: LbaT, end: LbaT, lbas: LbaT,
                  txg: TxgT) -> Result<Option<(ZoneT, LbaT)>>
     {
@@ -1134,7 +1136,7 @@ impl Cluster {
     }
 
     /// Restore a child device to the Online state
-    pub fn restore(&mut self, mirror_idx: usize) {
+    pub fn restore(&mut self, mirror_idx: usize) -> Result<()> {
         self.vdev.restore(mirror_idx)
     }
 

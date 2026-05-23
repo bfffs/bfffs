@@ -331,6 +331,22 @@ impl Child {
         }
     }
 
+    /// Return any fully rebuilt disks on this mirror to service
+    ///
+    /// It is the caller's responsibility to ensure that all data has been fully
+    /// rebuilt.
+    fn restore(&mut self) {
+        let mut old = mem::replace(self, Child::Missing(Uuid::default()));
+        if let Child::Present(ref mut m) = &mut old {
+            m.restore();
+        }
+        *self = match old {
+            Child::Present(m) => Child::Present(m),
+            Child::Faulted(m) => Child::Present(m),
+            Child::Missing(uuid) => Child::Missing(uuid),
+        };
+    }
+
     fn status(&self) -> Option<mirror::Status> {
         match self {
             Child::Present(m) => Some(m.status()),
@@ -2252,8 +2268,13 @@ impl VdevRaidApi for VdevRaid {
         todo!()
     }
 
-    fn restore(&mut self, _mirror_idx: usize) {
-        todo!()
+    fn restore(&mut self, mirror_idx: usize) -> Result<()> {
+        if let Some(inner) = Arc::get_mut(&mut self.inner) {
+            inner.children[mirror_idx].restore();
+            Ok(())
+        } else {
+            Err(Error::EAGAIN)
+        }
     }
 
     fn status(&self) -> Status {

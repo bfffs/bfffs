@@ -154,8 +154,9 @@ impl VdevRaidApi for NullRaid {
         unimplemented!("NullRaid cannot do RAID repair");
     }
 
-    fn restore(&mut self, _mirror_idx: usize) {
-        self.mirror.restore()
+    fn restore(&mut self, _mirror_idx: usize) -> Result<()> {
+        self.mirror.restore();
+        Ok(())
     }
 
     fn status(&self) -> Status {
