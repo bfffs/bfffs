@@ -86,12 +86,11 @@ impl MirrorRepairTask {
     }
 
     /// Iteratively repair all closed zones in the transaction range
-    async fn repair_closed_zones(&mut self) {
+    async fn repair_closed_zones(&mut self) -> Result<()> {
         loop {
             if let Some(pool) = self.wpool.upgrade() {
                 let more = pool.read().await
-                    .repair_mirror_step(&mut self.pool_task, false).await
-                    .expect("TODO: handle errors");
+                    .repair_mirror_step(&mut self.pool_task, false).await?;
                 // TODO: write the label on the repairing device, if this
                 // step finished a transaction, and if there aren't any Open
                 // Zones with a start Txg lower than this one.
@@ -104,28 +103,28 @@ impl MirrorRepairTask {
                 break;
             }
         }
+        Ok(())
     }
 
     /// Finish rebuilding the Pool, keeping it locked so as to prevent other
     /// tasks from accessing it.  Restore the degraded component to a fully
     /// functional state.
-    async fn finalize(&mut self) {
+    async fn finalize(&mut self) -> Result<()> {
         if let Some(pool) = self.wpool.upgrade() {
             let mut pool_guard = pool.write().await;
             loop {
                 if !pool_guard.repair_mirror_step(&mut self.pool_task, true)
-                    .await
-                    .expect("TODO: handle errors")
+                    .await?
                 {
                     break;
                 }
             }
-            pool_guard.restore(self.cl_idx, self.m_idx)
-                .expect("TODO: handle errors");
+            pool_guard.restore(self.cl_idx, self.m_idx)?;
         } else {
             tracing::debug!(
                 "Pool got dropped with an active MirrorRebuildTask");
         }
+        Ok(())
     }
 
     pub fn spawn(pool: &Arc<RwLock<Pool>>, txg: TxgT, cl_idx: usize, m_idx: usize)
@@ -145,8 +144,13 @@ impl MirrorRepairTask {
         tokio::spawn( async move {
             let task = Self::initialize(wpool, txg, cl_idx, m_idx).await;
             if let Some(mut task) = task {
-                task.repair_closed_zones().await;
-                task.finalize().await;
+                if let Err(e) = task.repair_closed_zones().await {
+                    tracing::warn!("MirrorRebuildTask failed: {}", e);
+                    return;
+                }
+                if let Err(e) = task.finalize().await {
+                    tracing::warn!("MirrorRebuildTask failed: {}", e);
+                }
             }
         });
     }
@@ -1180,6 +1184,7 @@ mod ddml {
 
     mod mirror_repair_task {
         use super::*;
+        use pretty_assertions::assert_eq;
 
         // TODO:
         // [ ] Something writes labels
@@ -1207,7 +1212,53 @@ mod ddml {
 
             let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
                 TxgT::from(42), 0, 0).await.unwrap();
-            task.repair_closed_zones().await;
+            task.repair_closed_zones().await.unwrap();
+        }
+
+        /// If the repair fails with an error while the pool is locked shared,
+        /// nothing bad should happen
+        #[tokio::test]
+        async fn error_before_finalize() {
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .once()
+                .returning(|_, _| Err(Error::EDOOFUS));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            assert_eq!(Err(Error::EDOOFUS), task.repair_closed_zones().await);
+        }
+
+        /// If the repair fails with an error while the pool is locked shared,
+        /// nothing bad should happen
+        #[tokio::test]
+        async fn error_during_finalize() {
+            let mut seq = Sequence::new();
+
+            let mut pool = mock_pool();
+            pool.expect_repair_mirror()
+                .once()
+                .returning(|_, _, _| pool::RepairMirrorTask::default());
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .times(1)
+                .returning(|_, _| Ok(false));
+            pool.expect_repair_mirror_step()
+                .in_sequence(&mut seq)
+                .once()
+                .returning(|_, _| Err(Error::EDOOFUS));
+
+            let pool = Arc::new(RwLock::new(pool));
+
+            let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
+                TxgT::from(42), 0, 0).await.unwrap();
+            task.repair_closed_zones().await.unwrap();
+            assert_eq!(Err(Error::EDOOFUS), task.finalize().await);
         }
 
         /// MirrorRepairTask::finalize will iterate until
@@ -1245,8 +1296,8 @@ mod ddml {
 
             let mut task = MirrorRepairTask::initialize(Arc::downgrade(&pool),
                 TxgT::from(42), 0, 0).await.unwrap();
-            task.repair_closed_zones().await;
-            task.finalize().await;
+            task.repair_closed_zones().await.unwrap();
+            task.finalize().await.unwrap();
         }
 
         /// If the Pool gets dropped before initialize, nothing bad should
@@ -1285,7 +1336,7 @@ mod ddml {
 
             let mut task = MirrorRepairTask::initialize(wpool,
                 TxgT::from(42), 0, 0).await.unwrap();
-            task.repair_closed_zones().await;
+            task.repair_closed_zones().await.unwrap();
         }
 
         /// If the Pool gets dropped just before the repair task finalizes the
@@ -1310,8 +1361,8 @@ mod ddml {
 
             let mut task = MirrorRepairTask::initialize(wpool,
                 TxgT::from(42), 0, 0).await.unwrap();
-            task.repair_closed_zones().await;
-            task.finalize().await;
+            task.repair_closed_zones().await.unwrap();
+            task.finalize().await.unwrap();
         }
     }
 }

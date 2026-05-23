@@ -15,7 +15,7 @@ use futures::{
     StreamExt,
     TryFutureExt,
     TryStreamExt,
-    future,
+    future::{self, Either},
     stream::{FuturesOrdered, FuturesUnordered},
     task::{Context, Poll}
 };
@@ -326,8 +326,8 @@ impl Child {
     fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> impl Future<Output=Result<()>> + Send + Sync
     {
         match self {
-            Child::Present(m) => m.repair_zone(zone, lbas),
-            _ => panic!("Cannot repair a faulted or missing Mirror")
+            Child::Present(m) => Either::Left(m.repair_zone(zone, lbas)),
+            _ => Either::Right(future::err(Error::ENXIO))
         }
     }
 
