@@ -307,9 +307,12 @@ pub unsafe extern "C" fn fio_bfffs_init(td: *mut thread_data) -> libc::c_int {
                     .spawn();
                 tracing_registry.with(console_layer).init();
             } else {
+                let filter = EnvFilter::builder()
+                    .with_env_var("BFFFS_LOG")
+                    .from_env_lossy();
                 tracing_registry
                     .with(tracing_subscriber::fmt::layer())
-                    .with(EnvFilter::from_default_env())
+                    .with(filter)
                     .init();
             }
 

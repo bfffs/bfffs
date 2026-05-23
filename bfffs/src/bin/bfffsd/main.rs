@@ -35,7 +35,7 @@ use nix::{
 use speedy::{Readable, Writable};
 use tokio_seqpacket::{UCred, UnixSeqpacket, UnixSeqpacketListener};
 use tracing::{error, warn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{filter::LevelFilter, prelude::*, EnvFilter};
 
 mod fs;
 
@@ -46,7 +46,7 @@ use crate::fs::FuseFs;
 struct Cli {
     /// Publish tracing data to tokio-console on port 6669.
     ///
-    /// If not set, print it to the terminal according to the RUST_LOG
+    /// If not set, print it to the terminal according to the BFFFS_LOG
     /// environment variable.
     #[clap(long)]
     console:   bool,
@@ -516,9 +516,13 @@ async fn main() {
             .spawn();
         tracing_registry.with(console_layer).init();
     } else {
+        let filter = EnvFilter::builder()
+            .with_env_var("BFFFS_LOG")
+            .with_default_directive(LevelFilter::WARN.into())
+            .from_env_lossy();
         tracing_registry
             .with(tracing_subscriber::fmt::layer())
-            .with(EnvFilter::from_default_env())
+            .with(filter)
             .init();
     }
 
