@@ -693,6 +693,11 @@ impl Mirror {
         Err(Error::ENOENT)
     }
 
+    /// Write a repairing label to every repairing child
+    pub fn repair_label(&self, mut labeller: LabelWriter, txg: TxgT) {
+        todo!()
+    }
+
     /// Return any fully rebuilt disks to service
     ///
     /// It is the caller's responsibility to ensure that all data has been fully
@@ -966,6 +971,8 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
+        pub fn repair_label(&self, labeller: LabelWriter, txg: TxgT)
+            -> BoxVdevFut;
         pub fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> BoxVdevFut;
         pub fn restore(&mut self);
         pub fn status(&self) -> Status;

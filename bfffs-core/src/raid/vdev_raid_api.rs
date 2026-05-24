@@ -78,6 +78,18 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     ///                        in this zone.
     fn reopen_zone(&self, zone: ZoneT, allocated: LbaT) -> BoxVdevFut;
 
+    /// Repair the label on a repairing child.
+    ///
+    /// But don't write new labels to any healthy child.
+    ///
+    /// `label_writer` should already contain the serialized labels of every
+    /// vdev stacked on top of this one.
+    ///
+    /// # Arguments
+    /// - `mirror_idx`:         Index of the raid child to repair
+    fn repair_label(&self, labeller: LabelWriter, mirror_idx: usize, txg: TxgT)
+        -> BoxVdevFut;
+
     /// Repair any degraded children by their Zone, using mirroring.
     // NB: we could save a Box here , because VdevRaid::repair_mirror_zone and
     // NullRaid::repair_mirror_zone do the exact same thing.

@@ -1115,6 +1115,7 @@ impl Cluster {
             } else {
                 let lbas = wp.and_then(NonZeroU64::new);
                 self.vdev.repair_mirror_zone(task.mirror_idx, zid, lbas).await?;
+                // TODO: write a label, if we've finished resilvering a TXG
             }
             Ok(true)
         } else {

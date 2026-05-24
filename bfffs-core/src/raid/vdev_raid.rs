@@ -2234,6 +2234,12 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, allocated)
     }
 
+    fn repair_label(&self, labeller: LabelWriter, mirror_idx: usize, txg: TxgT)
+        -> BoxVdevFut
+    {
+        todo!()
+    }
+
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
                           lbas: Option<NonZeroU64>) -> BoxVdevFut
     {
