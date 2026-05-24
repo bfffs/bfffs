@@ -69,6 +69,18 @@ impl NullRaid {
         let mirror = mirrors.into_iter().next().unwrap().1;
         NullRaid{uuid: label.uuid, mirror}
     }
+
+    fn write_label_priv(&self, mut labeller: LabelWriter, txg: TxgT,
+        repairing: bool) -> BoxVdevFut
+    {
+        let nullraid_label = Label {
+            uuid: self.uuid,
+            child: self.mirror.uuid()
+        };
+        let label = super::Label::NullRaid(nullraid_label);
+        labeller.serialize(&label).unwrap();
+        Box::pin(self.mirror.write_label(labeller, txg, repairing))
+    }
 }
 
 impl Vdev for NullRaid {
@@ -143,10 +155,10 @@ impl VdevRaidApi for NullRaid {
         Box::pin(future::ok(()))
     }
 
-    fn repair_label(&self, labeller: LabelWriter, mirror_idx: usize, txg: TxgT)
-        -> BoxVdevFut
+    fn repair_label(&self, labeller: LabelWriter, _mirror_idx: usize,
+        txg: TxgT) -> BoxVdevFut
     {
-        todo!()
+        self.write_label_priv(labeller, txg, true)
     }
 
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
@@ -201,15 +213,9 @@ impl VdevRaidApi for NullRaid {
         }
     }
 
-    fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
+    fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
-        let nullraid_label = Label {
-            uuid: self.uuid,
-            child: self.mirror.uuid()
-        };
-        let label = super::Label::NullRaid(nullraid_label);
-        labeller.serialize(&label).unwrap();
-        Box::pin(self.mirror.write_label(labeller, txg, false))
+        self.write_label_priv(labeller, txg, false)
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
