@@ -834,6 +834,22 @@ pub struct RepairMirrorTask {
     zones: VecDeque<ZoneT>,
 } 
 
+/// The specification for what zones need to be repaired and in what order
+#[derive(Debug)]
+struct RepairMirrorZoneSpec {
+    /// Ordered list of zone IDs to repair
+    zones:          VecDeque<ZoneT>,
+
+    /// The maximum transaction seen among `zones`, if any
+    /// It is guaranteed that there will never be any Zones with a maximum txg
+    /// lower than this in the Cluster, unless they're already included in
+    /// `zones`.
+    max_end_txg:  Option<TxgT>,
+
+    /// The lowest start txg of any Open Zone in the Cluster.
+    min_open_txg:   Option<TxgT>
+}
+
 /// A `Cluster` is BFFFS's equivalent of ZFS's top-level Vdev.  It is the
 /// highest level `Vdev` that has its own LBA space.
 pub struct Cluster {
@@ -1041,37 +1057,29 @@ impl Cluster {
     pub fn repair_mirror(&self, mirror_idx: usize, txgs: RangeFrom<TxgT>)
         -> RepairMirrorTask
     {
-        //RepairMirrorTask::new(self, mirror_idx, txgs)
         // next_txg needs to be low enough to encompass any zones that didn't
         // make it into zones, including those that might not yet be open.
-        let (zones, maxtxg) = self.repair_mirror_gather_zones(txgs, false);
-        let next_txg = if let Some(maxtxg) = maxtxg {
+        let zs = self.repair_mirror_gather_zones(txgs, false);
+        let next_txg = if let Some(maxtxg) = zs.max_end_txg {
             maxtxg + 1
         } else {
             TxgT::from(0)
         };
-        RepairMirrorTask{ mirror_idx, zones, next_txg}
-
-        // XXX what happens if a closed Zone gets erased at this point, before
-        // we repair it?
-        // XXX What happens if an open zone gets more data written to it at this
-        // point, before we repair it?
-        // XXX What happens if an empty zone gets opened and written to at this
-        // point, before we repair it?
-        // NB: one solution to the above problems would be to store the txg
-        // currently rebuilding in the Cluster, and:
-        //   - avoid erasing any zones while they are rebuilding,
-        //   - Iterate through the FSM progressively, moving one txg at a time,
-        //     each time we finish rebuilding one zone.
+        RepairMirrorTask{ mirror_idx, zones: zs.zones, next_txg}
     }
 
     /// Make an ordered list of every zone that might contain data in the
     /// specified transaction range.  Return that list, and also the highest
     /// transaction seen among these zones.
+    ///
+    /// # Arguments
+    /// - `txgs`              - Transaction range that needs to be repaired
+    /// - `repair_open_zones` - Whether to include open zones in the list, or
+    ///                         defer them for later.
     fn repair_mirror_gather_zones(
         &self,
         txgs: RangeFrom<TxgT>,
-        repair_open_zones: bool) -> (VecDeque<ZoneT>, Option<TxgT>)
+        repair_open_zones: bool) -> RepairMirrorZoneSpec
     {
         let fsm = self.fsm.read().unwrap();
         let mut zones: Vec<ZoneT> = fsm.contains(txgs)
@@ -1086,10 +1094,14 @@ impl Cluster {
                 *zid
             )
         );
-        let maxtxg = zones.iter()
+        let max_end_txg = zones.iter()
             .map(|zid| fsm.zones[*zid as usize].txgs.end)
             .max();
-        (zones.into(), maxtxg)
+        RepairMirrorZoneSpec {
+            zones: zones.into(),
+            max_end_txg,
+            min_open_txg: None  //TODO!
+        }
     }
 
     /// Try to repair one Zone.  Return true if there might be more Zones to
@@ -1124,11 +1136,10 @@ impl Cluster {
             // Generate a new list of zones, excluding all Zones that we've
             // already repaired.
             // Let the caller know whether there are more zones to repair
-            let (new_zones, maxtxg) =
-                self.repair_mirror_gather_zones(task.next_txg..,
-                                                repair_open_zones);
-            task.zones = new_zones;
-            if let Some(maxtxg) = maxtxg {
+            let zs = self.repair_mirror_gather_zones(task.next_txg..,
+                                                     repair_open_zones);
+            task.zones = zs.zones;
+            if let Some(maxtxg) = zs.max_end_txg {
                 task.next_txg = maxtxg.checked_add(TxgT::from(1))
                     .expect("An open zone had an illegal end TXG");
             }
