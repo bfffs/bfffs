@@ -209,7 +209,7 @@ impl VdevRaidApi for NullRaid {
         };
         let label = super::Label::NullRaid(nullraid_label);
         labeller.serialize(&label).unwrap();
-        Box::pin(self.mirror.write_label(labeller, txg))
+        Box::pin(self.mirror.write_label(labeller, txg, false))
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

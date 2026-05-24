@@ -369,7 +369,7 @@ impl Child {
     }
 
     fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut {
-        self.as_present().unwrap().write_label(labeller, txg)
+        self.as_present().unwrap().write_label(labeller, txg, false)
     }
 
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)

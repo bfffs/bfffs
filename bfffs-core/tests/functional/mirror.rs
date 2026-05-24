@@ -104,7 +104,7 @@ mod open {
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
         let txg = TxgT::from(1);
-        old_vdev.write_label(label_writer, txg).await.unwrap();
+        old_vdev.write_label(label_writer, txg, false).await.unwrap();
         let old_status = old_vdev.status();
         drop(old_vdev);
 
@@ -154,7 +154,7 @@ mod persistence {
         let (old_vdev, _tempdir, paths) = harness;
         let uuid = old_vdev.uuid();
         let label_writer = LabelWriter::new(0);
-        old_vdev.write_label(label_writer, TxgT::from(1)).await.unwrap();
+        old_vdev.write_label(label_writer, TxgT::from(1), false).await.unwrap();
         drop(old_vdev);
 
         let mut manager = Manager::default();
@@ -169,7 +169,7 @@ mod persistence {
     #[tokio::test]
     async fn write_label(harness: Harness) {
         let label_writer = LabelWriter::new(0);
-        harness.0.write_label(label_writer, TxgT::from(1)).await.unwrap();
+        harness.0.write_label(label_writer, TxgT::from(1), false).await.unwrap();
 
         for path in harness.2 {
             let mut f = fs::File::open(path).unwrap();

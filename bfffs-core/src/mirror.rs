@@ -260,6 +260,12 @@ impl Child {
         self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
+    fn repair_label(&self, labeller: LabelWriter, txg: TxgT)
+        -> Option<VdevBlockFut>
+    {
+        self.as_rebuilding().map(|vb| vb.write_label(labeller, txg))
+    }
+
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> Option<VdevBlockFut>
     {
@@ -693,11 +699,6 @@ impl Mirror {
         Err(Error::ENOENT)
     }
 
-    /// Write a repairing label to every repairing child
-    pub fn repair_label(&self, mut labeller: LabelWriter, txg: TxgT) {
-        todo!()
-    }
-
     /// Return any fully rebuilt disks to service
     ///
     /// It is the caller's responsibility to ensure that all data has been fully
@@ -771,7 +772,8 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT,
+                       repairing: bool)
         -> BoxVdevFut
     {
         let children_uuids = self.children.iter().map(Child::uuid)
@@ -782,7 +784,11 @@ impl Mirror {
         };
         labeller.serialize(&label).unwrap();
         let fut = self.children.iter().filter_map(|bd| {
-           bd.write_label(labeller.clone(), txg)
+            if repairing {
+                bd.repair_label(labeller.clone(), txg)
+            } else {
+                bd.write_label(labeller.clone(), txg)
+            }
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -971,15 +977,14 @@ mock! {
             -> Pin<Box<dyn Future<Output=Result<Box<dyn Iterator<Item=DivBufShared> + Send>>> + Send>>;
         pub fn read_spacemap(&self, buf: IoVecMut, idx: u32) -> BoxVdevFut;
         pub fn readv_at(&self, bufs: SGListMut, lba: LbaT) -> BoxVdevFut;
-        pub fn repair_label(&self, labeller: LabelWriter, txg: TxgT)
-            -> BoxVdevFut;
         pub fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> BoxVdevFut;
         pub fn restore(&mut self);
         pub fn status(&self) -> Status;
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT,
+                           repairing: bool)
             -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
@@ -2540,7 +2545,7 @@ mod t {
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1]);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller, TxgT::from(1))
+            mirror.write_label(labeller, TxgT::from(1), false)
                 .now_or_never()
                 .unwrap()
                 .unwrap();
@@ -2558,7 +2563,28 @@ mod t {
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller, TxgT::from(1))
+            mirror.write_label(labeller, TxgT::from(1), false)
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+        }
+
+        #[test]
+        fn repairing() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_write_label()
+                .once()
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let mut bd1 = mock_vdev_block();
+            bd1.expect_write_label()
+                .never();
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            let labeller = LabelWriter::new(0);
+            mirror.write_label(labeller, TxgT::from(1), true)
                 .now_or_never()
                 .unwrap()
                 .unwrap();
