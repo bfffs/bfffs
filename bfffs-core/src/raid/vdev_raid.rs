@@ -323,6 +323,18 @@ impl Child {
         }
     }
 
+    /// Repair the label on an underlying mirror device.  This method has
+    /// nothing to do with RAID repair.
+    fn repair_label(&self, labeller: LabelWriter, txg: TxgT) -> impl Future<Output=Result<()>> + Send + Sync
+    {
+        match self {
+            Child::Present(m) => Either::Left(
+                m.write_label(labeller, txg, true)
+            ),
+            _ => Either::Right(future::err(Error::ENXIO))
+        }
+    }
+
     fn repair_zone(&self, zone: ZoneT, lbas: Option<NonZeroU64>) -> impl Future<Output=Result<()>> + Send + Sync
     {
         match self {
@@ -1665,6 +1677,21 @@ impl VdevRaid {
         Ok(())
     }
 
+    fn serialize_label(&self, labeller: &mut LabelWriter) {
+        let children_uuids = self.inner.children.iter().map(|bd| bd.uuid())
+            .collect::<Vec<_>>();
+        let raid_label = Label {
+            uuid: self.uuid,
+            chunksize: self.chunksize,
+            disks_per_stripe: self.inner.locator.stripesize(),
+            redundancy: self.inner.locator.protection(),
+            layout_algorithm: self.layout_algorithm,
+            children: children_uuids
+        };
+        let label = super::Label::Raid(raid_label);
+        labeller.serialize(&label).unwrap();
+    }
+
     /// Write two or more whole stripes
     #[allow(clippy::needless_range_loop)]   // Code looks better this way
     fn write_at_multi(&self, mut buf: IoVec, lba: LbaT) -> BoxVdevFut {
@@ -2234,10 +2261,11 @@ impl VdevRaidApi for VdevRaid {
         self.open_zone_priv(zone, allocated)
     }
 
-    fn repair_label(&self, labeller: LabelWriter, mirror_idx: usize, txg: TxgT)
-        -> BoxVdevFut
+    fn repair_label(&self, mut labeller: LabelWriter, mirror_idx: usize,
+        txg: TxgT) -> BoxVdevFut
     {
-        todo!()
+        self.serialize_label(&mut labeller);
+        Box::pin(self.inner.children[mirror_idx].repair_label(labeller, txg))
     }
 
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
@@ -2415,18 +2443,7 @@ impl VdevRaidApi for VdevRaid {
 
     fn write_label(&self, mut labeller: LabelWriter, txg: TxgT) -> BoxVdevFut
     {
-        let children_uuids = self.inner.children.iter().map(|bd| bd.uuid())
-            .collect::<Vec<_>>();
-        let raid_label = Label {
-            uuid: self.uuid,
-            chunksize: self.chunksize,
-            disks_per_stripe: self.inner.locator.stripesize(),
-            redundancy: self.inner.locator.protection(),
-            layout_algorithm: self.layout_algorithm,
-            children: children_uuids
-        };
-        let label = super::Label::Raid(raid_label);
-        labeller.serialize(&label).unwrap();
+        self.serialize_label(&mut labeller);
         let fut = self.inner.children.iter().map(|bd| {
            bd.write_label(labeller.clone(), txg)
         }).collect::<FuturesUnordered<_>>()
