@@ -2871,9 +2871,6 @@ mod repair_mirror {
     use rstest::rstest;
     use super::super::*;
 
-    // TODO
-    // [ ] Don't repair Open zones until all Closed zones have been repaired
-    // [ ] Repair Open zones only when the pool is locked
     #[test]
     fn creation() {
         let mut vr = MockVdevRaid::default();
