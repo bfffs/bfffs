@@ -260,6 +260,7 @@ impl Child {
         self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
+    /// Repair a label of any child in the Rebuilding state
     fn repair_label(&self, labeller: LabelWriter, txg: TxgT)
         -> Option<VdevBlockFut>
     {

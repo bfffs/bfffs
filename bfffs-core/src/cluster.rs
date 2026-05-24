@@ -816,6 +816,13 @@ impl SpacemapOnDisk {
 #[derive(Debug)]
 #[cfg_attr(test, derive(Default))]
 pub struct RepairMirrorTask {
+    /// The last transaction synced to the vdev at the time the task was started
+    initial_txg: TxgT,
+
+    /// The minimum start transaction for any Open Zone in the system, as of the
+    /// time that `zones` was determined.
+    min_open_txg: Option<TxgT>,
+
     /// Index of the mirror child that we're repairing.
     mirror_idx: usize,
 
@@ -1059,13 +1066,20 @@ impl Cluster {
     {
         // next_txg needs to be low enough to encompass any zones that didn't
         // make it into zones, including those that might not yet be open.
-        let zs = self.repair_mirror_gather_zones(txgs, false);
+        let initial_txg = txgs.start;
+        let zs = self.order_zones_for_repair(txgs, false);
         let next_txg = if let Some(maxtxg) = zs.max_end_txg {
             maxtxg + 1
         } else {
             TxgT::from(0)
         };
-        RepairMirrorTask{ mirror_idx, zones: zs.zones, next_txg}
+        RepairMirrorTask{
+            initial_txg,
+            mirror_idx,
+            zones: zs.zones,
+            next_txg,
+            min_open_txg: zs.min_open_txg
+        }
     }
 
     /// Make an ordered list of every zone that might contain data in the
@@ -1076,7 +1090,7 @@ impl Cluster {
     /// - `txgs`              - Transaction range that needs to be repaired
     /// - `repair_open_zones` - Whether to include open zones in the list, or
     ///                         defer them for later.
-    fn repair_mirror_gather_zones(
+    fn order_zones_for_repair(
         &self,
         txgs: RangeFrom<TxgT>,
         repair_open_zones: bool) -> RepairMirrorZoneSpec
@@ -1094,13 +1108,19 @@ impl Cluster {
                 *zid
             )
         );
+
         let max_end_txg = zones.iter()
             .map(|zid| fsm.zones[*zid as usize].txgs.end)
             .max();
+
+        let min_open_txg = fsm.open_zone_ids()
+            .map(|zid| fsm.zones[*zid as usize].txgs.start)
+            .min();
+
         RepairMirrorZoneSpec {
             zones: zones.into(),
             max_end_txg,
-            min_open_txg: None  //TODO!
+            min_open_txg
         }
     }
 
@@ -1112,14 +1132,41 @@ impl Cluster {
         repair_open_zones: bool) -> Result<bool>
     {
         if let Some(zid) = task.zones.pop_front() {
-            let wp = {
+            let (wp, sync_txg) = {
                 let fsm = self.fsm.read().unwrap();
                 if fsm.is_dead(zid) || fsm.is_empty(zid) {
                     // This zone was alive when self was created.  It must've
                     // subsequently died.  Nothing to do here.
                     return Ok(true) ;
                 }
-                fsm.write_pointer(zid)
+                // Update the vdev's label if this is the last zone that starts
+                // with this txg.
+                let start_txg = fsm.zones[zid as usize].txgs.start;
+                let want_txg = if let Some(next_zid) = task.zones.front() {
+                    if start_txg < fsm.zones[*next_zid as usize].txgs.start {
+                        Some(fsm.zones[*next_zid as usize].txgs.start - 1)
+                    } else {
+                        None
+                    }
+                } else {
+                    Some(fsm.zones[zid as usize].txgs.end - 1)
+                };
+                // Limit the label update if there are any open zones that we
+                // haven't rebuilt yet.
+                let mut sync_txg = match (want_txg, task.min_open_txg) {
+                    (Some(x), Some(y)) if y > x => Some(x),
+                    (Some(_), Some(_)) => None,
+                    (Some(x), None) => Some(x),
+                    (None, _) => None
+                };
+                // Don't update the label if it wouldn't be higher than the txg
+                // already present on the label.
+                if let Some(stxg) = sync_txg {
+                    if task.initial_txg >= stxg {
+                        sync_txg = None;
+                    }
+                }
+                (fsm.write_pointer(zid), sync_txg)
             };
             if wp == Some(0) {
                 // It's unusual but not illegal for an open zone to have zero
@@ -1128,7 +1175,17 @@ impl Cluster {
                 let lbas = wp.and_then(NonZeroU64::new);
                 self.vdev.repair_mirror_zone(task.mirror_idx, zid, lbas).await?;
             }
-            // TODO: write a label, if we've finished resilvering a TXG
+            if let Some(sync_txg) = sync_txg {
+                // XXX this sync_all applies to the entire VdevRaid, not just
+                // the repairing device(s).  That's a performance bug.
+                self.vdev.sync_all().await?;
+                let lw = LabelWriter::new(0);
+                self.vdev.repair_label(lw, task.mirror_idx, sync_txg).await?;
+                self.vdev.sync_all().await?;
+                let lw = LabelWriter::new(1);
+                self.vdev.repair_label(lw, task.mirror_idx, sync_txg).await?;
+                self.vdev.sync_all().await?;
+            }
             Ok(true)
         } else {
             // We've finished repairing all zones that we knew needed to be
@@ -1136,13 +1193,14 @@ impl Cluster {
             // Generate a new list of zones, excluding all Zones that we've
             // already repaired.
             // Let the caller know whether there are more zones to repair
-            let zs = self.repair_mirror_gather_zones(task.next_txg..,
-                                                     repair_open_zones);
+            let zs = self.order_zones_for_repair(task.next_txg..,
+                                                 repair_open_zones);
             task.zones = zs.zones;
             if let Some(maxtxg) = zs.max_end_txg {
                 task.next_txg = maxtxg.checked_add(TxgT::from(1))
                     .expect("An open zone had an illegal end TXG");
             }
+            task.min_open_txg = zs.min_open_txg;
             Ok(!task.zones.is_empty())
         }
     }
@@ -2883,6 +2941,36 @@ mod repair_mirror {
     use rstest::rstest;
     use super::super::*;
 
+    fn expect_repair_both_labels(
+        vr: &mut MockVdevRaid,
+        seq: &mut Sequence,
+        m_idx: usize,
+        txg: TxgT)
+    {
+        vr.expect_sync_all()
+            .once()
+            .in_sequence(seq)
+            .return_once(|| Box::pin(future::ok(())));
+        vr.expect_repair_label()
+            .once()
+            .in_sequence(seq)
+            .with(always(), eq(m_idx), eq(txg))
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        vr.expect_sync_all()
+            .once()
+            .in_sequence(seq)
+            .return_once(|| Box::pin(future::ok(())));
+        vr.expect_repair_label()
+            .once()
+            .in_sequence(seq)
+            .with(always(), eq(m_idx), eq(txg))
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        vr.expect_sync_all()
+            .once()
+            .in_sequence(seq)
+            .return_once(|| Box::pin(future::ok(())));
+    }
+
     #[test]
     fn creation() {
         let mut vr = MockVdevRaid::default();
@@ -2977,6 +3065,10 @@ mod repair_mirror {
         vr.expect_zone_limits()
             .with(eq(2))
             .return_const((20, 30));
+        vr.expect_sync_all()
+            .returning(|| Box::pin(future::ok(())));
+        vr.expect_repair_label()
+            .returning(|_, _, _| Box::pin(future::ok(())));
         vr.expect_repair_mirror_zone()
             .with(eq(1), eq(0), eq(None))
             .return_once(|_, _, _| Box::pin(future::ok(())));
@@ -3110,10 +3202,7 @@ mod repair_mirror {
             .in_sequence(&mut seq)
             .return_once(|_, _, _| Box::pin(future::ok(())));
         // Then update its label, because no other zone has a lower one
-        vr.expect_repair_label()
-            .once()
-            .with(always(), eq(1), eq(TxgT::from(1)))
-            .return_once(|_, _, _| Box::pin(future::ok(())));
+        expect_repair_both_labels(&mut vr, &mut seq, 1, TxgT::from(1));
         // Then it should proceed to repair zone 1
         vr.expect_repair_mirror_zone()
             .once()
@@ -3131,13 +3220,13 @@ mod repair_mirror {
         let mut fsm = FreeSpaceMap::new(vr.zones());
         // Zone 0 will span TXG 1..3
         fsm.open_zone(0, 1, 1000, 100, TxgT::from(1)).unwrap();
-        fsm.finish_zone(0, TxgT::from(3));
+        fsm.finish_zone(0, TxgT::from(2));
         // Zone 1 will span TXG 2..4
         fsm.open_zone(1, 1000, 2000, 100, TxgT::from(2)).unwrap();
-        fsm.finish_zone(1, TxgT::from(4));
+        fsm.finish_zone(1, TxgT::from(3));
         // Zone 2 will span TXG 3..5
         fsm.open_zone(2, 1000, 2000, 100, TxgT::from(3)).unwrap();
-        fsm.finish_zone(2, TxgT::from(3));
+        fsm.finish_zone(2, TxgT::from(4));
         // Zone 3 will be open, and will span 2..
         fsm.open_zone(3, 1000, 2000, 100, TxgT::from(2)).unwrap();
 
@@ -3183,48 +3272,39 @@ mod repair_mirror {
             .return_once(|_, _, _| Box::pin(future::ok(())));
         // Then it should update the label to txg 2, the highest TXG not
         // included in any remaining Zone
-        vr.expect_repair_label()
-            .once()
-            .with(always(), eq(1), eq(TxgT::from(2)))
-            .return_once(|_, _, _| Box::pin(future::ok(())));
+        expect_repair_both_labels(&mut vr, &mut seq, 1, TxgT::from(2));
         // Then it should repair zone 2 and repair the label's TXG to 3
         vr.expect_repair_mirror_zone()
             .once()
-            .with(eq(2), eq(1), eq(None))
+            .with(eq(1), eq(2), eq(None))
             .in_sequence(&mut seq)
             .return_once(|_, _, _| Box::pin(future::ok(())));
-        vr.expect_repair_label()
-            .once()
-            .with(always(), eq(1), eq(TxgT::from(3)))
-            .return_once(|_, _, _| Box::pin(future::ok(())));
+        expect_repair_both_labels(&mut vr, &mut seq, 1, TxgT::from(3));
         // Then it should repair zone 3.
         vr.expect_repair_mirror_zone()
             .once()
-            .with(eq(3), eq(1), eq(None))
+            .with(eq(1), eq(3), eq(None))
             .in_sequence(&mut seq)
             .return_once(|_, _, _| Box::pin(future::ok(())));
         // Finally, it should update the label.  Since this is the last Zone,
         // open or closed, it should update the label to one less than this
         // Zone's end.  We can't set it to the end, because Zones' ends are
         // exclusive.
-        vr.expect_repair_label()
-            .once()
-            .with(always(), eq(1), eq(TxgT::from(5)))
-            .return_once(|_, _, _| Box::pin(future::ok(())));
+        expect_repair_both_labels(&mut vr, &mut seq, 1, TxgT::from(5));
 
         let mut fsm = FreeSpaceMap::new(vr.zones());
         // Zone 0 will span TXG 1..3
         fsm.open_zone(0, 1, 1000, 100, TxgT::from(1)).unwrap();
-        fsm.finish_zone(0, TxgT::from(3));
+        fsm.finish_zone(0, TxgT::from(2));
         // Zone 1 will span TXG 1..5
         fsm.open_zone(1, 1000, 2000, 100, TxgT::from(1)).unwrap();
-        fsm.finish_zone(1, TxgT::from(5));
+        fsm.finish_zone(1, TxgT::from(4));
         // Zone 2 will span TXG 3..5
         fsm.open_zone(2, 1000, 2000, 100, TxgT::from(3)).unwrap();
-        fsm.finish_zone(2, TxgT::from(5));
+        fsm.finish_zone(2, TxgT::from(4));
         // Zone 3 will span Txg 4..6
         fsm.open_zone(3, 2000, 3000, 150, TxgT::from(4)).unwrap();
-        fsm.finish_zone(3, TxgT::from(6));
+        fsm.finish_zone(3, TxgT::from(5));
 
         let cl = Cluster::new((fsm, vr.into()));
         let mut task = cl.repair_mirror(1, TxgT::from(0)..);
@@ -3261,18 +3341,15 @@ mod repair_mirror {
             .in_sequence(&mut seq)
             .return_once(|_, _, _| Box::pin(future::ok(())));
         // Finally it should repair the label to txg 4
-        vr.expect_repair_label()
-            .once()
-            .with(always(), eq(1), eq(TxgT::from(4)))
-            .return_once(|_, _, _| Box::pin(future::ok(())));
+        expect_repair_both_labels(&mut vr, &mut seq, 1, TxgT::from(4));
 
         let mut fsm = FreeSpaceMap::new(vr.zones());
-        // Zone 0 will span TXG 1..3
+        // Zone 0 will span TXG 1..4
         fsm.open_zone(0, 1, 1000, 100, TxgT::from(1)).unwrap();
         fsm.finish_zone(0, TxgT::from(3));
         // Zone 1 will span TXG 3..5
         fsm.open_zone(1, 1000, 2000, 100, TxgT::from(3)).unwrap();
-        fsm.finish_zone(1, TxgT::from(5));
+        fsm.finish_zone(1, TxgT::from(4));
 
         let cl = Cluster::new((fsm, vr.into()));
         let mut task = cl.repair_mirror(1, TxgT::from(3)..);

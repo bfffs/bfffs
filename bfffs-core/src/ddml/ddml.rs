@@ -91,12 +91,6 @@ impl MirrorRepairTask {
             if let Some(pool) = self.wpool.upgrade() {
                 let more = pool.read().await
                     .repair_mirror_step(&mut self.pool_task, false).await?;
-                // TODO: write the label on the repairing device, if this
-                // step finished a transaction, and if there aren't any Open
-                // Zones with a start Txg lower than this one.
-                // Such label won't have any idml or database label components,
-                // but that's ok, because we'll only ever need it to resume
-                // repair, not to import the whole pool.
                 if !more {
                     break;
                 }
