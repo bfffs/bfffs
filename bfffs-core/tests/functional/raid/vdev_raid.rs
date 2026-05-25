@@ -227,7 +227,7 @@ mod errors {
 
             let zl = h.vdev.zone_limits(0);
             h.vdev.write_at(wbuf0, 0, zl.0).await.unwrap();
-            h.gnops[0].error_prob(100);
+            h.gnops[0].read_error_prob(100);
             h.vdev.clone().read_at(rbuf, zl.0).await.unwrap();
             assert!(wbuf1[..] == dbsr.try_const().unwrap()[..],
                 "miscompare!");
@@ -256,7 +256,7 @@ mod errors {
             let rbuf = dbsr.try_mut().unwrap();
 
             h.vdev.write_spacemap(vec![wbuf0], idx, block).await.unwrap();
-            h.gnops[0].error_prob(100);
+            h.gnops[0].read_error_prob(100);
             h.vdev.clone().read_spacemap(rbuf, idx).await.unwrap();
             assert!(wbuf1[..] == dbsr.try_const().unwrap()[..],
                 "miscompare!");

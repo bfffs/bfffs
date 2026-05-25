@@ -9,6 +9,7 @@ use bfffs_core::{
     LbaT
 };
 use divbuf::{DivBuf, DivBufShared};
+use function_name::named;
 use futures::TryFutureExt;
 use pretty_assertions::assert_eq;
 use rstest::{fixture, rstest};
@@ -17,8 +18,10 @@ use std::{
     io::Read,
     os::unix::fs::FileExt,
     path::PathBuf,
-    sync::{Arc, Mutex}
+    sync::{Arc, Mutex},
+    time::Duration
 };
+use tokio::time::sleep;
 
 #[fixture]
 fn ddml() -> DDML {
@@ -32,7 +35,7 @@ fn ddml() -> DDML {
 /// The DDML can reconstruct a faulted mirrored disk.
 #[rstest]
 #[test_log::test(tokio::test)]
-async fn mirror_reconstruction(
+async fn repair_mirror(
         #[values(
             // non-raid
             (1, 1, 0),
@@ -93,7 +96,7 @@ async fn mirror_reconstruction(
 
     // Wait for the mirror repair task to finish
     while ddml.status().await.clusters[0].mirrors[0].rebuilding.is_some() {
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
     }
 
     // Verify by reading all data back
@@ -111,6 +114,106 @@ async fn mirror_reconstruction(
         ddml.evict(drp);
         let db: Box<DivBuf> = ddml.get::<DivBufShared, DivBuf>(drp).await.unwrap();
         assert_eq!(&db[..], &vec![i as u8; BYTES_PER_LBA][..]);
+    }
+}
+
+/// Incremental repair: we can stop a repair halfway through and restart it
+/// without losing work.
+#[named]
+#[rstest]
+#[test_log::test(tokio::test)]
+async fn repair_mirror_incremental() {
+    crate::require_root!();
+    let zone_size = 32;
+    let ph = crate::PoolBuilder::new()
+        .mirror_size(2)
+        .disks(2)
+        .gnop(true)
+        .zone_size(zone_size)
+        .fsize(1 << 20)     // 1 MB
+        .build();
+    let paths = ph.paths.clone();
+    let pool_uuid = ph.pool.uuid();
+    let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000_000)));
+    let ddml = DDML::create(ph.pool, cache.clone());
+
+    // Write initial label to all disks
+    let mut txg = TxgT::from(1);
+    ddml.flush(0).await.unwrap();
+    ddml.write_label(LabelWriter::new(0), txg).await.unwrap();
+    ddml.flush(1).await.unwrap();
+    ddml.write_label(LabelWriter::new(1), txg).await.unwrap();
+    ddml.sync_all(txg).await.unwrap();
+
+    // Fault one disk
+    let stat = ddml.status().await;
+    let leaf_uuid = stat.clusters[0].mirrors[0].leaves[0].uuid;
+    ddml.fault(leaf_uuid).await.unwrap();
+
+    // Tell gnop to fail after we've definitely written a full zone, even if
+    // VdevBlock doesn't accumulate anything.
+    let write_fail_count = zone_size + 4;
+
+    // Write enough data that even if VdevBlock accumulates all writes in a
+    // single zone, we'll still comfortably exceed write_fail_count
+    let minimum_writes_per_zone = 3;
+    let zone_count = write_fail_count / minimum_writes_per_zone * 2;
+    for _ in 0..zone_count {
+        for i in 0..zone_size {
+            let dbs = DivBufShared::from(vec![i as u8; BYTES_PER_LBA]);
+            ddml.put(dbs, Compression::None, txg).await.unwrap();
+        }
+        txg += 1;
+        ddml.flush(0).await.unwrap();
+        ddml.write_label(LabelWriter::new(0), txg).await.unwrap();
+        ddml.flush(1).await.unwrap();
+        ddml.write_label(LabelWriter::new(1), txg).await.unwrap();
+        ddml.sync_all(txg).await.unwrap();
+    }
+    let last_txg = txg;
+
+    // Drop the pool and inject errors.  probability 100 means that after
+    // `count` successful writes, all following writes will fail.
+    drop(ddml);
+    ph.gnops[0].write_error_prob(100, write_fail_count);
+
+    // Reimport the pool
+    let mut manager = bfffs_core::pool::Manager::default();
+    for path in paths.iter() {
+        manager.taste(path).await.unwrap();
+    }
+    let (pool, _) = manager.import(pool_uuid).await.unwrap();
+
+    // Create new DDML.  It will immediately begin repairing the mirror
+    let mut ddml = DDML::open(pool, cache.clone());
+
+    // Wait for the repair to get aborted when gnop starts to return errors
+    while ddml.is_repairing() {
+        sleep(Duration::from_millis(10)).await;
+    }
+
+    // Drop the pool once more
+    drop(ddml);
+
+    // Clear errors and verify that the label's TXG is intermediate
+    ph.gnops[0].write_error_prob(0, 0);
+    let mut bmanager = bfffs_core::vdev_block::Manager::default();
+    bmanager.taste(&paths[0]).await.unwrap();
+    let (vb, _) = bmanager.import(leaf_uuid).await.unwrap();
+    println!("Rebuilding halted at txg {:?} out of {:?}", vb.txg(), last_txg);
+    assert!(vb.txg() > TxgT::from(1));
+    assert!(vb.txg() < last_txg);
+    drop(vb);
+
+    // Reimport and wait for completion
+    let mut manager = bfffs_core::pool::Manager::default();
+    for path in paths.iter() {
+        manager.taste(path).await.unwrap();
+    }
+    let (pool, _) = manager.import(pool_uuid).await.unwrap();
+    let ddml = DDML::open(pool, cache);
+    while ddml.status().await.clusters[0].mirrors[0].rebuilding.is_some() {
+        sleep(Duration::from_millis(10)).await;
     }
 }
 

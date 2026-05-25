@@ -86,10 +86,26 @@ impl Gnop {
     }
 
     /// Set the probability of failure on read, from 0 to 100 percent.
-    pub fn error_prob(&self, prob: i32) {
+    pub fn read_error_prob(&self, prob: i32) {
         let r = Command::new("gnop")
             .args(["configure", "-r"])
             .arg(format!("{prob}"))
+            .arg(self.as_path())
+            .status()
+            .expect("Failed to execute command")
+            .success();
+        assert!(r, "Failed to configure gnop");
+    }
+
+    /// Set the probability of failure on write, from 0 to 100 percent.  `count`
+    /// is the number of I/O requests to allow to succeed before the error
+    /// probability takes effect.
+    pub fn write_error_prob(&self, prob: i32, count: u64) {
+        let r = Command::new("gnop")
+            .args(["configure", "-w"])
+            .arg(format!("{prob}"))
+            .arg("-c")
+            .arg(format!("{count}"))
             .arg(self.as_path())
             .status()
             .expect("Failed to execute command")

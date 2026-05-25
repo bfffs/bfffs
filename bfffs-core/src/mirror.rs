@@ -260,6 +260,13 @@ impl Child {
         self.as_present().map(|vb| vb.write_label(labeller, txg))
     }
 
+    /// Repair a label of any child in the Rebuilding state
+    fn repair_label(&self, labeller: LabelWriter, txg: TxgT)
+        -> Option<VdevBlockFut>
+    {
+        self.as_rebuilding().map(|vb| vb.write_label(labeller, txg))
+    }
+
     fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
         -> Option<VdevBlockFut>
     {
@@ -455,7 +462,7 @@ impl Mirror {
                     assert_eq!(u, label.uuid,
                                "Opening disk from wrong mirror");
                 }
-                if label_pair.is_none() {
+                if label_pair.is_none() && vdev_block.txg() == highest_txg {
                     label_pair = Some((label, label_reader));
                 }
                 (vdev_block.uuid(), vdev_block)
@@ -766,7 +773,8 @@ impl Mirror {
         Box::pin(fut)
     }
 
-    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT)
+    pub fn write_label(&self, mut labeller: LabelWriter, txg: TxgT,
+                       repairing: bool)
         -> BoxVdevFut
     {
         let children_uuids = self.children.iter().map(Child::uuid)
@@ -777,7 +785,11 @@ impl Mirror {
         };
         labeller.serialize(&label).unwrap();
         let fut = self.children.iter().filter_map(|bd| {
-           bd.write_label(labeller.clone(), txg)
+            if repairing {
+                bd.repair_label(labeller.clone(), txg)
+            } else {
+                bd.write_label(labeller.clone(), txg)
+            }
         }).collect::<FuturesUnordered<_>>()
         .try_collect::<Vec<_>>()
         .map_ok(drop);
@@ -972,7 +984,8 @@ mock! {
         pub fn sync_all(&self) -> BoxVdevFut;
         pub fn uuid(&self) -> Uuid;
         pub fn write_at(&self, buf: IoVec, lba: LbaT) -> BoxVdevFut;
-        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT)
+        pub fn write_label(&self, labeller: LabelWriter, txg: TxgT,
+                           repairing: bool)
             -> BoxVdevFut;
         pub fn write_spacemap(&self, sglist: SGList, idx: u32, block: LbaT)
             ->  BoxVdevFut;
@@ -1264,11 +1277,20 @@ mod t {
         }
 
         /// If one VdevBlock is out-of-date, it will be opened into the
-        /// Rebuilding state.
-        #[test]
-        fn out_of_date() {
+        /// Rebuilding state.  And the returned LabelReader will come from the
+        /// up-to-date child.  Create a third missing child, whose UUID is
+        /// different on the two labels, just to ensure that Mirror::open
+        /// returns the LabelReader from the more up-to-date VdevBlock.
+        #[rstest]
+        #[case(0)]
+        #[case(1)]
+        fn out_of_date(#[case] rebuilding_child_idx: usize) {
+            let healthy_child_idx = 1 - rebuilding_child_idx;
+
             let child_uuid0 = Uuid::new_v4();
             let child_uuid1 = Uuid::new_v4();
+            let child_uuid2 = [Uuid::new_v4(), Uuid::new_v4()];
+            let mirror_uuid = Uuid::new_v4();
             fn mock(child_uuid: &Uuid) -> VdevBlock {
                 let mut bd = VdevBlock::default();
                 bd.expect_uuid()
@@ -1279,33 +1301,45 @@ mod t {
                     .return_const(262_144u64);
                 bd
             }
-            let label = Label {
-                uuid: Uuid::new_v4(),
-                children: vec![child_uuid0, child_uuid1]
+            let label0 = Label {
+                uuid: mirror_uuid,
+                children: vec![child_uuid0, child_uuid1, child_uuid2[0]]
             };
-            let mut serialized = Vec::new();
-            let mut lw = LabelWriter::new(0);
-            lw.serialize(&label).unwrap();
-            for buf in lw.into_sglist().into_iter() {
-                serialized.extend(&buf[..]);
+            let label1 = Label {
+                uuid: mirror_uuid,
+                children: vec![child_uuid0, child_uuid1, child_uuid2[1]]
+            };
+            let mut serialized0 = Vec::new();
+            let mut serialized1 = Vec::new();
+            let mut lw0 = LabelWriter::new(0);
+            lw0.serialize(&label0).unwrap();
+            for buf in lw0.into_sglist().into_iter() {
+                serialized0.extend(&buf[..]);
             }
-            let mut bd0 = mock(&child_uuid0);
-            bd0.expect_txg()
+            let mut lw1 = LabelWriter::new(0);
+            lw1.serialize(&label1).unwrap();
+            for buf in lw1.into_sglist().into_iter() {
+                serialized1.extend(&buf[..]);
+            }
+            let mut bd = vec![mock(&child_uuid0), mock(&child_uuid1)];
+            bd[healthy_child_idx].expect_txg()
                 .return_const(TxgT::from(42u32));
-            let mut bd1 = mock(&child_uuid1);
-            bd1.expect_txg()
+            bd[rebuilding_child_idx].expect_txg()
                 .return_const(TxgT::from(41u32));
 
             let mut combined = Vec::new();
-            for bd in [bd0, bd1] {
-                let lr = LabelReader::new(serialized.clone()).unwrap();
-                combined.push((bd, lr));
-            }
-            let (mirror, _) = Mirror::open(Some(label.uuid), combined);
-            assert!(mirror.children[0].is_present());
+            let lr0 = LabelReader::new(serialized0.clone()).unwrap();
+            let lr1 = LabelReader::new(serialized1.clone()).unwrap();
+            combined.push((bd.pop().unwrap(), lr1));
+            combined.push((bd.pop().unwrap(), lr0));
+            let (mirror, _) = Mirror::open(Some(mirror_uuid), combined);
+            assert!(mirror.children[healthy_child_idx].is_present());
             assert_eq!(mirror.children[0].uuid(), child_uuid0);
-            assert!(mirror.children[1].is_rebuilding());
+            assert!(mirror.children[rebuilding_child_idx].is_rebuilding());
             assert_eq!(mirror.children[1].uuid(), child_uuid1);
+
+            assert_eq!(mirror.children[2].uuid(),
+                       child_uuid2[healthy_child_idx]);
         }
     }
 
@@ -2533,7 +2567,7 @@ mod t {
             let bd1 = mock();
             let mirror = Mirror::new(Uuid::new_v4(), vec![bd0, bd1]);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller, TxgT::from(1))
+            mirror.write_label(labeller, TxgT::from(1), false)
                 .now_or_never()
                 .unwrap()
                 .unwrap();
@@ -2551,7 +2585,28 @@ mod t {
             ];
             let mirror = Mirror::new(Uuid::new_v4(), children);
             let labeller = LabelWriter::new(0);
-            mirror.write_label(labeller, TxgT::from(1))
+            mirror.write_label(labeller, TxgT::from(1), false)
+                .now_or_never()
+                .unwrap()
+                .unwrap();
+        }
+
+        #[test]
+        fn repairing() {
+            let mut bd0 = mock_vdev_block();
+            bd0.expect_write_label()
+                .once()
+                .return_once(|_, _| Box::pin(future::ok::<(), Error>(())));
+            let mut bd1 = mock_vdev_block();
+            bd1.expect_write_label()
+                .never();
+            let children = vec![
+                Child::rebuilding(bd0),
+                Child::present(bd1)
+            ];
+            let mirror = Mirror::new(Uuid::new_v4(), children);
+            let labeller = LabelWriter::new(0);
+            mirror.write_label(labeller, TxgT::from(1), true)
                 .now_or_never()
                 .unwrap()
                 .unwrap();

@@ -2854,4 +2854,76 @@ mod zones {
         }
     }
 }
+mod label {
+    use super::*;
+
+    #[tokio::test]
+    async fn repair_label() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut m0 = mock_mirror();
+        m0.expect_uuid().return_const(Uuid::new_v4());
+        let mut m1 = mock_mirror();
+        m1.expect_uuid().return_const(Uuid::new_v4());
+        m1.expect_write_label()
+            .with(always(), eq(TxgT::from(42)), eq(true))
+            .once()
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        let mut m2 = mock_mirror();
+        m2.expect_uuid().return_const(Uuid::new_v4());
+        let mirrors = vec![
+            Child::present(m0),
+            Child::present(m1),
+            Child::present(m2),
+        ];
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        let labeller = LabelWriter::new(0);
+        vdev_raid.repair_label(labeller, 1, TxgT::from(42)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn write_label() {
+        let k = 3;
+        let f = 1;
+        const CHUNKSIZE: LbaT = 2;
+
+        let mut m0 = mock_mirror();
+        m0.expect_uuid().return_const(Uuid::new_v4());
+        m0.expect_write_label()
+            .with(always(), eq(TxgT::from(42)), eq(false))
+            .once()
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        let mut m1 = mock_mirror();
+        m1.expect_uuid().return_const(Uuid::new_v4());
+        m1.expect_write_label()
+            .with(always(), eq(TxgT::from(42)), eq(false))
+            .once()
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        let mut m2 = mock_mirror();
+        m2.expect_uuid().return_const(Uuid::new_v4());
+        m2.expect_write_label()
+            .with(always(), eq(TxgT::from(42)), eq(false))
+            .once()
+            .return_once(|_, _, _| Box::pin(future::ok(())));
+        let mirrors = vec![
+            Child::present(m0),
+            Child::present(m1),
+            Child::present(m2),
+        ];
+
+        let vdev_raid = VdevRaid::new(CHUNKSIZE, k, f,
+                                      Uuid::new_v4(),
+                                      LayoutAlgorithm::PrimeS,
+                                      mirrors.into_boxed_slice());
+        let labeller = LabelWriter::new(0);
+        vdev_raid.write_label(labeller, TxgT::from(42)).await.unwrap();
+    }
+}
+
 // LCOV_EXCL_STOP
