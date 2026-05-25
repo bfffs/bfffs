@@ -111,7 +111,9 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
 
     /// Asynchronously sync the underlying device, ensuring that all data
     /// reaches stable storage
-    fn sync_all(&self) -> BoxVdevFut;
+    ///
+    /// If `mirror_idx` is set, only that child will be synced.
+    fn sync_all(&self, mirror_idx: Option<usize>) -> BoxVdevFut;
 
     /// Return the UUID for this vdev.  It is the persistent, unique identifier
     /// for each vdev.

@@ -2359,7 +2359,7 @@ impl VdevRaidApi for VdevRaid {
         }
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
+    fn sync_all(&self, mirror_idx: Option<usize>) -> BoxVdevFut {
         // Don't flush zones ourselves; the Cluster layer must be in charge of
         // that, so it can update the spacemap.
         debug_assert!(
@@ -2369,10 +2369,15 @@ impl VdevRaidApi for VdevRaid {
             "Must call flush_zone before sync_all"
         );
         // TODO: handle errors on some devices
-        let fut = self.inner.children.iter()
-        .filter_map(|bd| bd.sync_all())
-        .collect::<FuturesUnordered<_>>()
-        .try_collect::<Vec<_>>()
+        let fut = if let Some(idx) = mirror_idx {
+            self.inner.children[idx].sync_all()
+                .into_iter()
+                .collect::<FuturesUnordered<_>>()
+        } else {
+            self.inner.children.iter()
+                .filter_map(|bd| bd.sync_all())
+                .collect::<FuturesUnordered<_>>()
+        }.try_collect::<Vec<_>>()
         .map_ok(drop);
         Box::pin(fut)
     }
