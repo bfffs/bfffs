@@ -1176,15 +1176,13 @@ impl Cluster {
                 self.vdev.repair_mirror_zone(task.mirror_idx, zid, lbas).await?;
             }
             if let Some(sync_txg) = sync_txg {
-                // XXX this sync_all applies to the entire VdevRaid, not just
-                // the repairing device(s).  That's a performance bug.
-                self.vdev.sync_all().await?;
+                self.vdev.sync_all(Some(task.mirror_idx)).await?;
                 let lw = LabelWriter::new(0);
                 self.vdev.repair_label(lw, task.mirror_idx, sync_txg).await?;
-                self.vdev.sync_all().await?;
+                self.vdev.sync_all(Some(task.mirror_idx)).await?;
                 let lw = LabelWriter::new(1);
                 self.vdev.repair_label(lw, task.mirror_idx, sync_txg).await?;
-                self.vdev.sync_all().await?;
+                self.vdev.sync_all(Some(task.mirror_idx)).await?;
             }
             Ok(true)
         } else {
@@ -1222,7 +1220,7 @@ impl Cluster {
     /// Sync the `Cluster`, ensuring that all data written so far reaches stable
     /// storage.
     pub fn sync_all(&self) -> BoxVdevFut {
-        self.vdev.sync_all()
+        self.vdev.sync_all(None)
     }
 
     /// How many blocks are currently in use?
@@ -1851,7 +1849,7 @@ mod cluster {
         vr.expect_sync_all()
             .once()
             .in_sequence(&mut seq)
-            .return_once(|| Box::pin(future::ok(())));
+            .return_once(|_| Box::pin(future::ok(())));
         let fsm = FreeSpaceMap::new(vr.zones());
         let cluster = Cluster::new((fsm, vr.into()));
         cluster.fsm.write().unwrap().clear_dirty_zones();
@@ -2950,7 +2948,7 @@ mod repair_mirror {
         vr.expect_sync_all()
             .once()
             .in_sequence(seq)
-            .return_once(|| Box::pin(future::ok(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_repair_label()
             .once()
             .in_sequence(seq)
@@ -2959,7 +2957,7 @@ mod repair_mirror {
         vr.expect_sync_all()
             .once()
             .in_sequence(seq)
-            .return_once(|| Box::pin(future::ok(())));
+            .return_once(|_| Box::pin(future::ok(())));
         vr.expect_repair_label()
             .once()
             .in_sequence(seq)
@@ -2968,7 +2966,7 @@ mod repair_mirror {
         vr.expect_sync_all()
             .once()
             .in_sequence(seq)
-            .return_once(|| Box::pin(future::ok(())));
+            .return_once(|_| Box::pin(future::ok(())));
     }
 
     #[test]
@@ -3066,7 +3064,7 @@ mod repair_mirror {
             .with(eq(2))
             .return_const((20, 30));
         vr.expect_sync_all()
-            .returning(|| Box::pin(future::ok(())));
+            .returning(|_| Box::pin(future::ok(())));
         vr.expect_repair_label()
             .returning(|_, _, _| Box::pin(future::ok(())));
         vr.expect_repair_mirror_zone()

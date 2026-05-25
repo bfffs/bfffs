@@ -2577,7 +2577,7 @@ mod sync_all {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.sync_all().now_or_never().unwrap().unwrap();
+        vdev_raid.sync_all(None).now_or_never().unwrap().unwrap();
     }
 
     #[test]
@@ -2607,7 +2607,7 @@ mod sync_all {
                                       Uuid::new_v4(),
                                       LayoutAlgorithm::PrimeS,
                                       mirrors.into_boxed_slice());
-        vdev_raid.sync_all().now_or_never().unwrap().unwrap();
+        vdev_raid.sync_all(None).now_or_never().unwrap().unwrap();
     }
 
     // It's illegal to sync a VdevRaid without flushing its zones first
@@ -2651,7 +2651,7 @@ mod sync_all {
         vdev_raid.open_zone(1).now_or_never().unwrap().unwrap();
         vdev_raid.write_at(wbuf, 1, 120_000).now_or_never().unwrap().unwrap();
         // Don't flush zone 1 before syncing.  Syncing should panic
-        vdev_raid.sync_all().now_or_never().unwrap().unwrap();
+        vdev_raid.sync_all(None).now_or_never().unwrap().unwrap();
     }
 }
 

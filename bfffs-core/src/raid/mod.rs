@@ -249,7 +249,7 @@ mock!{
         fn repair_raid_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn restore(&mut self, mirror_idx: usize) -> Result<()>;
         fn status(&self) -> Status;
-        fn sync_all(&self) -> BoxVdevFut;
+        fn sync_all(&self, mirror_idx: Option<usize>) -> BoxVdevFut;
         fn uuid(&self) -> Uuid;
         fn write_at(&self, buf: IoVec, zone: ZoneT, lba: LbaT) -> BoxVdevFut;
         fn write_label(&self, labeller: LabelWriter, txg: TxgT) -> BoxVdevFut;

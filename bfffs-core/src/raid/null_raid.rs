@@ -189,7 +189,10 @@ impl VdevRaidApi for NullRaid {
         }
     }
 
-    fn sync_all(&self) -> BoxVdevFut {
+    fn sync_all(&self, mirror_idx: Option<usize>) -> BoxVdevFut {
+        if let Some(idx) = mirror_idx {
+            debug_assert_eq!(idx, 0);
+        }
         self.mirror.sync_all()
     }
 
