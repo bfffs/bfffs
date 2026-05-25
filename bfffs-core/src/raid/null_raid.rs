@@ -3,6 +3,7 @@
 use std::{
     collections::BTreeMap,
     num::NonZeroU64,
+    path::Path,
     pin::Pin,
 };
 
@@ -109,6 +110,14 @@ impl VdevRaidApi for NullRaid {
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         let limits = self.mirror.zone_limits(zone);
         Box::pin(self.mirror.erase_zone(limits.0, limits.1 - 1))
+    }
+
+    fn attach(&mut self, uuid: Uuid, path: &Path) -> Result<()> {
+        if self.mirror.contains_uuid(&uuid) {
+            self.mirror.attach(path)
+        } else {
+            Err(Error::ENOENT)
+        }
     }
 
     fn fault(&mut self, uuid: Uuid) -> Result<()> {

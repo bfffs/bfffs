@@ -18,6 +18,7 @@ use futures_locks::{RwLock, RwLockReadFut};
 use speedy::{Readable, Writable};
 use std::{
     io,
+    path::Path,
     pin::Pin,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -275,6 +276,11 @@ impl<'a> IDML {
     pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.ridt.dump(f).await
+    }
+
+    /// Add a new device to the Mirror identified by `uuid`
+    pub async fn attach(&self, uuid: Uuid, path: &Path) -> Result<()> {
+        self.ddml.attach(uuid, path).await
     }
 
     /// Fault the given disk or mirror
@@ -695,6 +701,7 @@ mock!{
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub fn dump_ridt(&self, f: &mut dyn io::Write)
             -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+        pub async fn attach(&self, uuid: Uuid, path: &Path) -> Result<()>;
         pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: Option<u32>, txg: TxgT)
             -> Pin<Box<dyn Future<Output=Result<()>> + Send>>;

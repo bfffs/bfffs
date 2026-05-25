@@ -20,6 +20,7 @@ use std::{
     borrow,
     hash::Hasher,
     mem,
+    path::Path,
     pin::Pin,
     sync::{Arc, Mutex, Weak}
 };
@@ -214,6 +215,11 @@ impl DDML {
 
     pub async fn dump_fsm(&self) -> Vec<String> {
         self.pool.read().await.dump_fsm()
+    }
+
+    /// Add a new device to the Mirror identified by `uuid`
+    pub async fn attach(&self, uuid: Uuid, path: &Path) -> Result<()> {
+        self.pool.write().await.attach(uuid, path)
     }
 
     /// Fault the given disk or mirror
@@ -543,6 +549,7 @@ mock! {
         pub fn advance_transaction(&self, txg: TxgT) -> BoxVdevFut;
         pub fn assert_clean_zone(&self, cluster: ClusterT, zone: ZoneT, txg: TxgT) -> Pin<Box<dyn Future<Output=()> + Send + Sync>>;
         pub fn delete_direct(&self, drp: &DRP, txg: TxgT) -> Pin<Box<dyn Future<Output=()> + Send>>;
+        pub async fn attach(&self, uuid: Uuid, path: &Path) -> Result<()>;
         pub async fn dump_fsm(&self) -> Vec<String>;
         pub async fn fault(&self, uuid: Uuid) -> Result<()>;
         pub fn flush(&self, idx: u32) -> BoxVdevFut;

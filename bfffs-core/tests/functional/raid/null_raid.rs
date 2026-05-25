@@ -20,7 +20,7 @@ use tempfile::{Builder, TempDir};
 
 struct Harness {
     vdev: NullRaid,
-    _tempdir: TempDir,
+    tempdir: TempDir,
     paths: Vec<PathBuf>
 }
 
@@ -40,7 +40,7 @@ fn harness(mirror_children: usize) -> Harness {
     }
     let mirror = Mirror::create(&paths[..], None).unwrap();
     let vdev = NullRaid::create(mirror);
-    Harness{vdev, _tempdir: tempdir, paths}
+    Harness{vdev, tempdir, paths}
 }
 
 mod fault {
@@ -88,6 +88,52 @@ mod fault {
         let ruuid = h.vdev.uuid();
         let r = h.vdev.fault(ruuid);
         assert_eq!(Err(Error::EINVAL), r);
+    }
+}
+
+mod attach {
+    use super::*;
+
+    /// Test successful attachment, using the mirror's uuid
+    #[rstest(h, case(harness(1)))]
+    #[tokio::test]
+    async fn by_mirror(mut h: Harness) {
+        let status = h.vdev.status();
+        let mirror_uuid = status.mirrors[0].uuid;
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        h.vdev.attach(mirror_uuid, &path).unwrap();
+        let status = h.vdev.status();
+        assert_eq!(status.mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test successful attachment, using mirror child's uuid
+    #[rstest(h, case(harness(1)))]
+    #[tokio::test]
+    async fn by_leaf(mut h: Harness) {
+        let status = h.vdev.status();
+        let leaf_uuid = status.mirrors[0].leaves[0].uuid;
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        h.vdev.attach(leaf_uuid, &path).unwrap();
+        let status = h.vdev.status();
+        assert_eq!(status.mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test ENOENT for non-existent mirror
+    #[rstest(h, case(harness(1)))]
+    #[tokio::test]
+    async fn enoent(mut h: Harness) {
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        let r = h.vdev.attach(Uuid::new_v4(), &path);
+        assert_eq!(r, Err(Error::ENOENT));
     }
 }
 

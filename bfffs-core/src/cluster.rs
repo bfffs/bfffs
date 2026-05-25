@@ -930,6 +930,11 @@ impl Cluster {
         self.vdev.fault(uuid)
     }
 
+    /// Add a new device to the Mirror identified by `uuid`
+    pub fn attach(&mut self, uuid: Uuid, path: &Path) -> Result<()> {
+        self.vdev.attach(uuid, path)
+    }
+
     /// Find the first closed zone whose index is greater than or equal to `zid`
     pub fn find_closed_zone(&self, zid: ZoneT) -> Option<ClosedZone> {
         self.fsm.read().unwrap().find_closed_zone(zid)
