@@ -216,6 +216,45 @@ pub mod pool {
         Request::PoolFault(Fault { pool, device })
     }
 
+    #[derive(Debug)]
+    pub struct Attach {
+        pub pool: String,
+        pub mirror: Uuid,
+        pub leaf: PathBuf
+    }
+
+    impl<'a, C: speedy::Context> Readable<'a, C> for Attach {
+        fn read_from<R>(reader: &mut R) -> std::result::Result<Self, C::Error>
+            where R: Reader<'a, C>
+        {
+            let pool = String::read_from(reader)?;
+            let mirror = Uuid::read_from(reader)?;
+            let pathbytes = Vec::<u8>::read_from(reader)?;
+            let leaf = PathBuf::from(std::ffi::OsString::from_vec(pathbytes));
+            Ok(Self {
+                pool,
+                mirror,
+                leaf
+            })
+        }
+    }
+
+    impl<C: speedy::Context> Writable<C> for Attach {
+        fn write_to<W>(&self, writer: &mut W) -> std::result::Result<(), C::Error>
+            where W: ?Sized + Writer<C>
+        {
+            self.pool.write_to(writer)?;
+            self.mirror.write_to(writer)?;
+            let pathbytes = self.leaf.as_os_str().as_encoded_bytes();
+            writer.write_u32(pathbytes.len() as u32)?;
+            writer.write_bytes(pathbytes)
+        }
+    }
+
+    pub fn attach(pool: String, mirror: Uuid, leaf: PathBuf) -> Request {
+        Request::PoolAttach(Attach { pool, mirror, leaf })
+    }
+
     #[derive(Debug, Readable, Writable)]
     pub struct List {
         pub pool: Option<String>,
@@ -255,6 +294,7 @@ pub enum Request {
     FsUnmount(fs::Unmount),
     PoolClean(pool::Clean),
     PoolFault(pool::Fault),
+    PoolAttach(pool::Attach),
     PoolList(pool::List),
     PoolStatus(pool::Status)
 }
@@ -271,6 +311,7 @@ pub enum Response {
     FsUnmount(Result<()>),
     PoolClean(Result<()>),
     PoolFault(Result<()>),
+    PoolAttach(Result<()>),
     PoolList(Result<Vec<pool::PoolInfo>>),
     PoolStatus(Result<pool::PoolStatus>),
 }
@@ -335,6 +376,13 @@ impl Response {
     pub fn into_pool_fault(self) -> Result<()> {
         match self {
             Response::PoolFault(r) => r,
+            x => panic!("Unexpected response type {x:?}")
+        }
+    }
+
+    pub fn into_pool_attach(self) -> Result<()> {
+        match self {
+            Response::PoolAttach(r) => r,
             x => panic!("Unexpected response type {x:?}")
         }
     }

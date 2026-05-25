@@ -422,6 +422,17 @@ impl Bfffsd {
                     rpc::Response::PoolFault(r)
                 }
             }
+            rpc::Request::PoolAttach(req) => {
+                if creds.uid() != unistd::geteuid().as_raw() {
+                    rpc::Response::PoolAttach(Err(Error::EPERM))
+                } else {
+                    let r = self
+                        .controller
+                        .attach(&req.pool, req.mirror, &req.leaf)
+                        .await;
+                    rpc::Response::PoolAttach(r)
+                }
+            }
             rpc::Request::PoolList(req) => {
                 self.controller
                     .list_pool(req.pool, req.offset)
