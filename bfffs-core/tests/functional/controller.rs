@@ -109,6 +109,81 @@ mod create_fs {
     }
 }
 
+mod attach {
+    use super::*;
+
+    /// Test successful attachment, using the mirror's uuid
+    #[rstest]
+    #[tokio::test]
+    async fn by_mirror(harness: Harness) {
+        let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
+        let mirror_uuid = status.clusters[0].mirrors[0].uuid;
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        harness.0.attach(POOLNAME, mirror_uuid, &path).await.unwrap();
+        let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
+        assert_eq!(status.clusters[0].mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test successful attachment, using mirror child's uuid
+    #[rstest]
+    #[tokio::test]
+    async fn by_leaf(harness: Harness) {
+        let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
+        let leaf_uuid = status.clusters[0].mirrors[0].leaves[0].uuid;
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        harness.0.attach(POOLNAME, leaf_uuid, &path).await.unwrap();
+        let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
+        assert_eq!(status.clusters[0].mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test ENOENT for non-existent mirror
+    #[rstest]
+    #[tokio::test]
+    async fn enoent(harness: Harness) {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 26).unwrap();
+
+        assert_eq!(
+            harness.0.attach(POOLNAME, Uuid::new_v4(), &path).await.unwrap_err(),
+            Error::ENOENT
+        );
+    }
+
+    /// Test EBUSY for a mirror that is already repairing
+    #[rstest]
+    #[tokio::test]
+    async fn ebusy(harness: Harness) {
+        let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
+        let mirror_uuid = status.clusters[0].mirrors[0].uuid;
+
+        // Attaching should succeed
+        let tempdir = tempfile::tempdir().unwrap();
+        let path1 = tempdir.path().join("vdev.1");
+        let path2 = tempdir.path().join("vdev.2");
+        let file1 = fs::File::create(&path1).unwrap();
+        let file2 = fs::File::create(&path2).unwrap();
+        file1.set_len(1 << 26).unwrap();
+        file2.set_len(1 << 26).unwrap();
+
+        harness.0.attach(POOLNAME, mirror_uuid, &path1).await.unwrap();
+        // Second attach should fail with EBUSY
+        assert_eq!(
+            harness.0.attach(POOLNAME, mirror_uuid, &path2).await.unwrap_err(),
+            Error::EBUSY
+        );
+    }
+}
+
 mod fault {
     use super::*;
 

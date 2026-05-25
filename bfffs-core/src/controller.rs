@@ -156,6 +156,17 @@ impl Controller {
         self.db.fault(uuid).await
     }
 
+    /// Add a new device to a Mirror.  `uuid` can be the uuid of the Mirror
+    /// itself or of any one of its children.
+    pub async fn attach(&self, pool: &str, uuid: Uuid, path: &std::path::Path)
+        -> Result<()>
+    {
+        if pool != self.db.pool_name() {
+            return Err(Error::ENOENT);
+        }
+        self.db.attach(uuid, path).await
+    }
+
     pub async fn get_pool_status(&self, pool: &str) -> Result<Status> {
         if pool != self.db.pool_name() {
             return Err(Error::ENOENT);

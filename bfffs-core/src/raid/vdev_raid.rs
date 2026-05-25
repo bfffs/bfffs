@@ -29,6 +29,7 @@ use std::{
     fmt,
     mem,
     num::{NonZeroU8, NonZeroU64},
+    path::Path,
     pin::Pin,
     ptr,
     sync::{Arc, RwLock}
@@ -2044,6 +2045,20 @@ impl Vdev for VdevRaid {
 }
 
 impl VdevRaidApi for VdevRaid {
+    fn attach(&mut self, uuid: Uuid, path: &Path) -> Result<()> {
+        let inner = Arc::get_mut(&mut self.inner).ok_or(Error::EAGAIN)?;
+        let mut r = Err(Error::ENOENT);
+        for child in inner.children.iter_mut() {
+            if let Some(m) = child.as_present_mut() {
+                if m.contains_uuid(&uuid) {
+                    r = m.attach(path);
+                    break;
+                }
+            }
+        }
+        r
+    }
+
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut {
         assert!(!self.stripe_buffers.read().unwrap().contains_key(&zone),
             "Tried to erase an open zone");

@@ -988,6 +988,7 @@ impl Future for ReadvAt {
 mock! {
     pub Mirror {
         #[mockall::concretize]
+        pub fn attach<P: AsRef<Path>>(&mut self, path: P) -> Result<()>;
         pub fn contains_uuid(&self, uuid: &Uuid) -> bool;
         #[mockall::concretize]
         pub fn create<P>(paths: &[P], lbas_per_zone: Option<NonZeroU64>)

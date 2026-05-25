@@ -55,7 +55,7 @@ fn make_bufs(chunksize: LbaT, k: i16, f: i16, s: usize) ->
 
 struct Harness {
     vdev: Arc<VdevRaid>,
-    _tempdir: TempDir,
+    tempdir: TempDir,
     paths: Vec<PathBuf>,
     n: i16,
     k: i16,
@@ -82,7 +82,7 @@ async fn harness(n: i16, k: i16, f: i16, chunksize: LbaT) -> Harness {
     let vdev = Arc::new(VdevRaid::create(cs, k, f, mirrors));
     vdev.open_zone(0).await
         .expect("open_zone");
-    Harness{vdev, _tempdir: tempdir, paths, n, k, f, chunksize}
+    Harness{vdev, tempdir, paths, n, k, f, chunksize}
 }
 
 #[test]
@@ -125,6 +125,61 @@ fn create_stripesize_too_big() {
         Mirror::create(&[fname], None).unwrap()
     }).collect::<Vec<_>>();
     VdevRaid::create(None, stripesize, redundancy, mirrors);
+}
+
+mod attach {
+    use super::*;
+
+    #[fixture]
+    async fn harness() -> Harness {
+        super::harness(3, 3, 1, 2).await
+    }
+
+    /// Test successful attachment, using the mirror's uuid
+    #[rstest]
+    #[tokio::test]
+    #[awt]
+    async fn by_mirror(#[future] harness: Harness) {
+        let mut h = harness;
+        let mirror_uuid = h.vdev.status().mirrors[0].uuid;
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 30).unwrap();
+
+        Arc::get_mut(&mut h.vdev).unwrap().attach(mirror_uuid, &path).unwrap();
+        let status = h.vdev.status();
+        assert_eq!(status.mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test successful attachment, using mirror child's uuid
+    #[rstest]
+    #[tokio::test]
+    #[awt]
+    async fn by_leaf(#[future] harness: Harness) {
+        let mut h = harness;
+        let leaf_uuid = h.vdev.status().mirrors[0].leaves[0].uuid;
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 30).unwrap();
+
+        Arc::get_mut(&mut h.vdev).unwrap().attach(leaf_uuid, &path).unwrap();
+        let status = h.vdev.status();
+        assert_eq!(status.mirrors[0].leaves.len(), 2);
+    }
+
+    /// Test ENOENT for non-existent mirror
+    #[rstest]
+    #[tokio::test]
+    #[awt]
+    async fn enoent(#[future] harness: Harness) {
+        let mut h = harness;
+        let path = h.tempdir.path().join("vdev.new");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(1 << 30).unwrap();
+
+        let r = Arc::get_mut(&mut h.vdev).unwrap().attach(Uuid::new_v4(), &path);
+        assert_eq!(r, Err(Error::ENOENT));
+    }
 }
 
 mod erase_zone {
@@ -295,7 +350,7 @@ mod fault {
         let vdev = Arc::new(VdevRaid::create(cs, k, f, mirrors));
         vdev.open_zone(0).await
             .expect("open_zone");
-        Harness{vdev, _tempdir: tempdir, paths, n: n as i16, k, f, chunksize}
+        Harness{vdev, tempdir, paths, n: n as i16, k, f, chunksize}
     }
 
     #[rstest(h, case(harness(3, 1, 2)))]

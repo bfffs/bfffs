@@ -232,6 +232,7 @@ mock!{
         fn zones(&self) -> ZoneT;
     }
     impl VdevRaidApi for VdevRaid {
+        fn attach(&mut self, uuid: Uuid, path: &Path) -> Result<()>;
         fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn finish_zone(&self, zone: ZoneT) -> BoxVdevFut;
         fn fault(&mut self, uuid: Uuid) -> Result<()>;

@@ -32,6 +32,7 @@ use std::{
     ffi::{OsString, OsStr},
     fmt::Debug,
     io,
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -422,6 +423,11 @@ impl Database {
     pub async fn dump_ridt(&self, f: &mut dyn io::Write) -> Result<()>
     {
         self.inner.idml.dump_ridt(f).await
+    }
+
+    /// Add a new device to the Mirror identified by `uuid`
+    pub async fn attach(&self, uuid: Uuid, path: &Path) -> Result<()> {
+        self.inner.idml.attach(uuid, path).await
     }
 
     /// Fault the given disk or mirror

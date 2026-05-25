@@ -20,6 +20,9 @@ pub trait VdevRaidApi : Vdev + Send + Sync + 'static {
     /// - `zone`:    The target zone ID
     fn erase_zone(&self, zone: ZoneT) -> BoxVdevFut;
 
+    /// Add a new device to the Mirror identified by `uuid`
+    fn attach(&mut self, uuid: Uuid, path: &std::path::Path) -> Result<()>;
+
     /// Mark a child device as faulted.
     fn fault(&mut self, uuid: Uuid) -> Result<()>;
 

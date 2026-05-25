@@ -297,6 +297,21 @@ impl Pool {
         Pool{clusters, name, stats, uuid}
     }
 
+    /// Add a new device to the Mirror identified by `uuid`
+    pub fn attach(&mut self, uuid: Uuid, path: &Path) -> Result<()> {
+        if uuid == self.uuid {
+            return Err(Error::EINVAL);
+        }
+        for c in self.clusters.iter_mut() {
+            match c.attach(uuid, path) {
+                Ok(()) => return Ok(()),
+                Err(Error::ENOENT) => continue,
+                Err(e) => return Err(e)
+            }
+        }
+        Err(Error::ENOENT)
+    }
+
     /// Fault the given disk or mirror
     pub async fn fault(&mut self, uuid: Uuid) -> Result<()> {
         if uuid == self.uuid {
