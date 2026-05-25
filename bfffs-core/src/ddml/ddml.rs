@@ -24,6 +24,7 @@ use std::{
     sync::{Arc, Mutex, Weak}
 };
 use super::{DRP, Status};
+use tokio::task::JoinHandle;
 use tracing::instrument;
 use tracing_futures::Instrument;
 
@@ -124,7 +125,11 @@ impl MirrorRepairTask {
         Ok(())
     }
 
-    pub fn spawn(pool: &Arc<RwLock<Pool>>, txg: TxgT, cl_idx: usize, m_idx: usize)
+    pub fn spawn(
+        pool: &Arc<RwLock<Pool>>,
+        txg: TxgT,
+        cl_idx: usize,
+        m_idx: usize) -> JoinHandle<()>
     {
         // Outline:
         // * Start a mirror rebuild on the Pool.
@@ -149,7 +154,7 @@ impl MirrorRepairTask {
                     tracing::warn!("MirrorRebuildTask failed: {}", e);
                 }
             }
-        });
+        })
     }
 }
 
@@ -160,9 +165,14 @@ pub struct DDML {
     // futures_lock::Mutex, because we will never need to block while holding
     // this lock.
     cache: Arc<Mutex<Cache>>,
+
+    /// A handle to every active MirrorRepairTask
+    mirror_repair_tasks: Vec<JoinHandle<()>>,
+
     // We'll never use Arc::clone, and very rarely use Arc::downgrade, so the
     // performance impact of the Arc should be minimal.
     pool: Arc<RwLock<Pool>>,
+
     pool_name: String
 }
 
@@ -220,7 +230,12 @@ impl DDML {
 
     fn new(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
         let pool_name = pool.name().to_owned();
-        DDML{pool: Arc::new(RwLock::new(pool)), cache, pool_name}
+        DDML{
+            pool: Arc::new(RwLock::new(pool)),
+            cache,
+            pool_name,
+            mirror_repair_tasks: Default::default()
+        }
     }
 
     /// Get directly from disk, bypassing cache
@@ -232,6 +247,12 @@ impl DDML {
         self.pool.read()
         .then(move |pg| Self::read(pg, drp))
         .map_ok(move |(_, dbs)| Box::new(T::deserialize(dbs)))
+    }
+
+    /// Are there any active (not paused) repair tasks?
+    pub fn is_repairing(&mut self) -> bool {
+        self.mirror_repair_tasks.retain(|jh| !jh.is_finished());
+        !self.mirror_repair_tasks.is_empty()
     }
 
     /// List all closed zones in the `DDML` in no particular order
@@ -324,7 +345,7 @@ impl DDML {
     /// * `pool`:       An already constructed `Pool`
     pub fn open(pool: Pool, cache: Arc<Mutex<Cache>>) -> Self {
         let pool_status = pool.status();
-        let ddml = DDML::new(pool, cache);
+        let mut ddml = DDML::new(pool, cache);
         ddml.repair_all(pool_status);
         ddml
     }
@@ -398,11 +419,12 @@ impl DDML {
     }
 
     /// Begin a repair task for any vdev that needs it
-    fn repair_all(&self, pool_status: pool::Status) {
+    fn repair_all(&mut self, pool_status: pool::Status) {
         for (cl_idx, cl) in pool_status.clusters.iter().enumerate() {
             for (m_idx, m) in cl.mirrors.iter().enumerate() {
                 if let Some(rtxg) = m.rebuilding {
-                    MirrorRepairTask::spawn(&self.pool, rtxg, cl_idx, m_idx)
+                    let jh = MirrorRepairTask::spawn(&self.pool, rtxg, cl_idx, m_idx);
+                    self.mirror_repair_tasks.push(jh);
                 }
             }
         }
