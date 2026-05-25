@@ -32,7 +32,7 @@ fn ddml() -> DDML {
 /// The DDML can reconstruct a faulted mirrored disk.
 #[rstest]
 #[test_log::test(tokio::test)]
-async fn mirror_reconstruction(
+async fn repair_mirror(
         #[values(
             // non-raid
             (1, 1, 0),

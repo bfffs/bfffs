@@ -86,7 +86,7 @@ impl Gnop {
     }
 
     /// Set the probability of failure on read, from 0 to 100 percent.
-    pub fn error_prob(&self, prob: i32) {
+    pub fn read_error_prob(&self, prob: i32) {
         let r = Command::new("gnop")
             .args(["configure", "-r"])
             .arg(format!("{prob}"))
