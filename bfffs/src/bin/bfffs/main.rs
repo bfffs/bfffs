@@ -953,9 +953,37 @@ mod pool {
         }
     }
 
+    /// Attach a new disk to a mirror
+    #[derive(Parser, Clone, Debug)]
+    pub(super) struct Attach {
+        /// Pool to operate on
+        pub(super) pool:   String,
+        /// Mirror to attach to.
+        ///
+        /// May be expressed as the mirror's UUID, or as the UUID or pathname of
+        /// one of the mirror's children.
+        pub(super) mirror: String,
+        /// Path to the new device
+        pub(super) leaf:   PathBuf,
+    }
+
+    impl Attach {
+        pub(super) async fn main(self, sock: &Path) -> Result<()> {
+            let bfffs = Bfffs::new(sock).await.unwrap();
+            if let Ok(uuid) = Uuid::from_str(&self.mirror) {
+                bfffs.pool_attach(self.pool, uuid, self.leaf).await?;
+            } else {
+                let pb = PathBuf::from(self.mirror);
+                bfffs.pool_attach(self.pool, pb, self.leaf).await?;
+            }
+            Ok(())
+        }
+    }
+
     #[derive(Parser, Clone, Debug)]
     /// Create, destroy, and modify storage pools
     pub(super) enum PoolCmd {
+        Attach(Attach),
         Clean(Clean),
         Create(Create),
         List(List),
@@ -1014,6 +1042,9 @@ async fn main() {
         SubCommand::Debug(DebugCmd::DropCache(dc)) => dc.main(&cli.sock).await,
         SubCommand::Debug(DebugCmd::Dump(dump)) => dump.main().await,
         SubCommand::Pool(pool::PoolCmd::Create(create)) => create.main().await,
+        SubCommand::Pool(pool::PoolCmd::Attach(attach)) => {
+            attach.main(&cli.sock).await
+        }
         SubCommand::Pool(pool::PoolCmd::Clean(clean)) => {
             clean.main(&cli.sock).await
         }

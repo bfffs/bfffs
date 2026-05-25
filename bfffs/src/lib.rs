@@ -279,6 +279,30 @@ impl Bfffs {
         self.call(req).await?.into_pool_fault().map_err(Error::from)
     }
 
+    pub async fn pool_attach<D>(
+        &self,
+        pool: String,
+        d: D,
+        leaf: PathBuf,
+    ) -> Result<()>
+    where
+        D: Into<Device>,
+    {
+        let dev = d.into();
+        let uuid = match dev {
+            Device::Uuid(uuid) => uuid,
+            Device::Path(path) => {
+                let status = self.pool_status(pool.clone()).await?;
+                Device::into_uuid(path, status)?
+            }
+        };
+        let req = rpc::pool::attach(pool, uuid, leaf);
+        self.call(req)
+            .await?
+            .into_pool_attach()
+            .map_err(Error::from)
+    }
+
     /// List one or more active pools
     ///
     /// # Arguments
