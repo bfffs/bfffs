@@ -335,6 +335,24 @@ pub struct Mirror {
 }
 
 impl Mirror {
+    /// Add a new device to this Mirror
+    ///
+    /// # Parameters
+    /// - `path`:   Path to the new device
+    pub fn attach<P: AsRef<Path>>(&mut self, path: P) -> Result<()> {
+        if self.children.iter().any(Child::is_rebuilding) {
+            tracing::info!("Cannot attach a disk to a repairing Mirror");
+            return Err(Error::EBUSY);
+        }
+        let lpz = {
+            let vb = self.first_present_child().as_present().unwrap();
+            NonZeroU64::new(vb.lbas_per_zone())
+        };
+        let vb = VdevBlock::create(path, lpz).map_err(Error::from)?;
+        self.children.push(Child::rebuilding(vb));
+        Ok(())
+    }
+
     /// Create a new Mirror from unused files or devices
     ///
     /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to

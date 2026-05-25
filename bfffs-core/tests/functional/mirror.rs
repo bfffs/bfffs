@@ -36,6 +36,55 @@ fn harness() -> Harness {
     (mirror, tempdir, paths)
 }
 
+mod attach {
+    use super::*;
+
+    #[tokio::test]
+    async fn basic() {
+        let len = 1 << 26;  // 64 MB
+        let tempdir = Builder::new()
+            .prefix("test_mirror_attach")
+            .tempdir()
+            .unwrap();
+        let path0 = format!("{}/vdev.0", tempdir.path().display());
+        let path1 = format!("{}/vdev.1", tempdir.path().display());
+        let file0 = fs::File::create(&path0).unwrap();
+        let file1 = fs::File::create(&path1).unwrap();
+        file0.set_len(len).unwrap();
+        file1.set_len(len).unwrap();
+
+        let mut vdev = Mirror::create(&[path0][..], Some(nonzero!(32u64))).unwrap();
+        vdev.attach(path1).unwrap();
+
+        let stat = vdev.status();
+        assert_eq!(stat.leaves.len(), 2);
+        assert_eq!(stat.health, Health::Degraded(nonzero!(1u8)));
+        assert_eq!(stat.leaves[1].health, Health::Degraded(nonzero!(1u8)));
+    }
+
+    #[tokio::test]
+    async fn ebusy() {
+        let len = 1 << 26;  // 64 MB
+        let tempdir = Builder::new()
+            .prefix("test_mirror_attach_ebusy")
+            .tempdir()
+            .unwrap();
+        let path0 = format!("{}/vdev.0", tempdir.path().display());
+        let path1 = format!("{}/vdev.1", tempdir.path().display());
+        let path2 = format!("{}/vdev.2", tempdir.path().display());
+        let file0 = fs::File::create(&path0).unwrap();
+        let file1 = fs::File::create(&path1).unwrap();
+        let file2 = fs::File::create(&path2).unwrap();
+        file0.set_len(len).unwrap();
+        file1.set_len(len).unwrap();
+        file2.set_len(len).unwrap();
+
+        let mut vdev = Mirror::create(&[path0][..], Some(nonzero!(32u64))).unwrap();
+        vdev.attach(path1).unwrap();
+        assert_eq!(vdev.attach(path2), Err(Error::EBUSY));
+    }
+}
+
 mod fault {
     use super::*;
 
