@@ -919,6 +919,10 @@ impl VdevBlock {
         }
     }
 
+    pub fn lbas_per_zone(&self) -> LbaT {
+        self.lbas_per_zone
+    }
+
     /// Asynchronously open a zone on a block device
     ///
     /// # Parameters
@@ -1280,6 +1284,7 @@ mock! {
             where P: AsRef<Path>;
         pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
         pub fn finish_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut;
+        pub fn lbas_per_zone(&self) -> LbaT;
         fn new(leaf: VdevLeaf) -> Self;
         pub fn open_zone(&self, start: LbaT) -> BoxVdevFut;
         pub fn path(&self) -> PathBuf;
