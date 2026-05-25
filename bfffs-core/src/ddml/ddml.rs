@@ -306,6 +306,7 @@ impl DDML {
                                     return Ok((pg, dbs));
                                 }
                             }
+                            tracing::warn!("Unrecoverable checksum failure for drp {:?}", drp);
                             Err(Error::EINTEGRITY)
                         },
                         Err(e) => Err(e)
