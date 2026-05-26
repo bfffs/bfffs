@@ -32,7 +32,7 @@ fn mk_files() -> Files {
         .tempdir()
         .unwrap();
     let mut paths = Vec::new();
-    for i in 0..12 {
+    for i in 0..2 {
         let filename = tempdir.path().join(format!("vdev.{i}"));
         let file = fs::File::create(&filename).unwrap();
         file.set_len(len).unwrap();
