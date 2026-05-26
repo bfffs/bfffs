@@ -353,6 +353,12 @@ impl Mirror {
         Ok(())
     }
 
+    /// Does the given uuid identify either this mirror *or* any of its
+    /// children?
+    pub fn contains_uuid(&self, uuid: &Uuid) -> bool {
+        self.uuid == *uuid || self.children.iter().any(|c| c.uuid() == *uuid)
+    }
+
     /// Create a new Mirror from unused files or devices
     ///
     /// * `lbas_per_zone`:      If specified, this many LBAs will be assigned to
@@ -982,6 +988,8 @@ impl Future for ReadvAt {
 mock! {
     pub Mirror {
         #[mockall::concretize]
+        pub fn contains_uuid(&self, uuid: &Uuid) -> bool;
+        #[mockall::concretize]
         pub fn create<P>(paths: &[P], lbas_per_zone: Option<NonZeroU64>)
             -> io::Result<Self>
             where P: AsRef<Path>;
@@ -1051,6 +1059,25 @@ mod t {
         bd.expect_zones()
             .return_const(32768u32);
         bd
+    }
+
+    mod contains_uuid {
+        use super::*;
+
+        #[test]
+        fn basic() {
+            let bd0 = Child::present(mock_vdev_block());
+            let bd1 = Child::present(mock_vdev_block());
+            let child_uuid0 = bd0.uuid();
+            let child_uuid1 = bd1.uuid();
+            let mirror_uuid = Uuid::new_v4();
+            let mirror = Mirror::new(mirror_uuid, vec![bd0, bd1]);
+
+            assert!(mirror.contains_uuid(&child_uuid0));
+            assert!(mirror.contains_uuid(&child_uuid1));
+            assert!(mirror.contains_uuid(&mirror_uuid));
+            assert!(!mirror.contains_uuid(&Uuid::new_v4()));
+        }
     }
 
     mod erase_zone {
