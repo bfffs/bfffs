@@ -185,7 +185,7 @@ async fn repair_mirror_incremental() {
     let (pool, _) = manager.import(pool_uuid).await.unwrap();
 
     // Create new DDML.  It will immediately begin repairing the mirror
-    let mut ddml = DDML::open(pool, cache.clone());
+    let ddml = DDML::open(pool, cache.clone());
 
     // Wait for the repair to get aborted when gnop starts to return errors
     while ddml.is_repairing() {

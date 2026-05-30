@@ -111,6 +111,23 @@ mod create_fs {
 
 mod attach {
     use super::*;
+    use bfffs_core::vdev::Health;
+    use tokio::time::{sleep, Duration};
+
+    async fn wait_for_healthy(controller: &Controller) {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if controller.get_pool_status(POOLNAME).await.unwrap().health
+                    == Health::Online
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("Timeout waiting for pool to become healthy");
+    }
 
     /// Test successful attachment, using the mirror's uuid
     #[rstest]
@@ -126,6 +143,7 @@ mod attach {
         harness.0.attach(POOLNAME, mirror_uuid, &path).await.unwrap();
         let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
         assert_eq!(status.clusters[0].mirrors[0].leaves.len(), 2);
+        wait_for_healthy(&harness.0).await;
     }
 
     /// Test successful attachment, using mirror child's uuid
@@ -142,6 +160,7 @@ mod attach {
         harness.0.attach(POOLNAME, leaf_uuid, &path).await.unwrap();
         let status = harness.0.get_pool_status(POOLNAME).await.unwrap();
         assert_eq!(status.clusters[0].mirrors[0].leaves.len(), 2);
+        wait_for_healthy(&harness.0).await;
     }
 
     /// Test ENOENT for non-existent mirror
@@ -159,7 +178,9 @@ mod attach {
         );
     }
 
-    /// Test EBUSY for a mirror that is already repairing
+    /// A mirror that is already repairing should reject a second attach with
+    /// EBUSY.  But the first attach starts a background repair task, so the
+    /// second attach may succeed if the repair completes first.
     #[rstest]
     #[tokio::test]
     async fn ebusy(harness: Harness) {
@@ -176,11 +197,11 @@ mod attach {
         file2.set_len(1 << 26).unwrap();
 
         harness.0.attach(POOLNAME, mirror_uuid, &path1).await.unwrap();
-        // Second attach should fail with EBUSY
-        assert_eq!(
-            harness.0.attach(POOLNAME, mirror_uuid, &path2).await.unwrap_err(),
-            Error::EBUSY
-        );
+        match harness.0.attach(POOLNAME, mirror_uuid, &path2).await {
+            Ok(()) | Err(Error::EBUSY) => (),
+            Err(e) => panic!("unexpected error: {e}"),
+        }
+        wait_for_healthy(&harness.0).await;
     }
 }
 

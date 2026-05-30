@@ -9,7 +9,9 @@ use std::{
 
 use ::bfffs::Bfffs;
 use assert_cmd::{cargo::cargo_bin, prelude::*};
+use bfffs_core::vdev::Health;
 use tempfile::{Builder, TempDir};
+use tokio::time::sleep;
 
 use super::super::super::*;
 
@@ -66,6 +68,21 @@ fn start_bfffsd(files: &Files) -> Daemon {
     }
 }
 
+async fn wait_for_healthy(libbfffs: &Bfffs) {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let stat =
+                libbfffs.pool_status(POOLNAME.to_string()).await.unwrap();
+            if stat.health == Health::Online {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("Timeout waiting for pool to become healthy");
+}
+
 #[tokio::test]
 async fn enoent() {
     let files = mk_files();
@@ -117,6 +134,9 @@ async fn by_path() {
         ])
         .assert()
         .success();
+
+    let libbfffs = Bfffs::new(&daemon.sockpath).await.unwrap();
+    wait_for_healthy(&libbfffs).await;
 }
 
 #[tokio::test]
@@ -147,4 +167,6 @@ async fn by_uuid() {
         ])
         .assert()
         .success();
+
+    wait_for_healthy(&libbfffs).await;
 }
