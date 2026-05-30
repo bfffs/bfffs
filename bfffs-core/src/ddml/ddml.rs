@@ -1213,8 +1213,6 @@ mod ddml {
         use super::*;
         use pretty_assertions::assert_eq;
 
-        // TODO:
-        // [ ] Something writes labels
         /// MirrorRepairTask::repair_closed_zones will iterate until
         /// completion.
         #[tokio::test]
