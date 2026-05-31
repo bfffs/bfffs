@@ -29,6 +29,7 @@ use util::{bfffsd, waitfor, Bfffsd};
 
 mod fs_create;
 mod fs_destroy;
+mod repair;
 
 #[enum_dispatch::enum_dispatch(BenchmarkImpl)]
 trait Benchmark {
@@ -41,14 +42,17 @@ trait Benchmark {
 enum BenchmarkImpl {
     FsCreate(fs_create::FsCreate),
     FsDestroy(fs_destroy::FsDestroy),
+    Repair(repair::Repair),
 }
 
 /// The standard test harness used by all benchmarks that need bfffsd
 pub struct Harness {
-    bfffsd:         Bfffsd,
-    pub tempdir:    TempDir,
-    pub mountpoint: PathBuf,
-    pub sockpath:   PathBuf,
+    bfffsd:            Bfffsd,
+    pub devices:       Vec<PathBuf>,
+    pub repair_device: PathBuf,
+    pub tempdir:       TempDir,
+    pub mountpoint:    PathBuf,
+    pub sockpath:      PathBuf,
 }
 
 impl Drop for Harness {
@@ -58,7 +62,11 @@ impl Drop for Harness {
 }
 
 impl Harness {
-    pub fn new(mut devices: Vec<String>, options: Option<String>) -> Self {
+    pub fn new(
+        mut devices: Vec<PathBuf>,
+        repair_device: Option<PathBuf>,
+        options: Option<String>,
+    ) -> Self {
         let tempdir = Builder::new().prefix("bfffs-bench").tempdir().unwrap();
         let sockpath = tempdir.path().join("bfffsd.sock");
 
@@ -67,8 +75,18 @@ impl Harness {
             let filename = tempdir.path().join("vdev");
             let file = fs::File::create(&filename).unwrap();
             file.set_len(len).unwrap();
-            devices.push(filename.to_str().unwrap().to_owned());
+            devices.push(filename);
         }
+
+        let repair_device = if let Some(path) = repair_device {
+            path
+        } else {
+            let len = 1 << 40; // 1 TiB
+            let filename = tempdir.path().join("new_vdev");
+            let file = fs::File::create(&filename).unwrap();
+            file.set_len(len).unwrap();
+            filename
+        };
 
         let mountpoint = tempdir.path().join("mnt");
 
@@ -89,7 +107,7 @@ impl Harness {
         }
         let bfffsd = bfffsd_cmd
             .arg("testpool")
-            .args(devices)
+            .args(devices.clone())
             .spawn()
             .unwrap()
             .into();
@@ -104,6 +122,8 @@ impl Harness {
 
         Harness {
             bfffsd,
+            devices,
+            repair_device,
             sockpath,
             mountpoint,
             tempdir,
@@ -120,6 +140,7 @@ impl Harness {
 enum SubCommand {
     FsCreate(fs_create::Cli),
     FsDestroy(fs_destroy::Cli),
+    Repair(repair::Cli),
 }
 
 #[derive(Parser, Clone, Debug)]
@@ -129,22 +150,25 @@ struct Cli {
     ///
     /// Any pool creation string is accepted, like "mirror da0 da1".
     #[clap(short = 'd', long, value_delimiter(' '))]
-    devices:    Vec<String>,
+    devices:       Vec<PathBuf>,
     #[clap(long, help = "Record a flamegraph to this file")]
-    flamegraph: Option<PathBuf>,
+    flamegraph:    Option<PathBuf>,
+    /// Device to attach during repair, or a 1 TiB file if not provided.
+    #[clap(long, short = 'r')]
+    repair_device: Option<PathBuf>,
     /// Daemon options, comma delimited.
     #[clap(short = 'o', long, value_delimiter(','))]
-    options:    Option<String>,
+    options:       Option<String>,
     /// Name of the specific benchmark to run, or None to smoke test all
     /// benchmarks.
     #[clap(subcommand)]
-    subcommand: Option<SubCommand>,
+    subcommand:    Option<SubCommand>,
     /// Cargo always passes either --bench when invoked like
     /// "cargo bench --bench bfffs-bench", even when the standard benchmark
     /// harness is not in use.  So we need to accept such arguments, and ignore
     /// them.
     #[clap(long, hide = true)]
-    bench:      bool,
+    bench:         bool,
 }
 
 /// Run a function while monitoring the given PID with dtrace.  Record its
@@ -247,6 +271,9 @@ async fn bench_all<'a>(geom_regex: &'a Option<Regex>, harness: &'a Harness) {
         BenchmarkImpl::FsDestroy(
             fs_destroy::Cli::parse_from::<_, OsString>([]).build(),
         ),
+        BenchmarkImpl::Repair(
+            repair::Cli::parse_from::<_, OsString>([]).build(),
+        ),
     ] {
         bench_one(None, geom_regex, benchmark, harness).await
     }
@@ -267,25 +294,32 @@ async fn main() {
         .init();
     let cli: Cli = Cli::parse();
 
-    let sdevs = cli
+    let harness = Harness::new(cli.devices, cli.repair_device, cli.options);
+
+    let sdevs = harness
         .devices
         .iter()
-        .filter_map(|fulldev| fulldev.strip_prefix("/dev/"))
+        .map(PathBuf::as_path)
+        .chain([harness.repair_device.as_path()].into_iter())
+        .filter_map(|fulldev| fulldev.strip_prefix("/dev/").ok())
+        .map(Path::to_string_lossy)
         .collect::<Vec<_>>();
     let use_libgeom = !sdevs.is_empty();
     let geom_regex = if use_libgeom {
-        Some(Regex::new(&format!("^({})$", sdevs[..].join("|"))).unwrap())
+        Some(Regex::new(&format!("^({})$", sdevs.join("|"))).unwrap())
     } else {
         None
     };
 
-    let harness = Harness::new(cli.devices, cli.options);
     let benchmark = match cli.subcommand {
         Some(SubCommand::FsCreate(subcmd)) => {
             BenchmarkImpl::FsCreate(subcmd.build())
         }
         Some(SubCommand::FsDestroy(subcmd)) => {
             BenchmarkImpl::FsDestroy(subcmd.build())
+        }
+        Some(SubCommand::Repair(subcmd)) => {
+            BenchmarkImpl::Repair(subcmd.build())
         }
         None => {
             if cli.flamegraph.is_some() {
