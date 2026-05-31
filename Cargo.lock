@@ -272,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "atomic_enum",
  "auto_enums",
+ "bfffs-isa-l",
  "bitfield",
  "byteorder",
  "byteshuffle",
@@ -290,7 +291,6 @@ dependencies = [
  "glob",
  "hexdump",
  "histogram",
- "isa-l",
  "itertools",
  "libc",
  "lz4_flex",
@@ -344,6 +344,10 @@ dependencies = [
  "tokio",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "bfffs-isa-l"
+version = "0.1.0"
 
 [[package]]
 name = "bindgen"
@@ -1460,10 +1464,6 @@ name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
-
-[[package]]
-name = "isa-l"
-version = "0.1.0"
 
 [[package]]
 name = "itertools"

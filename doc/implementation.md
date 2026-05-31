@@ -22,9 +22,8 @@ The BFFFS contains four separate crates:
   `bfffs-core` as a fio backend.  That lets us run fio against BFFFS while
   excluding the overhead of FUSE.
 
-* **isa-l** - This is bindings for Intel's ISA-L.  The bindings aren't general,
-  but are limited to only what BFFFS's RAID module needs.  It should probably
-  be renamed to `bfffs-isa-l`.
+* **bfffs-isa-l** - This is bindings for Intel's ISA-L.  The bindings aren't general,
+  but are limited to only what BFFFS's RAID module needs.
 
 * **bfffs-kmod** - This crate doesn't exist yet!  But it might some day.  Its
   hypothetical existence is the reason for splitting `bfffs` and `bfffs-core`
