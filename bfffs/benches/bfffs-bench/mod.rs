@@ -34,7 +34,6 @@ mod fs_destroy;
 trait Benchmark {
     async fn setup(&mut self, harness: &Harness);
     async fn run(&mut self, harness: &Harness);
-    //async fn teardown(&mut self);
     fn print(&self, elapsed: &Duration);
 }
 
