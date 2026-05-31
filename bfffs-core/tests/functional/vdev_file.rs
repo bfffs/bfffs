@@ -196,7 +196,7 @@ mod basic {
         assert_eq!(rbuf, wbuf.deref());
     }
 
-    #[should_panic(expected = "Don't overwrite the labels!")]
+    #[should_panic(expected = "Attempted to overwrite the labels!")]
     #[rstest]
     #[tokio::test]
     async fn write_at_overwrite_label(harness: Harness) {

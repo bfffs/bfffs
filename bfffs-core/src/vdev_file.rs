@@ -458,9 +458,13 @@ impl<'fd> VdevFile<'fd> {
     }
 
     /// Asynchronously write a contiguous portion of the vdev.
+    #[tracing::instrument(skip(self, buf))]
     pub fn write_at(&'fd self, buf: IoVec, lba: LbaT) -> VdevFileFut<'fd>
     {
-        assert!(lba >= self.reserved_space(), "Don't overwrite the labels!");
+        if lba < self.reserved_space() {
+            tracing::error!("Attempted to overwrite the labels");
+            panic!("Attempted to overwrite the labels!");
+        }
         debug_assert_eq!(buf.len() % BYTES_PER_LBA, 0);
         self.write_at_unchecked(buf, lba)
     }

@@ -83,6 +83,29 @@ mod attach {
         vdev.attach(path1).unwrap();
         assert_eq!(vdev.attach(path2), Err(Error::EBUSY));
     }
+
+    #[tokio::test]
+    async fn wrong_size() {
+        let len = 1 << 26;  // 64 MB
+        let wrong_len = 1 << 25;  // 32 MB
+        let tempdir = Builder::new()
+            .prefix("test_mirror_attach_wrong_size")
+            .tempdir()
+            .unwrap();
+        let path0 = format!("{}/vdev.0", tempdir.path().display());
+        let path1 = format!("{}/vdev.1", tempdir.path().display());
+        let file0 = fs::File::create(&path0).unwrap();
+        let file1 = fs::File::create(&path1).unwrap();
+        file0.set_len(len).unwrap();
+        file1.set_len(wrong_len).unwrap();
+
+        let mut vdev = Mirror::create(&[path0][..], Some(nonzero!(32u64))).unwrap();
+        assert_eq!(vdev.attach(path1), Err(Error::EINVAL));
+
+        let stat = vdev.status();
+        assert_eq!(stat.leaves.len(), 1);
+        assert_eq!(stat.health, Health::Online);
+    }
 }
 
 mod fault {

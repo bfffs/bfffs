@@ -26,12 +26,8 @@ fn harness() -> Harness {
     let len = 1 << 26;  // 64 MB
     let ph = crate::PoolBuilder::new()
         .name(POOLNAME)
+        .fsize(len)
         .build();
-    let filename = ph.tempdir.path().join("vdev");
-    {
-        let file = fs::File::create(filename).unwrap();
-        file.set_len(len).unwrap();
-    }
     let cache = Arc::new(Mutex::new(Cache::with_capacity(1_000_000)));
     let ddml = Arc::new(DDML::create(ph.pool, cache.clone()));
     let idml = IDML::create(ddml, cache);
