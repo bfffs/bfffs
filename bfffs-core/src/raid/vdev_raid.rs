@@ -2283,6 +2283,7 @@ impl VdevRaidApi for VdevRaid {
         Box::pin(self.inner.children[mirror_idx].repair_label(labeller, txg))
     }
 
+    #[tracing::instrument(skip(self))]
     fn repair_mirror_zone(&self, mirror_idx: usize, zone: ZoneT,
                           lbas: Option<NonZeroU64>) -> BoxVdevFut
     {
