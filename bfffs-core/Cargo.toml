@@ -27,7 +27,7 @@ futures = { workspace = true }
 futures-locks = { workspace = true }
 itertools = { workspace = true }
 hexdump = { workspace = true }
-isa-l = { path = "../isa-l" }
+bfffs-isa-l = { path = "../bfffs-isa-l" }
 libc = { workspace = true }
 lz4_flex = { workspace = true }
 metrohash = { workspace = true }

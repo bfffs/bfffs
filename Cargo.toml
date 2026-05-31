@@ -7,7 +7,7 @@ debug = true
 lto = true
 
 [workspace]
-members = ["bfffs-core", "bfffs-fio", "bfffs", "isa-l"]
+members = ["bfffs-core", "bfffs-fio", "bfffs", "bfffs-isa-l"]
 resolver = "2"
 
 [workspace.dependencies]

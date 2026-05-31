@@ -1,5 +1,5 @@
 [package]
-name = "isa-l"
+name = "bfffs-isa-l"
 edition = "2021"
 version = "0.1.0"
 authors = ["Alan Somers <asomers@gmail.com>"]

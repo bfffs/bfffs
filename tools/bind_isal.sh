@@ -4,7 +4,7 @@
 
 BINDGEN=$HOME/.cargo/bin/bindgen
 HEADER=/usr/local/include/isa-l.h
-OUTPUT=`dirname $0`/../isa-l/src/ffi/mod.rs
+OUTPUT=`dirname $0`/../bfffs-isa-l/src/ffi/mod.rs
 
 if [ ! -f "$HEADER" ]; then
 	echo "Must install ISA-L first!  Try \"pkg install isa-l\"."

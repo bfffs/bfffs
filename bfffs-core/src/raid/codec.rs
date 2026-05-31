@@ -50,13 +50,13 @@ impl Codec {
         // faster than ISA-L's erasure coding functions.  So use RS matrices for
         // single parity arrays for compatibility with a faster future codec.
         if f == 1 {
-            isa_l::gf_gen_rs_matrix(&mut enc_matrix, m, k);
+            bfffs_isa_l::gf_gen_rs_matrix(&mut enc_matrix, m, k);
         } else {
-            isa_l::gf_gen_cauchy1_matrix(&mut enc_matrix, m, k);
+            bfffs_isa_l::gf_gen_cauchy1_matrix(&mut enc_matrix, m, k);
         }
         // The encoding tables only use the encoding matrix's parity rows (e.g.
         // rows k and higher)
-        isa_l::ec_init_tables(k, f, &enc_matrix[(k*k) as usize ..],
+        bfffs_isa_l::ec_init_tables(k, f, &enc_matrix[(k*k) as usize ..],
                               &mut enc_tables);
         Codec {m, f, enc_matrix, enc_tables}
     }
@@ -116,7 +116,7 @@ impl Codec {
         assert!(errs > 0, "Only a fool would reconstruct an undamaged array!");
         assert_eq!(errs as usize, missing.len());
         let dec_tables = self.mk_decode_tables(erasures);
-        isa_l::ec_encode_data(len, k, errs, &dec_tables, surviving, missing);
+        bfffs_isa_l::ec_encode_data(len, k, errs, &dec_tables, surviving, missing);
     }
 
     /// Generate parity columns from a complete set of data columns
@@ -135,7 +135,7 @@ impl Codec {
                          parity: &mut [*mut u8])
     {
         let k = self.m - self.f;
-        isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
+        bfffs_isa_l::ec_encode_data(len, k, self.f, &self.enc_tables, data, parity);
     }
 
     /// Encode parity, using vectored input
@@ -202,7 +202,7 @@ impl Codec {
         parity: &mut [*mut u8], data_idx: u32)
     {
         let k = self.m - self.f;
-        isa_l::ec_encode_data_update(len, k, self.f, data_idx, &self.enc_tables,
+        bfffs_isa_l::ec_encode_data_update(len, k, self.f, data_idx, &self.enc_tables,
                                      data, parity);
     }
 
@@ -232,7 +232,7 @@ impl Codec {
         }
         // Then invert the result
         let mut dec_matrix = vec![0u8; k * k].into_boxed_slice();
-        isa_l::gf_invert_matrix(&dec_matrix_inv, &mut dec_matrix, k as u32)
+        bfffs_isa_l::gf_invert_matrix(&dec_matrix_inv, &mut dec_matrix, k as u32)
             .unwrap();
         // Finally, select the rows corresponding to missing data
         let mut dec_rows = vec![0u8; k * errs].into_boxed_slice();
@@ -247,7 +247,7 @@ impl Codec {
         }
 
         // Finally generate the fast encoding tables
-        isa_l::ec_init_tables(k as u32, errs as u32, &dec_rows, &mut dec_tables);
+        bfffs_isa_l::ec_init_tables(k as u32, errs as u32, &dec_rows, &mut dec_tables);
         dec_tables
     }
 

@@ -4,7 +4,7 @@ ignore = [
 	# Generated code
 	"bfffs-fio/src/ffi.rs",
 	# Generated code
-	"isa-l/src/ffi/mod.rs",
+	"bfffs-isa-l/src/ffi/mod.rs",
 	# rustfmt still doesn't work well with bfffs-core's heavy use of
 	# futures combinators.
 	"bfffs-core",
