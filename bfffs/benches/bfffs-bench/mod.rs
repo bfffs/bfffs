@@ -126,7 +126,9 @@ enum SubCommand {
 #[clap(version = crate_version!())]
 struct Cli {
     /// Create pool on these devices, or create a file-backed pool if blank.
-    #[clap(short = 'd', long, value_delimiter(','))]
+    ///
+    /// Any pool creation string is accepted, like "mirror da0 da1".
+    #[clap(short = 'd', long, value_delimiter(' '))]
     devices:    Vec<String>,
     #[clap(long, help = "Record a flamegraph to this file")]
     flamegraph: Option<PathBuf>,
