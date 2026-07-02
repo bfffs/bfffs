@@ -613,7 +613,6 @@ mod pool {
     use bfffs_core::{
         cache::Cache,
         cluster::Cluster,
-        database::*,
         ddml::DDML,
         idml::IDML,
         mirror::Mirror,
@@ -766,7 +765,7 @@ mod pool {
         /// Actually format the disks
         pub async fn format(mut self) {
             let name = self.name.clone();
-            let clusters = self.clusters.drain(..).collect();
+            let clusters = mem::take(&mut self.clusters);
             let pool = Pool::create(name, clusters);
             let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
             let ddml = Arc::new(DDML::create(pool, cache.clone()));
