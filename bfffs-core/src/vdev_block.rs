@@ -1772,7 +1772,6 @@ mod t {
             task::{Context, Poll}
         };
         use futures_test::task::noop_context;
-        use mockall::*;
         use mockall::predicate::*;
         use rstest::{fixture, rstest};
         use super::*;
