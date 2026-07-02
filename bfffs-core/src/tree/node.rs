@@ -1574,7 +1574,6 @@ macro_rules! leaf_node {
 mod t {
 
 use crate::ddml::DRP;
-use divbuf::*;
 use pretty_assertions::assert_eq;
 use super::*;
 

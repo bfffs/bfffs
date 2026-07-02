@@ -481,9 +481,7 @@ impl Iterator for PrimeSIter {
                     self.stripe_iter = 0;
                     if self.z == self.iterations_per_rep() - 1 {
                         // Roll over to the next repetition
-                        for o in &mut self.o {
-                            *o = 0;
-                        }
+                        self.o.fill(0);
                         self.a = 0;
                         self.r += 1;
                         self.stripe = 0;
