@@ -1475,15 +1475,13 @@ impl<A, D, K, V> Tree<A, D, K, V>
     // [^EXODUS]: Carey, Michael J., et al. "Storage management for objects in
     // EXODUS." Object-oriented concepts, databases, and applications (1989):
     // 341-369
-    pub async fn range_delete<R, T>(
+    pub async fn range_delete<R>(
         self: Arc<Self>,
         range: R,
         txg: TxgT,
         credit: Credit
     ) -> Result<()>
-        where K: Borrow<T>,
-              R: Debug + Clone + RangeBounds<T> + Send + 'static,
-              T: Ord + Clone + 'static + Debug
+        where R: Debug + Clone + RangeBounds<K> + Send + 'static,
     {
         if range.is_empty() {
             self.dml.repay(credit);
@@ -1600,7 +1598,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     /// `
     /// A HashSet indicating which nodes in the cut are in-danger, indexed by
     /// the Node's memory address.
-    fn range_delete_pass1<R, T>(
+    fn range_delete_pass1<R>(
         limits: Limits,
         dml: Arc<D>,
         height: u8,
@@ -1612,9 +1610,7 @@ impl<A, D, K, V> Tree<A, D, K, V>
     ) -> impl Future<Output=Result<
             (HashSet<usize>, bool, usize, Credit)
         >> + Send
-        where K: Borrow<T>,
-              R: Debug + Clone + RangeBounds<T> + Send + 'static,
-              T: Ord + Clone + 'static + Debug
+        where R: Debug + Clone + RangeBounds<K> + Send + 'static,
     {
         // Enough for two nodes on each of six levels of a tree
         const HASHSET_CAPACITY: usize = 12;
