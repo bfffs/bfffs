@@ -494,31 +494,26 @@ impl<K: Key, V: Value> LeafData<K, V> {
     /// Like [`range_delete`](Self::range_delete), but for nodes that may be
     /// dirty yet unaccredited.
     #[tracing::instrument(skip(self, dml, range))]
-    pub fn range_delete_unaccredited<D, R, T>(
+    pub fn range_delete_unaccredited<D, R>(
         &mut self,
         dml: &D,
         txg: TxgT,
         range: R) -> impl Future<Output=Result<Credit>> + Send
         where D: DML + 'static,
-              K: Borrow<T>,
-              R: RangeBounds<T>,
-              T: Ord + Clone
+              R: RangeBounds<K>,
     {
-        // TODO: use BTreeMap::drain_filter, when that feature stabilizes.
-        // https://github.com/rust-lang/rust/issues/70530
-        let keys = self.items.range(range)
-            .map(|(k, _)| *k)
-            .collect::<Vec<K>>();
-        let l = keys.len();
         let fut = FuturesUnordered::new();
         let mut allocated_space = 0;
-        for k in keys.into_iter() {
-            let v = self.items.remove(k.borrow()).unwrap();
+        let mut l = 0;
+
+        for (_k, v) in self.items.extract_if(range, |_, _| true) {
+            l += 1;
             allocated_space += v.allocated_space();
             if V::NEEDS_FLUSH {
                 fut.push(v.ddrop::<D>(dml, txg));
             }
         }
+
         let kvs = mem::size_of::<(K, V)>();
         let credit = self.credit.split(allocated_space + l * kvs);
         self.assert_accredited();
@@ -528,12 +523,10 @@ impl<K: Key, V: Value> LeafData<K, V> {
 
     /// Delete all keys within the given range, possibly leaving an empty
     /// LeafNode.
-    pub fn range_delete<D, R, T>(&mut self, dml: &D, txg: TxgT, range: R) ->
+    pub fn range_delete<D, R>(&mut self, dml: &D, txg: TxgT, range: R) ->
         impl Future<Output=Result<Credit>> + Send
         where D: DML + 'static,
-              K: Borrow<T>,
-              R: RangeBounds<T>,
-              T: Ord + Clone
+              R: RangeBounds<K>,
     {
         self.assert_accredited();
         self.range_delete_unaccredited(dml, txg, range)

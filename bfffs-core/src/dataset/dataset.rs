@@ -75,11 +75,9 @@ impl<K: Key, V: Value> Dataset<K, V> {
     }
 
     #[instrument(skip(self, range, txg))]
-    fn range_delete<R, T>(&self, range: R, txg: TxgT, credit: Credit)
+    fn range_delete<R>(&self, range: R, txg: TxgT, credit: Credit)
         -> impl Future<Output=Result<()>> + Send
-        where K: Borrow<T>,
-              R: Debug + Clone + RangeBounds<T> + Send + 'static,
-              T: Debug + Ord + Clone + Send + 'static
+        where R: Debug + Clone + RangeBounds<K> + Send + 'static,
     {
         self.tree.clone().range_delete(range, txg, credit).in_current_span()
     }
@@ -179,11 +177,9 @@ impl<K: Key, V: Value> ReadWriteDataset<K, V> {
         }
     }
 
-    pub fn range_delete<R, T>(&self, range: R)
+    pub fn range_delete<R>(&self, range: R)
         -> impl Future<Output=Result<()>> + Send
-        where K: Borrow<T>,
-              R: Debug + Clone + RangeBounds<T> + Send + 'static,
-              T: Debug + Ord + Clone + Send + 'static
+        where R: Debug + Clone + RangeBounds<K> + Send + 'static,
     {
         let credit = self.credit.atomic_split(self.cr.range_delete);
         self.dataset.range_delete(range, self.txg, credit)
