@@ -39,7 +39,7 @@ impl Credit {
         // Saturate the subtraction, because we don't want any credit to ever be
         // negative.
         let icredit = isize::try_from(credit).unwrap();
-        let old = self.0.fetch_update(Relaxed, Relaxed, |old| {
+        let old = self.0.try_update(Relaxed, Relaxed, |old| {
             let new = (old - (icredit << 1usize)).max(0);
             Some(new)
         }).unwrap();
