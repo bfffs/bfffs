@@ -20,6 +20,8 @@ use speedy::{Readable, Writable};
 use thiserror::Error as ThisError;
 use tokio_seqpacket::UnixSeqpacket;
 
+pub mod pool;
+
 #[derive(Clone, Debug, ThisError, Eq, PartialEq)]
 pub enum Error {
     #[error("Corrupt response from server")]
