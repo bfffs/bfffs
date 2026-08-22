@@ -2,7 +2,6 @@ use std::{
     cmp::Ordering,
     fmt,
     io::{self, Write},
-    mem,
     path::{Path, PathBuf},
     process::exit,
     str::FromStr,
@@ -11,7 +10,6 @@ use std::{
 
 use bfffs::{Bfffs, Error, Result};
 use bfffs_core::{
-    controller::Controller,
     database::{self, Database, TreeID},
     property::{Property, PropertyName, PropertySource},
     rpc,
@@ -608,19 +606,9 @@ mod fs {
 }
 
 mod pool {
-    use std::{num::NonZeroU64, sync::Mutex};
+    use std::num::NonZeroU64;
 
-    use bfffs_core::{
-        cache::Cache,
-        cluster::Cluster,
-        ddml::DDML,
-        idml::IDML,
-        mirror::Mirror,
-        pool::Pool,
-        raid,
-        Uuid,
-        BYTES_PER_LBA,
-    };
+    use bfffs_core::{Uuid, BYTES_PER_LBA};
 
     use super::*;
 
@@ -671,13 +659,24 @@ mod pool {
 
     impl Create {
         pub(super) async fn main(self) -> Result<()> {
-            let zone_size = self.zone_size.map(|mbs| {
+            let mut builder = bfffs::pool::Builder::new(self.pool_name);
+            if let Some(mbs) = self.zone_size {
                 let lbas = mbs * 1024 * 1024 / (BYTES_PER_LBA as u64);
-                NonZeroU64::new(lbas).expect("zone_size may not be zero")
-            });
+                let zs =
+                    NonZeroU64::new(lbas).expect("zone_size may not be zero");
+                builder.set_zone_size(zs);
+            }
+            for propstring in self.properties.into_iter() {
+                let prop =
+                    Property::from_str(&propstring).unwrap_or_else(|_e| {
+                        eprintln!(
+                            "Invalid property specification {propstring}"
+                        );
+                        std::process::exit(2);
+                    });
+                builder.set_prop(prop);
+            }
 
-            let props = self.properties.iter().map(String::as_str);
-            let mut builder = Builder::new(self.pool_name, props, zone_size);
             let all_vdevs = self.vdev.join(" ");
             let spec = PoolParser::new().parse(&all_vdevs).unwrap();
             for tvd in spec.0 {
@@ -686,98 +685,28 @@ mod pool {
                         for child in r.vdevs {
                             match child {
                                 RaidChild::Mirror(mchild) => {
-                                    builder.create_mirror(&mchild.0[..]);
+                                    builder.add_mirror(mchild.0);
                                 }
                                 RaidChild::Disk(dchild) => {
-                                    builder.create_mirror(&[dchild.0]);
+                                    builder.add_disk(dchild.0);
                                 }
                             }
                         }
-                        builder.create_cluster(r.k, r.f);
+                        builder.add_raid_cluster(r.k, r.f);
                     }
-                    Tlv::Mirror(m) => builder.create_mirror_tlv(&m.0[..]),
-                    Tlv::Disk(d) => builder.create_single(d),
+                    Tlv::Mirror(m) => {
+                        builder.add_mirror_cluster(m.0);
+                    }
+                    Tlv::Disk(d) => {
+                        builder.add_nonredundant_cluster(d);
+                    }
                 }
             }
-            builder.format().await;
+            builder.build().await.unwrap_or_else(|e| {
+                eprintln!("{e}");
+                std::process::exit(1);
+            });
             Ok(())
-        }
-    }
-
-    struct Builder {
-        clusters:   Vec<Cluster>,
-        mirrors:    Vec<Mirror>,
-        name:       String,
-        properties: Vec<Property>,
-        zone_size:  Option<NonZeroU64>,
-    }
-
-    impl Builder {
-        pub fn new<'a, P>(
-            name: String,
-            propstrings: P,
-            zone_size: Option<NonZeroU64>,
-        ) -> Self
-        where
-            P: Iterator<Item = &'a str> + 'a,
-        {
-            let clusters = Vec::new();
-            let mirrors = Vec::new();
-            let properties = propstrings
-                .map(|ps| {
-                    Property::from_str(ps).unwrap_or_else(|_e| {
-                        eprintln!("Invalid property specification {ps}");
-                        std::process::exit(2);
-                    })
-                })
-                .collect::<Vec<_>>();
-            Builder {
-                clusters,
-                mirrors,
-                name,
-                properties,
-                zone_size,
-            }
-        }
-
-        pub fn create_mirror(&mut self, devs: &[&str]) {
-            self.mirrors
-                .push(Mirror::create(devs, self.zone_size).unwrap());
-        }
-
-        pub fn create_mirror_tlv(&mut self, devs: &[&str]) {
-            self.create_mirror(devs);
-            self.create_cluster(1, 0);
-        }
-
-        pub fn create_single(&mut self, dev: &str) {
-            self.create_mirror(&[dev]);
-            self.create_cluster(1, 0)
-        }
-
-        pub fn create_cluster(&mut self, k: i16, f: i16) {
-            let mirrors = mem::take(&mut self.mirrors);
-            let raid = raid::create(None, k, f, mirrors);
-            let c = Cluster::create(raid);
-            self.clusters.push(c);
-        }
-
-        /// Actually format the disks
-        pub async fn format(mut self) {
-            let name = self.name.clone();
-            let clusters = mem::take(&mut self.clusters);
-            let pool = Pool::create(name, clusters);
-            let cache = Arc::new(Mutex::new(Cache::with_capacity(4_194_304)));
-            let ddml = Arc::new(DDML::create(pool, cache.clone()));
-            let idml = Arc::new(IDML::create(ddml, cache));
-            let db = Database::create(idml);
-            let controller = Controller::new(db);
-            // Create the root file system
-            controller.create_fs(&self.name).await.unwrap();
-            for prop in self.properties.into_iter() {
-                controller.set_prop(&self.name, prop).await.unwrap();
-            }
-            controller.sync_transaction().await.unwrap();
         }
     }
 

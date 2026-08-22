@@ -1,15 +1,16 @@
-use std::{fs, io::Write, path::PathBuf, process::Command};
+use std::{fs, io::Write, path::PathBuf};
 
 use assert_cmd::prelude::*;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
+use tokio::process::Command;
 
 type Harness = (PathBuf, TempDir);
 
 const POOLNAME: &str = "fio-testpool";
 
 #[fixture]
-fn harness() -> Harness {
+async fn harness() -> Harness {
     let len = 1 << 30; // 1 GB
     let tempdir = Builder::new()
         .prefix(concat!(module_path!(), "."))
@@ -19,18 +20,19 @@ fn harness() -> Harness {
     let file = fs::File::create(&filename).unwrap();
     file.set_len(len).unwrap();
 
-    Command::cargo_bin("bfffs")
-        .unwrap()
-        .args(["pool", "create", POOLNAME])
-        .arg(&filename)
-        .assert()
-        .success();
+    bfffs::pool::Builder::new(POOLNAME)
+        .add_nonredundant_cluster(filename.to_str().unwrap())
+        .build()
+        .await
+        .unwrap();
 
     (filename, tempdir)
 }
 
 #[rstest]
-fn smoke(harness: Harness) {
+#[tokio::test]
+#[awt]
+async fn smoke(#[future] harness: Harness) {
     let dylib = test_cdylib::build_current_project();
     let cfg_path = harness.1.path().join("test.fio");
     let mut f = fs::File::create(&cfg_path).unwrap();
@@ -56,6 +58,13 @@ rw=readwrite
     )
     .unwrap();
 
-    let output = Command::new("fio").arg(&cfg_path).ok().unwrap();
+    let output = Command::new("fio")
+        .arg(&cfg_path)
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .await
+        .unwrap();
     print!("{}", String::from_utf8_lossy(&output.stdout));
+    assert!(output.status.success());
 }
