@@ -228,21 +228,22 @@ impl Bfffsd {
         tracing::debug!("mounting {:?}", mp);
         cfg_select! {
             test => {
-                Session::new(mo2).mount(FuseFs::default(), mp)
+                Session::new(mo2)
+                    .mount(FuseFs::default(), mp)
                     .map_err(Error::from)
                     .await
             }
             _ => {
-                self.controller.new_fs(&name)
+                self.controller
+                    .new_fs(&name)
                     .and_then(|fs| {
                         let fusefs = FuseFs::new(fs);
-                        Session::new(mo2).mount(fusefs, mp)
-                            .map_err(|e| {
-                                tracing::debug!("mount failed: {}", e);
-                                Error::from(e)
-                            })
+                        Session::new(mo2).mount(fusefs, mp).map_err(|e| {
+                            tracing::debug!("mount failed: {}", e);
+                            Error::from(e)
+                        })
                     })
-                .await
+                    .await
             }
         }
     }
