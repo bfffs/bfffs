@@ -341,6 +341,7 @@ dependencies = [
  "rstest",
  "tempfile",
  "test-cdylib",
+ "test-log",
  "tokio",
  "tracing-subscriber",
 ]

@@ -171,7 +171,13 @@ impl Builder {
         for prop in self.properties.drain(..) {
             controller.set_prop(&self.name, prop).await?;
         }
-        controller.sync_transaction().await.map_err(Error::from)
+        let r = controller.sync_transaction().await.map_err(Error::from);
+        if controller.shutdown().await.is_err() {
+            panic!(
+                "Controller::shutdown failed even without mounted file systems"
+            );
+        }
+        r
     }
 
     /// Set properties to be assigned to the root dataset

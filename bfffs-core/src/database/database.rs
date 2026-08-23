@@ -127,6 +127,8 @@ impl Syncer {
         tokio::spawn(taskfut)
     }
 
+    /// Tell the database to shut down all background tasks
+    // We can't call this from Drop since it's an async function.
     async fn shutdown(mut self) {
         self.tx.send(SyncerMsg::Shutdown).await.unwrap();
         self.jh.await.unwrap();
