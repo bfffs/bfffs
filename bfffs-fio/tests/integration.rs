@@ -1,6 +1,5 @@
 use std::{fs, io::Write, path::PathBuf};
 
-use assert_cmd::prelude::*;
 use rstest::{fixture, rstest};
 use tempfile::{Builder, TempDir};
 use tokio::process::Command;
@@ -30,7 +29,7 @@ async fn harness() -> Harness {
 }
 
 #[rstest]
-#[tokio::test]
+#[test_log::test(tokio::test)]
 #[awt]
 async fn smoke(#[future] harness: Harness) {
     let dylib = test_cdylib::build_current_project();

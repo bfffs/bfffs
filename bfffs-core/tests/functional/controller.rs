@@ -636,3 +636,32 @@ mod set_prop {
         }
     }
 }
+
+mod shutdown {
+    use super::*;
+
+    /// Try to shut down a database with outstanding strong references.  It
+    /// should fail, but nothing bad should happen.
+    #[rstest]
+    #[tokio::test]
+    async fn err(harness: Harness) {
+        let dsname = format!("{POOLNAME}/child");
+        harness.0.create_fs(POOLNAME).await.unwrap();
+        harness.0.create_fs(&dsname).await.unwrap();
+
+        let fs_lister = harness.0.list_fs(POOLNAME, None);
+        assert!(harness.0.shutdown().await.is_err());
+
+        let datasets = fs_lister.try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert_eq!(1, datasets.len());
+        assert_eq!(dsname, datasets[0].name);
+    }
+
+    #[rstest]
+    #[tokio::test]
+    async fn ok(harness: Harness) {
+        assert!(harness.0.shutdown().await.is_ok());
+    }
+}

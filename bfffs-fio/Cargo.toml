@@ -25,3 +25,4 @@ bfffs = { path = "../bfffs" }
 rstest = { workspace = true }
 tempfile = { workspace = true }
 test-cdylib = { workspace = true }
+test-log = { workspace = true, features = ["trace"] }

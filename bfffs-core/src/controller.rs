@@ -265,6 +265,8 @@ impl Controller {
         }
 
         struct ListFs {
+            // TODO: switch to a Weak so it won't block the database from being
+            // shut down or a pool from being exported.
             db: Arc<Database>,
             /// Name of the dataset whose children we are listing, including
             /// the pool.
@@ -425,6 +427,20 @@ impl Controller {
                 tracing::debug!("pool name not provided");
                 Err(Error::ENOENT)
             },
+        }
+    }
+
+    /// Shut down the database in an orderly fashion.  All file systems must
+    /// already be unmounted.
+    pub async fn shutdown(self) -> std::result::Result<(), Self> {
+        match Arc::try_unwrap(self.db) {
+            Ok(db) => {
+                db.shutdown().await;
+                Ok(())
+            }
+            Err(db) => {
+                Err(Self {db, filesystems: self.filesystems})
+            }
         }
     }
 
