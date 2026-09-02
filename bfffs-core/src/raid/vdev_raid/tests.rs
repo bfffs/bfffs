@@ -457,8 +457,8 @@ mod errors {
             // We must repeat the read for every chunk in the stripe to ensure
             // that we'll access the failing disks.
             h.vdev.write_at(wbuf0, 0, zl.0).await.unwrap();
-            for id in 0..c.nfailures {
-                h.mctls[id].lock().unwrap().read_at = Err(Error::EIO);
+            for mctl in h.mctls.iter().take(c.nfailures) {
+                mctl.lock().unwrap().read_at = Err(Error::EIO);
             }
             for t in 0..(dbsr.len() / BYTES_PER_LBA) {
                 let mut rbuf = dbsr.try_mut().unwrap();
