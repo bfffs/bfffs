@@ -476,8 +476,8 @@ mod fs {
                 let row_spec = vec!["{:<}"; self.properties.len()];
                 let mut table = tabular::Table::new(&row_spec.join(" "));
                 let mut hrow = tabular::Row::new();
-                for i in 0..(self.properties.len()) {
-                    hrow.add_cell(hname(self.properties[i]));
+                for prop in self.properties.iter() {
+                    hrow.add_cell(hname(*prop));
                 }
                 table.add_row(hrow);
 
