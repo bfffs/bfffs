@@ -80,7 +80,7 @@ tracing = { version = "0.1.44", default-features = false, features = ["attribute
 tracing-futures = "0.2.4"
 tracing-subscriber = { version = "0.3.20", default-features = false }
 uuid = { version = "1.6.1", default-features = false }
-zstd = "0.13.0"
+zstd = "0.14.3"
 
 [patch.crates-io]
 atomic_enum = { git = "https://github.com/brain0/atomic_enum.git", rev = "baea45a" }
