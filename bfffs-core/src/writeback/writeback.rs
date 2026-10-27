@@ -554,9 +554,9 @@ fn strict_ordering() {
     let writeback = WriteBack::with_capacity(10);
 
     let credit0 = writeback.borrow(5).now_or_never().unwrap();
-    let mut fut1 = Box::pin(writeback.borrow(6));
+    let mut fut1 = std::pin::pin!(writeback.borrow(6));
     assert!(fut1.as_mut().poll(&mut ctx).is_pending());
-    let mut fut2 = Box::pin(writeback.borrow(1));
+    let mut fut2 = std::pin::pin!(writeback.borrow(1));
     assert!(fut2.as_mut().poll(&mut ctx).is_pending());
     writeback.repay(credit0);
 }
