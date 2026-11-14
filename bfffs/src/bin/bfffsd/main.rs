@@ -2,7 +2,7 @@
 
 use std::{
     fs::Permissions,
-    os::unix::{fs::PermissionsExt, io::RawFd},
+    os::{fd::OwnedFd, unix::fs::PermissionsExt},
     path::{Path, PathBuf},
     process::exit,
     sync::Arc,
@@ -71,7 +71,7 @@ struct Cli {
 struct Socket {
     sockpath: PathBuf,
     listener: UnixSeqpacketListener,
-    _lockfd:  RawFd,
+    _lockfd:  OwnedFd,
 }
 
 impl Drop for Socket {

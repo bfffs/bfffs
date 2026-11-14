@@ -214,7 +214,7 @@ impl<'fd> VdevFile<'fd> {
     /// - `end`: The last LBA of the zone to erase
     // There isn't (yet) a way to asynchronously trim, so use a synchronous
     // method in a blocking_task
-    pub fn erase_zone(&self, start: LbaT, end: LbaT) -> BoxVdevFut {
+    pub fn erase_zone(&'fd self, start: LbaT, end: LbaT) -> VdevFileFut<'fd> {
         let off = start as off_t * (BYTES_PER_LBA as off_t);
         let len = (end + 1 - start) as off_t * BYTES_PER_LBA as off_t;
         let em = self.erase_method.load(Ordering::Relaxed);
@@ -237,7 +237,7 @@ impl<'fd> VdevFile<'fd> {
 
                 // The first time erasing a zone, do it synchronously so we can
                 // change the erase_method.
-                match fspacectl_all(self.fd.as_raw_fd(), off, len) {
+                match fspacectl_all(self.fd, off, len) {
                     Err(nix::Error::ENOSYS) =>  {
                         // fspacectl is not supported by the running system
                         self.erase_method.store(EraseMethod::None,
@@ -263,9 +263,13 @@ impl<'fd> VdevFile<'fd> {
             EraseMethod::Fspacectl => {
                 use nix::fcntl::fspacectl_all;
 
-                let fd = self.fd.as_raw_fd();
+                // Safe because we're about to reduce its lifetime back to 'fd
+                // by putting it into the VdevFileFut
+                let sfd = unsafe {
+                    BorrowedFd::borrow_raw(self.fd.as_raw_fd())
+                };
                 let t = task::spawn_blocking(move || {
-                    fspacectl_all(fd, off, len)
+                    fspacectl_all(sfd, off, len)
                 }).map(std::result::Result::unwrap)
                 .map_err(Error::from);
                 Box::pin(t)

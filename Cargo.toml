@@ -29,7 +29,7 @@ enum-primitive-derive = "0.3.0"
 fixedbitset = { version = "0.4.0", default-features = false }
 freebsd-libgeom = "0.2.2"
 function_name = "0.3.0"
-fuse3 = { version = "0.9.0", default-features = false }
+fuse3 = { version = "0.10.0", default-features = false }
 futures = "0.3.31"
 futures-locks = "0.7.0"
 futures-test = "0.3.32"
@@ -45,7 +45,7 @@ mdconfig = "0.2.0"
 metrohash = "1.0.2"
 mockall = "0.14.0"
 mockall_double = "0.3.1"
-nix = { version = "0.29.0", default-features = false }
+nix = { version = "0.31.4", default-features = false }
 nonzero_ext = "0.3.0"
 num-traits = "0.2.14"
 num_cpus = "1.8"
