@@ -249,9 +249,7 @@ impl Filesystem for FuseFs {
     // TODO: implement readdirplus
 
     async fn init(&self, _req: Request) -> fuse3::Result<ReplyInit> {
-        Ok(ReplyInit {
-            max_write: NonZeroU32::new(1 << 24).unwrap(),
-        })
+        Ok(ReplyInit::new(NonZeroU32::new(1 << 24).unwrap()))
     }
 
     // FreeBSD's VOP_CREATE doesn't forward the open(2) flags, so the kernel
